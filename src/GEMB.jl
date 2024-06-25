@@ -1,5 +1,7 @@
 module GEMB
 
-# Write your package code here.
+    # Write your package code here.
+    using Statistics
+    using CairoMakie
 
 end
