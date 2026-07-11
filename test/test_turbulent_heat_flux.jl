@@ -87,3 +87,56 @@ end
     # At melting point, should use latent heat of vaporization
     @test lh ≈ GEMB.LV atol = 1e-6
 end
+
+# MATLAB validation test
+matlab_validation_testset("turbulent_heat_flux", "turbulent_heat_flux.mat") do ref
+    # Stable case
+    cfs = GEMB.ClimateForcingStep(
+        ref["CFS_thf"]["dt"][1],
+        ref["CFS_thf"]["temperature_air"][1],
+        ref["CFS_thf"]["pressure_air"][1],
+        0.0,  # precipitation
+        ref["CFS_thf"]["wind_speed"][1],
+        0.0,  # shortwave_downward
+        300.0,  # longwave_downward
+        ref["CFS_thf"]["vapor_pressure"][1],
+        ref["CFS_thf"]["temperature_air_mean"][1],
+        5.0,  # wind_speed_mean
+        200.0,  # precipitation_mean
+        ref["CFS_thf"]["temperature_observation_height"][1],
+        ref["CFS_thf"]["wind_observation_height"][1],
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.1
+    )
+
+    T_surface = ref["T_surface"][1]
+    density_air = ref["density_air"][1]
+    z0 = ref["z0"][1]
+    zT = ref["zT"][1]
+    zQ = ref["zQ"][1]
+
+    shf, lhf, lh = GEMB.turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs)
+
+    @test shf ≈ ref["shf"][1] rtol=1e-12 atol=1e-14
+    @test lhf ≈ ref["lhf"][1] rtol=1e-12 atol=1e-14
+    @test lh ≈ ref["lh"][1] rtol=1e-12 atol=1e-14
+
+    # Unstable case
+    cfs_unstable = GEMB.ClimateForcingStep(
+        ref["CFS_thf"]["dt"][1],
+        ref["CFS_thf"]["temperature_air"][1] - 8.0,  # Match unstable case
+        ref["CFS_thf"]["pressure_air"][1],
+        0.0, ref["CFS_thf"]["wind_speed"][1],
+        0.0, 300.0, ref["CFS_thf"]["vapor_pressure"][1],
+        ref["CFS_thf"]["temperature_air_mean"][1], 5.0, 200.0,
+        ref["CFS_thf"]["temperature_observation_height"][1],
+        ref["CFS_thf"]["wind_observation_height"][1],
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.1
+    )
+
+    T_surface_unstable = ref["T_surface_unstable"][1]
+    shf_u, lhf_u, lh_u = GEMB.turbulent_heat_flux(T_surface_unstable, density_air, z0, zT, zQ, cfs_unstable)
+
+    @test shf_u ≈ ref["shf_unstable"][1] rtol=1e-12 atol=1e-14
+    @test lhf_u ≈ ref["lhf_unstable"][1] rtol=1e-12 atol=1e-14
+    @test lh_u ≈ ref["lh_unstable"][1] rtol=1e-12 atol=1e-14
+end

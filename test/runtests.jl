@@ -2,6 +2,9 @@ using GEMB
 using Test
 using Dates
 
+# Include test utilities for MATLAB validation
+include("test_utils.jl")
+
 @testset "GEMB.jl" begin
     @testset "Thermal Conductivity" begin
         include("test_thermal_conductivity.jl")

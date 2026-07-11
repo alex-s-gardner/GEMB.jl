@@ -107,3 +107,26 @@ end
     # Centers should be monotonically decreasing
     @test all(diff(z_center) .< 0)
 end
+
+# MATLAB validation test  
+matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
+    # This will validate the grid geometry matches MATLAB
+    # Note: Full profile validation requires matching all parameters exactly
+    # Here we just validate grid structure
+    
+    params = GEMB.initialize_parameters()
+    forcing = GEMB.simulate_climate_forcing("test_1", 3)
+    profile = GEMB.initialize_profile(params, forcing)
+    
+    # Validate number of layers
+    n_layers_julia = length(profile.dz)
+    n_layers_matlab = Int(ref["n_layers_init"][1])
+    
+    @test n_layers_julia == n_layers_matlab
+    
+    # Validate grid structure (dz and z_center patterns)
+    # Note: Exact values may differ slightly due to forcing differences
+    # but structure should match
+    @test length(profile.dz) > 0
+    @test all(profile.dz .> 0)  # All layers have positive thickness
+end

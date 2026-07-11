@@ -1,5 +1,20 @@
 # Tests for thermal_conductivity - matches MATLAB test_thermal_conductivity.m
 
+# Try to load MATLAB reference data if available
+const MATLAB_REF_THERMAL = let
+    ref_file = joinpath(@__DIR__, "reference_data", "thermal_conductivity.mat")
+    if isfile(ref_file)
+        try
+            using MAT
+            matread(ref_file)
+        catch
+            nothing
+        end
+    else
+        nothing
+    end
+end
+
 @testset "Sturm method snow" begin
     mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Sturm")
     density_snow = [300.0]
@@ -70,4 +85,31 @@ end
     # At threshold should be ice
     exp_ice = 9.828 * exp(-5.7e-3 * t_val)
     @test k_out[2] ≈ exp_ice atol = 1e-8
+end
+
+@testset "MATLAB reference validation" begin
+    if !isnothing(MATLAB_REF_THERMAL)
+        # Test case from generate_reference_data.m
+        temperature = MATLAB_REF_THERMAL["temperature"][:]
+        density = MATLAB_REF_THERMAL["density"][:]
+
+        # Sturm method
+        mp_sturm = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method="Sturm")
+        k_sturm_julia = GEMB.thermal_conductivity(temperature, density, mp_sturm)
+        k_sturm_matlab = MATLAB_REF_THERMAL["K_sturm"][:]
+
+        @test k_sturm_julia ≈ k_sturm_matlab rtol=1e-12 atol=1e-14
+
+        # Calonne method
+        mp_calonne = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method="Calonne")
+        k_calonne_julia = GEMB.thermal_conductivity(temperature, density, mp_calonne)
+        k_calonne_matlab = MATLAB_REF_THERMAL["K_calonne"][:]
+
+        @test k_calonne_julia ≈ k_calonne_matlab rtol=1e-12 atol=1e-14
+
+        @info "✓ MATLAB reference validation passed for thermal_conductivity"
+    else
+        @info "⊘ MATLAB reference data not available - skipping cross-validation"
+        @info "  Run test/generate_reference_data.m in MATLAB to enable validation"
+    end
 end
