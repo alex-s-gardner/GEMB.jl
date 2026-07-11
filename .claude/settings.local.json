@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(/Applications/MATLAB_R2024b.app/bin/matlab -batch \"generate_reference_data\")",
+      "Bash(/Applications/MATLAB_R2024b.app/bin/matlab -batch \"try; run\\('generate_reference_data.m'\\); catch ME; disp\\(ME.message\\); disp\\(ME.stack\\); end\")",
+      "Bash(/Applications/MATLAB_R2023a.app/bin/matlab -batch \"generate_reference_data\")"
+    ]
+  }
+}
