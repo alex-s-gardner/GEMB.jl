@@ -53,7 +53,7 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         albedo_diffuse_col = fill(0.85, m)
     end
 
-    return DimStack(;
+    return DimStack((
         z_center=DimArray(dz2z(parent(out[:dz])[valid, col_idx]), (zdim,)),
         dz=DimArray(parent(out[:dz])[valid, col_idx], (zdim,)),
         temperature=DimArray(parent(out[:temperature])[valid, col_idx], (zdim,)),
@@ -64,5 +64,5 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         grain_sphericity=DimArray(parent(out[:grain_sphericity])[valid, col_idx], (zdim,)),
         albedo=DimArray(albedo_col, (zdim,)),
         albedo_diffuse=DimArray(albedo_diffuse_col, (zdim,)),
-    )
+    ))
 end

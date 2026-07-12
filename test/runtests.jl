@@ -48,4 +48,10 @@ include("test_utils.jl")
     @testset "GEMB Spinup" begin
         include("test_gemb_spinup.jl")
     end
+    @testset "Vapor Pressure" begin
+        include("test_vapor_pressure.jl")
+    end
+    @testset "Grid Utilities" begin
+        include("test_grid_utilities.jl")
+    end
 end

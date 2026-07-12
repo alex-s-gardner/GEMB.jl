@@ -111,3 +111,48 @@ function vapor_pressure_to_relative_humidity(vapor_pressure, temperature_air)
     relative_humidity = (vapor_pressure ./ es) .* 100.0
     return clamp.(relative_humidity, 0.0, 100.0)
 end
+
+"""
+    relative_humidity_to_vapor_pressure(temperature_air, relative_humidity)
+
+Estimate actual vapor pressure [Pa] from air temperature [K] and relative humidity [%].
+
+Uses Tetens' formula for saturation vapor pressure.
+
+Matches MATLAB's `relative_humidity_to_vapor_pressure.m`.
+"""
+function relative_humidity_to_vapor_pressure(temperature_air, relative_humidity)
+    Tc = temperature_air .- 273.15
+    A = 610.78   # Pa
+    B = 17.27    # dimensionless
+    C = 237.3    # degrees Celsius
+    es = A .* exp.((B .* Tc) ./ (Tc .+ C))
+    return es .* (relative_humidity ./ 100.0)
+end
+
+"""
+    decyear2datenum(decyear)
+
+Convert decimal year to MATLAB datenum format (days since 0000-01-01).
+
+Automatically accounts for leap years.
+
+Matches MATLAB's `decyear2datenum.m`.
+"""
+function decyear2datenum(decyear)
+    year_part = floor.(Int, decyear)
+    fractional_year = decyear .- year_part
+
+    # Calculate start of year and next year
+    start_of_year = DateTime.(year_part, 1, 1)
+    start_of_next_year = DateTime.(year_part .+ 1, 1, 1)
+
+    # Days in this year
+    days_in_year = (start_of_next_year .- start_of_year) ./ Millisecond(1000 * 60 * 60 * 24)
+
+    # Convert to MATLAB datenum (rata die + 1)
+    rata_start = datetime2rata.(start_of_year)
+    datenum_out = rata_start .+ 1 .+ (fractional_year .* days_in_year)
+
+    return datenum_out
+end

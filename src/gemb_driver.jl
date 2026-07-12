@@ -9,15 +9,15 @@ and vertical profiles at the specified output frequency.
 """
 function gemb(profile::DimStack, cf::ClimateForcing, mp::ModelParameters; verbose::Bool=false)
     # Extract column state from DimStack
-    temperature = collect(Float64, profile[:temperature])
-    dz = collect(Float64, profile[:dz])
-    density = collect(Float64, profile[:density])
-    water = collect(Float64, profile[:water])
-    grain_radius = collect(Float64, profile[:grain_radius])
-    grain_dendricity = collect(Float64, profile[:grain_dendricity])
-    grain_sphericity = collect(Float64, profile[:grain_sphericity])
-    albedo = collect(Float64, profile[:albedo])
-    albedo_diffuse = collect(Float64, profile[:albedo_diffuse])
+    temperature = parent(profile[:temperature])
+    dz = parent(profile[:dz])
+    density = parent(profile[:density])
+    water = parent(profile[:water])
+    grain_radius = parent(profile[:grain_radius])
+    grain_dendricity = parent(profile[:grain_dendricity])
+    grain_sphericity = parent(profile[:grain_sphericity])
+    albedo = parent(profile[:albedo])
+    albedo_diffuse = parent(profile[:albedo_diffuse])
 
     # Get time information
     time_dim = dims(cf.temperature_air, Ti)
@@ -216,7 +216,7 @@ function gemb(profile::DimStack, cf::ClimateForcing, mp::ModelParameters; verbos
     ti_dim = Ti(out_time)
     z_dim = Z(1:profile_size)
 
-    return DimStack(;
+    return DimStack((
         # Monolevel
         melt=DimArray(out_melt, (ti_dim,)),
         runoff=DimArray(out_runoff, (ti_dim,)),
@@ -244,7 +244,7 @@ function gemb(profile::DimStack, cf::ClimateForcing, mp::ModelParameters; verbos
         grain_sphericity=DimArray(out_grain_sphericity, (z_dim, ti_dim)),
         albedo=DimArray(out_albedo, (z_dim, ti_dim)),
         albedo_diffuse=DimArray(out_albedo_diffuse, (z_dim, ti_dim)),
-    )
+    ))
 end
 
 """
