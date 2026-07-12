@@ -20,7 +20,8 @@ function gemb(profile::DimStack, cf::ClimateForcing, mp::ModelParameters; verbos
     albedo_diffuse = collect(Float64, profile[:albedo_diffuse])
 
     # Get time information
-    times = Vector{DateTime}(DimensionalData.index(dims(cf.temperature_air, Ti)))
+    time_dim = dims(cf.temperature_air, Ti)
+    times = Vector{DateTime}(time_dim.val)
     n_steps = length(times)
     dt = Dates.value(times[2] - times[1]) / 1000.0  # milliseconds to seconds
 

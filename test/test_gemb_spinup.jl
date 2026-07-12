@@ -6,9 +6,8 @@ using Dates
     @testset "Basic spinup execution" begin
         # Create parameters
         params = initialize_parameters(
-            dt = 86400.0,  # Daily timestep for faster test
-            densification_method = :Arthern,
-            output_frequency = :last
+            densification_method = "Arthern",
+            output_frequency = "last"
         )
 
         # Create 1-year climatology
@@ -20,22 +19,25 @@ using Dates
         day_of_year = collect(1:n_days)
         temp_seasonal = 260.0 .+ 15.0 .* cos.(2π .* day_of_year ./ 365.0 .- π)
 
-        forcing = ClimateForcing(
-            time = time,
-            temperature_air = temp_seasonal,
-            pressure_air = fill(85000.0, n_days),
-            wind_speed = fill(5.0, n_days),
-            vapor_pressure = fill(100.0, n_days),
-            precipitation = fill(1.0, n_days),  # Small daily accumulation
-            shortwave_downward = fill(100.0, n_days),
-            longwave_downward = fill(200.0, n_days),
+        forcing = initialize_forcing(
+            time,
+            temp_seasonal,  # temperature_air
+            fill(85000.0, n_days),  # pressure_air
+            fill(1.0, n_days),  # precipitation
+            fill(5.0, n_days),  # wind_speed
+            fill(100.0, n_days),  # shortwave_downward
+            fill(200.0, n_days),  # longwave_downward
+            fill(100.0, n_days),  # vapor_pressure
             temperature_observation_height = 2.0,
             wind_observation_height = 10.0
         )
 
+        # Initialize profile
+        profile = initialize_profile(params, forcing)
+
         # Run spinup with 3 cycles (fast test)
         n_cycles = 3
-        output = gemb_spinup(forcing, params, n_cycles=n_cycles)
+        output = gemb_spinup(profile, forcing, params, n_cycles, verbose=false)
 
         # Check output structure
         @test output isa DimStack
@@ -52,8 +54,7 @@ using Dates
         # Test that running more cycles leads to more stable profiles
 
         params = initialize_parameters(
-            dt = 86400.0,
-            output_frequency = :last
+            output_frequency = "last"
         )
 
         # Annual climatology
@@ -61,22 +62,23 @@ using Dates
         start_time = DateTime(2020, 1, 1)
         time = start_time .+ Day.(0:n_days-1)
 
-        forcing = ClimateForcing(
-            time = time,
-            temperature_air = fill(255.0, n_days),  # Cold, stable
-            pressure_air = fill(85000.0, n_days),
-            wind_speed = fill(3.0, n_days),
-            vapor_pressure = fill(80.0, n_days),
-            precipitation = fill(0.5, n_days),
-            shortwave_downward = fill(50.0, n_days),
-            longwave_downward = fill(180.0, n_days),
+        forcing = initialize_forcing(
+            time,
+            fill(255.0, n_days),  # temperature_air - Cold, stable
+            fill(85000.0, n_days),  # pressure_air
+            fill(0.5, n_days),  # precipitation
+            fill(3.0, n_days),  # wind_speed
+            fill(50.0, n_days),  # shortwave_downward
+            fill(180.0, n_days),  # longwave_downward
+            fill(80.0, n_days),  # vapor_pressure
             temperature_observation_height = 2.0,
             wind_observation_height = 10.0
         )
 
         # Run with different numbers of cycles
-        output_3 = gemb_spinup(forcing, params, n_cycles=3)
-        output_5 = gemb_spinup(forcing, params, n_cycles=5)
+        profile = initialize_profile(params, forcing)
+        output_3 = gemb_spinup(profile, forcing, params, 3)
+        output_5 = gemb_spinup(profile, forcing, params, 5)
 
         # Extract final profiles
         temp_3 = output_3[:temperature][Ti=1]
@@ -96,28 +98,28 @@ using Dates
         # Test that gemb_profile works after spinup
 
         params = initialize_parameters(
-            dt = 86400.0,
-            output_frequency = :last
+            output_frequency = "last"
         )
 
         n_days = 365
         start_time = DateTime(2020, 1, 1)
         time = start_time .+ Day.(0:n_days-1)
 
-        forcing = ClimateForcing(
-            time = time,
-            temperature_air = fill(260.0, n_days),
-            pressure_air = fill(85000.0, n_days),
-            wind_speed = fill(5.0, n_days),
-            vapor_pressure = fill(100.0, n_days),
-            precipitation = fill(1.0, n_days),
-            shortwave_downward = fill(100.0, n_days),
-            longwave_downward = fill(200.0, n_days),
+        forcing = initialize_forcing(
+            time,
+            fill(260.0, n_days),  # temperature_air
+            fill(85000.0, n_days),  # pressure_air
+            fill(1.0, n_days),  # precipitation
+            fill(5.0, n_days),  # wind_speed
+            fill(100.0, n_days),  # shortwave_downward
+            fill(200.0, n_days),  # longwave_downward
+            fill(100.0, n_days),  # vapor_pressure
             temperature_observation_height = 2.0,
             wind_observation_height = 10.0
         )
 
-        output = gemb_spinup(forcing, params, n_cycles=3)
+        profile = initialize_profile(params, forcing)
+        output = gemb_spinup(profile, forcing, params, 3)
 
         # Extract the final profile
         profile = gemb_profile(output)
@@ -138,29 +140,29 @@ using Dates
         # Edge case: no precipitation
 
         params = initialize_parameters(
-            dt = 86400.0,
-            output_frequency = :last
+            output_frequency = "last"
         )
 
         n_days = 100  # Shorter for zero accumulation test
         start_time = DateTime(2020, 1, 1)
         time = start_time .+ Day.(0:n_days-1)
 
-        forcing = ClimateForcing(
-            time = time,
-            temperature_air = fill(250.0, n_days),
-            pressure_air = fill(85000.0, n_days),
-            wind_speed = fill(3.0, n_days),
-            vapor_pressure = fill(50.0, n_days),
-            precipitation = zeros(n_days),  # Zero accumulation
-            shortwave_downward = zeros(n_days),
-            longwave_downward = fill(150.0, n_days),
+        forcing = initialize_forcing(
+            time,
+            fill(250.0, n_days),  # temperature_air
+            fill(85000.0, n_days),  # pressure_air
+            zeros(n_days),  # precipitation - Zero accumulation
+            fill(3.0, n_days),  # wind_speed
+            zeros(n_days),  # shortwave_downward
+            fill(150.0, n_days),  # longwave_downward
+            fill(50.0, n_days),  # vapor_pressure
             temperature_observation_height = 2.0,
             wind_observation_height = 10.0
         )
 
         # Should still work, just won't grow
-        output = gemb_spinup(forcing, params, n_cycles=2)
+        profile = initialize_profile(params, forcing)
+        output = gemb_spinup(profile, forcing, params, 2)
 
         @test output isa DimStack
         @test haskey(output, :temperature)
