@@ -190,14 +190,21 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         ghf = Ad[end-1] * (temperature[end] - temperature[end-1]) * dt
         ghf_cumulative += ghf
 
-        # temperature diffusion
-        Tu[1] = temperature[1]
-        Tu[2:end] = temperature[1:end-1]
+        # temperature diffusion - optimized with in-place operations
+        @inbounds begin
+            Tu[1] = temperature[1]
+            @simd for i in 2:m
+                Tu[i] = temperature[i-1]
+            end
 
-        Td[1:end-1] = temperature[2:end]
-        Td[end] = temperature[end]
+            @simd for i in 1:m-1
+                Td[i] = temperature[i+1]
+            end
+            Td[m] = temperature[m]
 
-        temperature = (Np .* temperature) .+ (Nu .* Tu) .+ (Nd .* Td)
+            # In-place fused broadcast (eliminates allocation)
+            @. temperature = (Np * temperature) + (Nu * Tu) + (Nd * Td)
+        end
 
         # calculate cumulative evaporation (+)/condensation(-)
         EC_cumulative += evaporation_condensation
