@@ -6,8 +6,8 @@ using Dates
     @testset "Basic spinup execution" begin
         # Create parameters
         params = initialize_parameters(
-            densification_method = "Arthern",
-            output_frequency = "last"
+            densification_method = :Arthern,
+            output_frequency = :last
         )
 
         # Create 1-year climatology
@@ -45,16 +45,15 @@ using Dates
         @test haskey(output, :density)
         @test haskey(output, :dz)
 
-        # Check that we get output for final state
-        @test length(dims(output, Ti)) > 0
-        @test length(dims(output, Z)) > 0
+        # Check that we get a profile with Z dimension
+        @test length(output[:dz]) > 0
     end
 
     @testset "Spinup convergence test" begin
         # Test that running more cycles leads to more stable profiles
 
         params = initialize_parameters(
-            output_frequency = "last"
+            output_frequency = :last
         )
 
         # Annual climatology
@@ -95,10 +94,10 @@ using Dates
     end
 
     @testset "Profile extraction after spinup" begin
-        # Test that gemb_profile works after spinup
+        # Test that gemb_spinup returns a valid profile
 
         params = initialize_parameters(
-            output_frequency = "last"
+            output_frequency = :last
         )
 
         n_days = 365
@@ -119,28 +118,25 @@ using Dates
         )
 
         profile = initialize_profile(params, forcing)
-        output = gemb_spinup(profile, forcing, params, 3)
-
-        # Extract the final profile
-        profile = gemb_profile(output)
+        spunup_profile = gemb_spinup(profile, forcing, params, 3)
 
         # Check profile has required fields
-        @test hasfield(typeof(profile), :temperature)
-        @test hasfield(typeof(profile), :density)
-        @test hasfield(typeof(profile), :dz)
-        @test hasfield(typeof(profile), :grain_radius)
+        @test haskey(spunup_profile, :temperature)
+        @test haskey(spunup_profile, :density)
+        @test haskey(spunup_profile, :dz)
+        @test haskey(spunup_profile, :grain_radius)
 
         # Profile arrays should have same length
-        n_layers = length(profile.temperature)
-        @test length(profile.density) == n_layers
-        @test length(profile.dz) == n_layers
+        n_layers = length(spunup_profile[:dz])
+        @test length(spunup_profile[:density]) == n_layers
+        @test length(spunup_profile[:temperature]) == n_layers
     end
 
     @testset "Spinup with zero accumulation" begin
         # Edge case: no precipitation
 
         params = initialize_parameters(
-            output_frequency = "last"
+            output_frequency = :last
         )
 
         n_days = 100  # Shorter for zero accumulation test

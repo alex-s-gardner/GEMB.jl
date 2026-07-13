@@ -27,7 +27,7 @@ pkg> add GEMB
 
 Using GEMB requires four basic steps:
 
-1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, or [`simulate_climate_forcing`](@ref) to generate synthetic test data.
+1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, [`simulate_climate_forcing`](@ref) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5/MERRA-2 data.
 2. **Define Model Parameters** -- Use [`ModelParameters`](@ref) to set model configuration (densification model, albedo method, grid geometry, etc.).
 3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
 4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
@@ -49,6 +49,34 @@ output = gemb(profile, cf, mp)
 ```
 
 The output is a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) containing time series of surface fluxes and vertical profiles at the specified output frequency.
+
+## Using Real Climate Data
+
+For production runs with ERA5, ERA5-Land, or MERRA-2 reanalysis data, use the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package which automatically downloads and formats climate data:
+
+```julia
+# Install GEMB_ClimateForcing (first time only)
+using Pkg
+Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
+
+using GEMB
+using GEMB_ClimateForcing
+
+# Download ERA5-Land data for Summit Station, Greenland
+forcing_data = climate_forcing(:era5land, 72.58, -38.48;
+                                time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
+                                token=ENV["CDS_API_KEY"])
+
+# Convert to GEMB ClimateForcing (automatic via package extension)
+cf = GEMB.ClimateForcing(forcing_data)
+
+# Run GEMB
+mp = ModelParameters(output_frequency="daily")
+profile = initialize_profile(mp, cf)
+output = gemb(profile, cf, mp)
+```
+
+GEMB.jl includes a package extension that automatically loads when both `GEMB` and `GEMB_ClimateForcing` are imported, providing seamless conversion from downloaded climate data to GEMB's `ClimateForcing` type.
 
 ## Spinup
 

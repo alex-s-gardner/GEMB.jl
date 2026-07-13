@@ -34,8 +34,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="HerronLangway",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:HerronLangway,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
     cfs = _make_density_cfs()
 
@@ -69,8 +69,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="HerronLangway",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:HerronLangway,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
 
     (_, density_out) = GEMB.calculate_density(t_vec, dz, density_near_ice, grain_radius, cfs, mp)
@@ -88,8 +88,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="HerronLangway",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:HerronLangway,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
     cfs = _make_density_cfs()
 
@@ -107,8 +107,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="Arthern",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:Arthern,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
     cfs = _make_density_cfs()
 
@@ -126,8 +126,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="ArthernB",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:ArthernB,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
     cfs = _make_density_cfs()
 
@@ -161,16 +161,16 @@ end
     # Test Case 1: Standard RACMO
     mp1 = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="Ligtenberg",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:Ligtenberg,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
     (_, d1) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp1)
 
     # Test Case 2: ERA5 variant (different M coefficients)
     mp2 = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="Ligtenberg",
-        densification_coeffs_M01="Ant_ERA5_BF_SW1",
+        densification_method=:Ligtenberg,
+        densification_coeffs_M01=:Ant_ERA5_BF_SW1,
     )
     (_, d2) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp2)
 
@@ -192,8 +192,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="Ligtenberg",
-        densification_coeffs_M01="Gre_KuipersMunneke",
+        densification_method=:Ligtenberg,
+        densification_coeffs_M01=:Gre_KuipersMunneke,
     )
 
     (_, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
@@ -212,8 +212,8 @@ end
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="HerronLangway",
-        densification_coeffs_M01="Ant_RACMO_GS_SW0",
+        densification_method=:HerronLangway,
+        densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
 
     (dz_out, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
@@ -233,16 +233,16 @@ end
     # Case A: density_ice ~ 820 (specialized branch)
     mp_820 = GEMB.ModelParameters(
         density_ice=820.0,
-        densification_method="Ligtenberg",
-        densification_coeffs_M01="Gre_RACMO_GS_SW0",
+        densification_method=:Ligtenberg,
+        densification_coeffs_M01=:Gre_RACMO_GS_SW0,
     )
     (_, density_820) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp_820)
 
     # Case B: density_ice ~ 917 (standard branch)
     mp_917 = GEMB.ModelParameters(
         density_ice=917.0,
-        densification_method="Ligtenberg",
-        densification_coeffs_M01="Gre_RACMO_GS_SW0",
+        densification_method=:Ligtenberg,
+        densification_coeffs_M01=:Gre_RACMO_GS_SW0,
     )
     (_, density_917) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp_917)
 

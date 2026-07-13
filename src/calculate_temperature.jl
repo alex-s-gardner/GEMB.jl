@@ -255,17 +255,17 @@ Returns `(emissivity, emissivity_melt_switch)`.
 function _emissivity_initialize(grain_radius_surface::Float64, mp::ModelParameters)
     gdn_tolerance = 1e-10
 
-    if mp.emissivity_method == "uniform"
+    if mp.emissivity_method == :uniform
         emissivity = mp.emissivity
         emissivity_melt_switch = false
-    elseif mp.emissivity_method == "grain_radius_threshold"
+    elseif mp.emissivity_method == :grain_radius_threshold
         if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + gdn_tolerance)
             emissivity = mp.emissivity
         else
             emissivity = mp.emissivity_grain_radius_large
         end
         emissivity_melt_switch = false
-    elseif mp.emissivity_method == "grain_radius_w_threshold"
+    elseif mp.emissivity_method == :grain_radius_w_threshold
         if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + gdn_tolerance)
             emissivity = mp.emissivity
             emissivity_melt_switch = true

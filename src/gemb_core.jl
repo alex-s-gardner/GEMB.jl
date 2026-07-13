@@ -1,16 +1,25 @@
 """
-    gemb_core(temperature, dz, density, water, grain_radius, grain_dendricity,
-              grain_sphericity, albedo, albedo_diffuse, evaporation_condensation,
-              melt_surface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Perform a single time-step of the GEMB model.
 Matches MATLAB's `gemb_core.m`.
 
-Returns a tuple of all updated state vectors and diagnostic scalars.
+Returns `(state, flux)` where `state` is the updated column state and
+`flux` contains energy/mass budget terms for output accumulation.
 """
-function gemb_core(temperature, dz, density, water, grain_radius, grain_dendricity,
-    grain_sphericity, albedo, albedo_diffuse, evaporation_condensation,
-    melt_surface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    # Destructure state
+    temperature = state.temperature
+    dz = state.dz
+    density = state.density
+    water = state.water
+    grain_radius = state.grain_radius
+    grain_dendricity = state.grain_dendricity
+    grain_sphericity = state.grain_sphericity
+    albedo = state.albedo
+    albedo_diffuse = state.albedo_diffuse
+    evaporation_condensation = state.evaporation_condensation
+    melt_surface = state.melt_surface
 
     if verbose
         M = dz .* density
@@ -37,7 +46,7 @@ function gemb_core(temperature, dz, density, water, grain_radius, grain_dendrici
     # 4. Calculate net shortwave [W m-2]
     shortwave_net = sum(shortwave_flux)
 
-    # 5. Calculate new temperature-depth profile and turbulent heat fluxes
+    # 5. Calculate new temperature-depth profile and turbulent heat flux
     temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, ghf, evaporation_condensation =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose)
@@ -114,9 +123,34 @@ function gemb_core(temperature, dz, density, water, grain_radius, grain_dendrici
         end
     end
 
-    return (temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, albedo, albedo_diffuse, evaporation_condensation,
-        melt_surface, shortwave_net, heat_flux_sensible, heat_flux_latent,
-        longwave_upward, rain, melt, runoff, refreeze, mass_added, E_added,
-        densification_from_compaction, densification_from_melt)
+    new_state = (
+        temperature=temperature,
+        dz=dz,
+        density=density,
+        water=water,
+        grain_radius=grain_radius,
+        grain_dendricity=grain_dendricity,
+        grain_sphericity=grain_sphericity,
+        albedo=albedo,
+        albedo_diffuse=albedo_diffuse,
+        evaporation_condensation=evaporation_condensation,
+        melt_surface=melt_surface,
+    )
+
+    flux = (
+        shortwave_net=shortwave_net,
+        heat_flux_sensible=heat_flux_sensible,
+        heat_flux_latent=heat_flux_latent,
+        longwave_upward=longwave_upward,
+        rain=rain,
+        melt=melt,
+        runoff=runoff,
+        refreeze=refreeze,
+        mass_added=mass_added,
+        E_added=E_added,
+        densification_from_compaction=densification_from_compaction,
+        densification_from_melt=densification_from_melt,
+    )
+
+    return new_state, flux
 end

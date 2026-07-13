@@ -19,7 +19,7 @@ function thermal_conductivity(temperature::AbstractVector, density::AbstractVect
     # Vectorized version using broadcasting and ifelse
     snow_mask = density .< (mp.density_ice - d_tolerance)
 
-    if mp.thermal_conductivity_method == "Calonne"
+    if mp.thermal_conductivity_method == :Calonne
         K = @. ifelse(snow_mask,
                       0.024 - 1.23e-4 * density + 2.5e-6 * density^2,
                       9.828 * exp(-5.7e-3 * temperature))

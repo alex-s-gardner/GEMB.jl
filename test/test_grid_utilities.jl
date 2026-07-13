@@ -67,8 +67,8 @@ using GEMB
         z_var = dz2z(reshape(dz_var, 5, 1))
 
         @test z_var[1] ≈ -0.05
-        @test z_var[2] ≈ -0.1 - 0.1  # center at -cumsum + top_val/2
-        @test z_var[3] ≈ -0.3 - 0.05  # cumsum continues
+        @test z_var[2] ≈ -0.25  # -cumsum([0.1,0.2])[2] + dz[1]/2 = -0.3 + 0.05
+        @test z_var[3] ≈ -0.55  # -cumsum([0.1,0.2,0.3])[3] + dz[1]/2 = -0.6 + 0.05
 
         # Test with NaN handling
         dz_nan = [0.1, 0.2, NaN, 0.4, NaN]

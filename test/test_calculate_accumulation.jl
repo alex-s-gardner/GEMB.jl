@@ -39,11 +39,11 @@ end
     albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method="150kgm2",
+        new_snow_method=Symbol("150kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     cfs = _make_accum_cfs(precipitation=0.0, temperature_air=270.0)
@@ -74,11 +74,11 @@ end
     density_snow = 150.0
 
     mp = GEMB.ModelParameters(
-        new_snow_method="150kgm2",
+        new_snow_method=Symbol("150kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     cfs = _make_accum_cfs(precipitation=50.0, temperature_air=260.0)
@@ -119,11 +119,11 @@ end
     density_snow = 150.0
 
     mp = GEMB.ModelParameters(
-        new_snow_method="150kgm2",
+        new_snow_method=Symbol("150kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     cfs = _make_accum_cfs(precipitation=2.0, temperature_air=260.0)
@@ -168,11 +168,11 @@ end
     albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method="150kgm2",
+        new_snow_method=Symbol("150kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     # temperature_air > 273.15 -> Rain
@@ -222,11 +222,11 @@ end
     albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method="150kgm2",
+        new_snow_method=Symbol("150kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     # Huge rain
@@ -269,11 +269,11 @@ end
 
     # Method 1: "350kgm2"
     mp1 = GEMB.ModelParameters(
-        new_snow_method="350kgm2",
+        new_snow_method=Symbol("350kgm2"),
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     (_, _, d1, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
@@ -284,11 +284,11 @@ end
 
     # Method 2: "Fausto"
     mp2 = GEMB.ModelParameters(
-        new_snow_method="Fausto",
+        new_snow_method=:Fausto,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     (_, _, d2, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
@@ -299,11 +299,11 @@ end
 
     # Method 3: "Kaspers"
     mp3 = GEMB.ModelParameters(
-        new_snow_method="Kaspers",
+        new_snow_method=:Kaspers,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     expected_3 = (7.36e-2 + 1.06e-3 * temperature_air_mean + 6.69e-2 * precipitation_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
@@ -315,11 +315,11 @@ end
 
     # Method 4: "KuipersMunneke"
     mp4 = GEMB.ModelParameters(
-        new_snow_method="KuipersMunneke",
+        new_snow_method=:KuipersMunneke,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
     expected_4 = 481.0 + 4.834 * (temperature_air_mean - 273.15)

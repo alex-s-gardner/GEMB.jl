@@ -1,6 +1,7 @@
 using GEMB
 using Test
 using Dates
+using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
 
 # Include test utilities for MATLAB validation
 include("test_utils.jl")
@@ -53,5 +54,8 @@ include("test_utils.jl")
     end
     @testset "Grid Utilities" begin
         include("test_grid_utilities.jl")
+    end
+    @testset "Synthetic Regression" begin
+        include("test_synthetic_regression.jl")
     end
 end
