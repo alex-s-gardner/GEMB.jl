@@ -55,7 +55,9 @@ include("test_utils.jl")
     @testset "Grid Utilities" begin
         include("test_grid_utilities.jl")
     end
+
     @testset "Synthetic Regression" begin
+        # Full model validation with relaxed tolerances for cross-platform reproducibility
         include("test_synthetic_regression.jl")
     end
 end
