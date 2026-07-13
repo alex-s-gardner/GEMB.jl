@@ -7,20 +7,12 @@ using GEMB: DimArray, Ti
 
     # Create minimal ClimateForcing for initialization
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.ClimateForcing(
-        DimArray([253.15, 253.15], (Ti(times),)),
-        DimArray([80000.0, 80000.0], (Ti(times),)),
-        DimArray([0.001, 0.001], (Ti(times),)),
-        DimArray([5.0, 5.0], (Ti(times),)),
-        DimArray([100.0, 100.0], (Ti(times),)),
-        DimArray([250.0, 250.0], (Ti(times),)),
-        DimArray([300.0, 300.0], (Ti(times),)),
-        253.15,  # temperature_air_mean
-        5.0,     # wind_speed_mean
-        200.0,   # precipitation_mean
-        2.0,     # temperature_observation_height
-        10.0,    # wind_observation_height
-    )
+    cf = GEMB.initialize_forcing(times,
+        [253.15, 253.15], [80000.0, 80000.0], [0.001, 0.001],
+        [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
+        temperature_air_mean=253.15, wind_speed_mean=5.0,
+        precipitation_mean=200.0, temperature_observation_height=2.0,
+        wind_observation_height=10.0)
 
     profile = GEMB.initialize_profile(mp, cf)
 
@@ -56,16 +48,12 @@ end
     mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_zmax=50.0, column_zy=1.10)
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.ClimateForcing(
-        DimArray([260.0, 260.0], (Ti(times),)),
-        DimArray([80000.0, 80000.0], (Ti(times),)),
-        DimArray([0.001, 0.001], (Ti(times),)),
-        DimArray([5.0, 5.0], (Ti(times),)),
-        DimArray([100.0, 100.0], (Ti(times),)),
-        DimArray([250.0, 250.0], (Ti(times),)),
-        DimArray([300.0, 300.0], (Ti(times),)),
-        260.0, 5.0, 200.0, 2.0, 10.0,
-    )
+    cf = GEMB.initialize_forcing(times,
+        [260.0, 260.0], [80000.0, 80000.0], [0.001, 0.001],
+        [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
+        temperature_air_mean=260.0, wind_speed_mean=5.0,
+        precipitation_mean=200.0, temperature_observation_height=2.0,
+        wind_observation_height=10.0)
 
     profile = GEMB.initialize_profile(mp, cf)
     dz = collect(profile[:dz])
@@ -83,16 +71,12 @@ end
     mp = GEMB.ModelParameters()
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.ClimateForcing(
-        DimArray([253.15, 253.15], (Ti(times),)),
-        DimArray([80000.0, 80000.0], (Ti(times),)),
-        DimArray([0.001, 0.001], (Ti(times),)),
-        DimArray([5.0, 5.0], (Ti(times),)),
-        DimArray([100.0, 100.0], (Ti(times),)),
-        DimArray([250.0, 250.0], (Ti(times),)),
-        DimArray([300.0, 300.0], (Ti(times),)),
-        253.15, 5.0, 200.0, 2.0, 10.0,
-    )
+    cf = GEMB.initialize_forcing(times,
+        [253.15, 253.15], [80000.0, 80000.0], [0.001, 0.001],
+        [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
+        temperature_air_mean=253.15, wind_speed_mean=5.0,
+        precipitation_mean=200.0, temperature_observation_height=2.0,
+        wind_observation_height=10.0)
 
     profile = GEMB.initialize_profile(mp, cf)
     z_center = collect(profile[:z_center])

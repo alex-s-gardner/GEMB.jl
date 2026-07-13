@@ -22,11 +22,11 @@
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=0.97,
-        emissivity_method="uniform",
+        emissivity_method=:uniform,
         emissivity_grain_radius_large=0.97,
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
-        thermal_conductivity_method="Sturm",
+        thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000
     )
 
@@ -58,11 +58,11 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=0.97,
-        emissivity_method="uniform",
+        emissivity_method=:uniform,
         emissivity_grain_radius_large=0.97,
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
-        thermal_conductivity_method="Sturm",
+        thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000
     )
 
@@ -94,11 +94,11 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=0.0,  # disable radiative cooling
-        emissivity_method="uniform",
+        emissivity_method=:uniform,
         emissivity_grain_radius_large=0.0,
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
-        thermal_conductivity_method="Sturm",
+        thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(108000000)) ./ 10000
     )
 
@@ -133,11 +133,11 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=0.97,
-        emissivity_method="uniform",
+        emissivity_method=:uniform,
         emissivity_grain_radius_large=0.97,
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
-        thermal_conductivity_method="Sturm",
+        thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000
     )
 
@@ -166,11 +166,11 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=0.97,
-        emissivity_method="uniform",
+        emissivity_method=:uniform,
         emissivity_grain_radius_large=0.97,
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
-        thermal_conductivity_method="Sturm",
+        thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(864000000)) ./ 10000
     )
 

@@ -37,10 +37,10 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
     albedo_ice_min = mp.albedo_ice     # minimum ice albedo
     albedo_snow_min = 0.65             # minimum snow albedo, from Alexander 2014
 
-    if (mp.albedo_method == "None") || ((mp.albedo_density_threshold - density[1]) < d_tolerance)
+    if (mp.albedo_method == :None) || ((mp.albedo_density_threshold - density[1]) < d_tolerance)
         albedo[1] = mp.albedo_fixed
     else
-        if mp.albedo_method == "GardnerSharp"
+        if mp.albedo_method == :GardnerSharp
             albedo[1] = _albedo_gardner(grain_radius, dz, density,
                 cfs.black_carbon_snow, cfs.black_carbon_ice,
                 cfs.solar_zenith_angle, cfs.cloud_optical_thickness)
@@ -48,7 +48,7 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
                 cfs.black_carbon_snow, cfs.black_carbon_ice,
                 50.0, cfs.cloud_optical_thickness)
 
-        elseif mp.albedo_method == "BrunLefebre"
+        elseif mp.albedo_method == :BrunLefebre
             # Spectral fractions (Lefebre et al., 2003)
             # [0.3-0.8um 0.8-1.5um 1.5-2.8um]
             sF = [0.606, 0.301, 0.093]
@@ -64,13 +64,13 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
             # broadband surface albedo
             albedo[1] = sF[1] * a1 + sF[2] * a2 + sF[3] * a3
 
-        elseif mp.albedo_method == "GreuellKonzelmann"
+        elseif mp.albedo_method == :GreuellKonzelmann
             albedo[1] = mp.albedo_ice + (density[1] - mp.density_ice) *
                 (mp.albedo_snow - mp.albedo_ice) /
                 (density_fresh_snow - mp.density_ice) +
                 (0.05 * (cfs.cloud_fraction - 0.5))
 
-        elseif mp.albedo_method == "Bougamont2005"
+        elseif mp.albedo_method == :Bougamont2005
             dt_days = cfs.dt / 86400.0   # convert from [s] to [d]
 
             # initialize variables
@@ -104,7 +104,7 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
         end
 
         # If we do not have fresh snow
-        if (mp.albedo_method == "GardnerSharp" || mp.albedo_method == "BrunLefebre") &&
+        if (mp.albedo_method == :GardnerSharp || mp.albedo_method == :BrunLefebre) &&
            ((mp.albedo_density_threshold - density[1]) >= d_tolerance)
 
             # In a snow layer < 10cm, account for mix of ice and snow

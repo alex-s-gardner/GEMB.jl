@@ -20,7 +20,7 @@
     )
 
     mp = GEMB.ModelParameters(
-        albedo_method="None",
+        albedo_method=:None,
         albedo_fixed=0.75,
         albedo_density_threshold=1023.0,
         density_ice=917.0,
@@ -58,7 +58,7 @@ end
     )
 
     mp = GEMB.ModelParameters(
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         albedo_fixed=0.4,
         albedo_density_threshold=300.0,  # Low threshold
         density_ice=917.0,
@@ -95,7 +95,7 @@ end
     )
 
     mp = GEMB.ModelParameters(
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
         albedo_fixed=0.8,
         albedo_density_threshold=Inf,
         density_ice=917.0,
@@ -134,7 +134,7 @@ end
     )
 
     mp = GEMB.ModelParameters(
-        albedo_method="GreuellKonzelmann",
+        albedo_method=:GreuellKonzelmann,
         albedo_fixed=0.8,
         albedo_density_threshold=Inf,
         density_ice=900.0,
@@ -174,7 +174,7 @@ end
     )
 
     mp = GEMB.ModelParameters(
-        albedo_method="Bougamont2005",
+        albedo_method=:Bougamont2005,
         albedo_fixed=0.8,
         albedo_density_threshold=Inf,
         density_ice=917.0,

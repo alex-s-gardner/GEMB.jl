@@ -1,5 +1,6 @@
 using DimensionalData
 using Dates
+using FillArrays
 
 """
     ModelParameters
@@ -14,27 +15,27 @@ Base.@kwdef struct ModelParameters
     run_prefix::String = "default"
 
     # --- Density & Densification ---
-    densification_method::String = "Arthern"
-    densification_coeffs_M01::String = "Gre_RACMO_GS_SW0"
-    new_snow_method::String = "350kgm2"
+    densification_method::Symbol = :Arthern
+    densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
+    new_snow_method::Symbol = Symbol("350kgm2")
     density_ice::Float64 = 910.0
     rain_temperature_threshold::Float64 = 273.15
 
     # --- Longwave Emissivity ---
-    emissivity_method::String = "uniform"
+    emissivity_method::Symbol = :uniform
     emissivity::Float64 = 0.97
     emissivity_grain_radius_large::Float64 = 0.97
     emissivity_grain_radius_threshold::Float64 = 10.0
     surface_roughness_effective_ratio::Float64 = 0.10
 
     # --- Thermal Conductivity ---
-    thermal_conductivity_method::String = "Sturm"
+    thermal_conductivity_method::Symbol = :Sturm
 
     # --- Melt & Water ---
     water_irreducible_saturation::Float64 = 0.07
 
     # --- Albedo & Radiation ---
-    albedo_method::String = "GardnerSharp"
+    albedo_method::Symbol = :GardnerSharp
     albedo_density_threshold::Float64 = Inf
     shortwave_subsurface_absorption::Bool = false
     albedo_snow::Float64 = 0.85
@@ -51,7 +52,7 @@ Base.@kwdef struct ModelParameters
     albedo_K::Float64 = 7.0
 
     # --- Output Controls ---
-    output_frequency::String = "all"
+    output_frequency::Symbol = :all
     output_padding::Int = 1000
 
     # --- Grid Geometry ---
@@ -73,11 +74,7 @@ end
 Time-series surface meteorological forcing for GEMB.
 All forcing arrays share a common `Ti` (time) dimension.
 
-Required fields: temperature_air, pressure_air, precipitation, wind_speed,
-shortwave_downward, longwave_downward, vapor_pressure.
-
-Metadata: temperature_air_mean, wind_speed_mean, precipitation_mean,
-temperature_observation_height, wind_observation_height.
+Index by time to extract a `ClimateForcingStep`: `cf[Ti=At(t)]`
 """
 struct ClimateForcing
     # Time-series fields (all DimArray with Ti dimension)
@@ -88,13 +85,44 @@ struct ClimateForcing
     shortwave_downward::DimArray
     longwave_downward::DimArray
     vapor_pressure::DimArray
+    black_carbon_snow::DimArray
+    black_carbon_ice::DimArray
+    cloud_optical_thickness::DimArray
+    solar_zenith_angle::DimArray
+    shortwave_downward_diffuse::DimArray
+    cloud_fraction::DimArray
 
-    # Metadata (scalars)
+    # Scalar metadata
+    time_step::Int
     temperature_air_mean::Float64
     wind_speed_mean::Float64
     precipitation_mean::Float64
     temperature_observation_height::Float64
     wind_observation_height::Float64
+end
+
+function Base.getindex(cf::ClimateForcing; Ti)
+    return ClimateForcingStep(
+        Float64(cf.time_step),
+        cf.temperature_air[Ti],
+        cf.pressure_air[Ti],
+        cf.precipitation[Ti],
+        cf.wind_speed[Ti],
+        cf.shortwave_downward[Ti],
+        cf.longwave_downward[Ti],
+        cf.vapor_pressure[Ti],
+        cf.temperature_air_mean,
+        cf.wind_speed_mean,
+        cf.precipitation_mean,
+        cf.temperature_observation_height,
+        cf.wind_observation_height,
+        cf.black_carbon_snow[Ti],
+        cf.black_carbon_ice[Ti],
+        cf.cloud_optical_thickness[Ti],
+        cf.solar_zenith_angle[Ti],
+        cf.shortwave_downward_diffuse[Ti],
+        cf.cloud_fraction[Ti],
+    )
 end
 
 """

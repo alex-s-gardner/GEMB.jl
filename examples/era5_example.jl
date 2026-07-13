@@ -1,99 +1,83 @@
-# Example of running GEMB with ERA5 reanalysis data.
-# Equivalent to MATLAB's GEMB_example_ERA5.m
+# Example of running GEMB with ERA5 reanalysis data using GEMB_ClimateForcing.jl
 #
-# This example requires downloading ERA5 data first.
-# See: https://github.com/alex-s-gardner/GEMB/blob/main/docs/ERA5_time_series_data.md
+# This example uses the GEMB_ClimateForcing.jl package to automatically download
+# and format ERA5-Land climate data.
 #
-# Required packages: NetCDF (for reading .nc files)
+# Setup (required before running):
+#   1. Install GEMB_ClimateForcing from GitHub:
+#      using Pkg
+#      Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
+#   2. Get a CDS API key from: https://cds.climate.copernicus.eu/api-how-to
+#   3. Set environment variable: ENV["CDS_API_KEY"] = "your-key-here"
+#
+# NOTE: This example requires GEMB_ClimateForcing.jl to be installed.
 
 using GEMB
+using DimensionalData
 using Dates
 using Statistics
 
-## Load ERA5 data from NetCDF files
-# Note: You must download ERA5 data first. Uncomment and modify paths as needed.
-#
-# using NetCDF
-#
-# # Define climate data filenames:
-# filename_temperature = "reanalysis-era5-land-timeseries-sfc-2m-temperature_summit.nc"
-# filename_pressure    = "reanalysis-era5-land-timeseries-sfc-pressure-precipitation_summit.nc"
-# filename_radiation   = "reanalysis-era5-land-timeseries-sfc-radiation-heat_summit.nc"
-# filename_wind        = "reanalysis-era5-land-timeseries-sfc-wind_summit.nc"
-#
-# # Read time vector:
-# valid_time = ncread(filename_temperature, "valid_time")
-# time_vector = DateTime(1970, 1, 1) .+ Second.(Int.(valid_time))
-#
-# # Read forcing variables:
-# temperature_air = Float64.(ncread(filename_temperature, "t2m"))
-# pressure_air = Float64.(ncread(filename_pressure, "sp"))
-# precipitation = Float64.(ncread(filename_pressure, "tp")) .* 1000  # m to kg/m²
-# precipitation[precipitation .< 0] .= 0  # Fix numerical noise
-#
-# # Wind speed from vector components:
-# u10 = Float64.(ncread(filename_wind, "u10"))
-# v10 = Float64.(ncread(filename_wind, "v10"))
-# wind_speed = hypot.(u10, v10)
-#
-# # Radiation (convert accumulated J/m² to average W/m²):
-# shortwave_downward = Float64.(ncread(filename_radiation, "ssrd")) ./ 3600
-# longwave_downward = Float64.(ncread(filename_radiation, "strd")) ./ 3600
-#
-# # Convert dewpoint temperature to vapor pressure:
-# temperature_dewpoint = Float64.(ncread(filename_temperature, "d2m"))
-# vapor_pressure = dewpoint_to_vapor_pressure(temperature_dewpoint)
-#
-# # Build ClimateForcing:
-# cf = initialize_forcing(
-#     time_vector,
-#     temperature_air,
-#     pressure_air,
-#     precipitation,
-#     wind_speed,
-#     shortwave_downward,
-#     longwave_downward,
-#     vapor_pressure;
-#     temperature_air_mean=mean(temperature_air),
-#     wind_speed_mean=mean(wind_speed),
-#     precipitation_mean=mean(precipitation) * 24 * 365.25,  # annual mean
-#     temperature_observation_height=2.0,
-#     wind_observation_height=10.0
-# )
-#
-# ## Run GEMB
-#
-# # Initialize model parameters:
-# mp = ModelParameters(output_frequency="daily")
-#
-# # Initialize grid:
-# profile = initialize_profile(mp, cf)
-#
-# # Create climatological forcing for spinup:
-# cf_spinup = forcing_climatology(cf)
-#
-# # Spin up for 100 years:
-# mp_spinup = ModelParameters(output_frequency="last")
-# profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup, 100)
-#
-# # Run GEMB with spun-up profile:
-# output = gemb(profile_spunup, cf, mp)
-#
-# ## Post-processing examples:
-#
-# # Get grid cell centers for plotting:
-# z_center = dz2z(parent(output[:dz]))
-#
-# # Get surface temperature time series:
-# temp_surface = surface_timeseries(parent(output[:temperature]))
-#
-# # Regrid to fixed vertical coordinate for plotting:
-# temp_gridded = gemb_interp(z_center, parent(output[:temperature]), profile_spunup)
-#
-# # Convert vapor pressure back to relative humidity:
-# rh = vapor_pressure_to_relative_humidity(
-#     parent(cf.vapor_pressure), parent(cf.temperature_air))
-#
-# println("Simulation complete!")
-# println("  Mean surface albedo: ", round(mean(parent(output[:albedo_surface])), digits=3))
-# println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content])), digits=3), " m")
+# Check if GEMB_ClimateForcing is available
+try
+    using GEMB_ClimateForcing
+catch e
+    @error """
+    GEMB_ClimateForcing.jl not found!
+
+    To run this example, install GEMB_ClimateForcing.jl from GitHub:
+        using Pkg
+        Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
+
+    Then get a CDS API key from: https://cds.climate.copernicus.eu/api-how-to
+    And set: ENV["CDS_API_KEY"] = "your-key-here"
+    """
+    rethrow(e)
+end
+
+## Download ERA5-Land forcing data
+
+# Download data for Summit Station, Greenland (72.58°N, 38.48°W)
+# This will download data from the Copernicus Climate Data Store
+forcing_data = climate_forcing(:era5land, 72.58, -38.48;
+                                time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
+                                token=ENV["CDS_API_KEY"])
+
+# Convert to GEMB ClimateForcing (automatic via package extension)
+cf = GEMB.ClimateForcing(forcing_data)
+
+## Run GEMB
+
+# Initialize model parameters
+mp = ModelParameters(output_frequency="daily")
+
+# Initialize the firn column
+profile = initialize_profile(mp, cf)
+
+# Create climatological forcing for spinup
+cf_spinup = forcing_climatology(cf)
+
+# Spin up for 100 years to reach quasi-steady state
+mp_spinup = ModelParameters(output_frequency="last")
+profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup, 100)
+
+# Run GEMB with transient forcing and the spun-up profile
+output = gemb(profile_spunup, cf, mp)
+
+## Post-processing examples
+
+# Get grid cell centers for plotting
+z_center = dz2z(parent(output[:dz]))
+
+# Get surface temperature time series
+temp_surface = surface_timeseries(parent(output[:temperature]))
+
+# Regrid to fixed vertical coordinate for plotting
+temp_gridded = gemb_interp(z_center, parent(output[:temperature]), profile_spunup)
+
+# Convert vapor pressure back to relative humidity
+rh = vapor_pressure_to_relative_humidity(
+    parent(cf.vapor_pressure), parent(cf.temperature_air))
+
+println("Simulation complete!")
+println("  Mean surface albedo: ", round(mean(parent(output[:albedo_surface])), digits=3))
+println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content])), digits=3), " m")

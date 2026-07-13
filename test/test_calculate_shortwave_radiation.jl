@@ -38,7 +38,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=false,
-        albedo_method="GreuellKonzelmann",
+        albedo_method=:GreuellKonzelmann,
     )
     cfs = _make_sw_cfs()
 
@@ -64,7 +64,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=false,
-        albedo_method="GardnerSharp",
+        albedo_method=:GardnerSharp,
     )
     cfs = _make_sw_cfs()
 
@@ -90,7 +90,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=true,
-        albedo_method="GreuellKonzelmann",
+        albedo_method=:GreuellKonzelmann,
     )
     cfs = _make_sw_cfs()
 
@@ -115,7 +115,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=true,
-        albedo_method="BrunLefebre",
+        albedo_method=:BrunLefebre,
     )
     cfs = _make_sw_cfs()
 
@@ -149,7 +149,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=true,
-        albedo_method="GreuellKonzelmann",
+        albedo_method=:GreuellKonzelmann,
     )
     cfs = _make_sw_cfs()
 
@@ -179,7 +179,7 @@ end
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         shortwave_subsurface_absorption=true,
-        albedo_method="GreuellKonzelmann",
+        albedo_method=:GreuellKonzelmann,
     )
     cfs = _make_sw_cfs(shortwave_downward=0.0, shortwave_downward_diffuse=0.0)
 

@@ -151,15 +151,16 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
         E_added = temperature[end] * (dz[end] * density[end]) * C_ICE + water[end] * (LF + CtoK * C_ICE)
 
         # Add a grid cell of the same size and temperature to the bottom
-        dz = vcat(dz, [dz[end]])
-        temperature = vcat(temperature, [temperature[end]])
-        water = vcat(water, [water[end]])
-        density = vcat(density, [density[end]])
-        albedo = vcat(albedo, [albedo[end]])
-        albedo_diffuse = vcat(albedo_diffuse, [albedo_diffuse[end]])
-        grain_radius = vcat(grain_radius, [grain_radius[end]])
-        grain_dendricity = vcat(grain_dendricity, [grain_dendricity[end]])
-        grain_sphericity = vcat(grain_sphericity, [grain_sphericity[end]])
+        # Optimized: use push! instead of vcat for single elements
+        push!(dz, dz[end])
+        push!(temperature, temperature[end])
+        push!(water, water[end])
+        push!(density, density[end])
+        push!(albedo, albedo[end])
+        push!(albedo_diffuse, albedo_diffuse[end])
+        push!(grain_radius, grain_radius[end])
+        push!(grain_dendricity, grain_dendricity[end])
+        push!(grain_sphericity, grain_sphericity[end])
 
     elseif z_total > mp.column_zmax + d_tolerance
         # Mass and energy loss

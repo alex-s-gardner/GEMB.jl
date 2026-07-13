@@ -16,7 +16,7 @@ const MATLAB_REF_THERMAL = let
 end
 
 @testset "Sturm method snow" begin
-    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Sturm")
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
     density_snow = [300.0]
     temperature_in = [260.0]
 
@@ -27,7 +27,7 @@ end
 end
 
 @testset "Calonne method snow" begin
-    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Calonne")
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Calonne)
     density_snow = [300.0]
     temperature_in = [260.0]
 
@@ -38,7 +38,7 @@ end
 end
 
 @testset "Ice conductivity" begin
-    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Sturm")
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
     density_ice = [917.0]
 
     # Cold ice
@@ -56,7 +56,7 @@ end
 end
 
 @testset "Mixed profile" begin
-    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Sturm")
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
     temperature_vec = [260.0, 250.0]
     density_vec = [400.0, 920.0]  # 400=Snow, 920=Ice
 
@@ -72,7 +72,7 @@ end
 end
 
 @testset "Density threshold boundary" begin
-    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method="Sturm")
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
     d_vals = [917.0 - 1e-10, 917.0]
     t_val = 260.0
 
@@ -94,14 +94,14 @@ end
         density = MATLAB_REF_THERMAL["density"][:]
 
         # Sturm method
-        mp_sturm = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method="Sturm")
+        mp_sturm = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method=:Sturm)
         k_sturm_julia = GEMB.thermal_conductivity(temperature, density, mp_sturm)
         k_sturm_matlab = MATLAB_REF_THERMAL["K_sturm"][:]
 
         @test k_sturm_julia ≈ k_sturm_matlab rtol=1e-12 atol=1e-14
 
         # Calonne method
-        mp_calonne = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method="Calonne")
+        mp_calonne = GEMB.ModelParameters(density_ice=910.0, thermal_conductivity_method=:Calonne)
         k_calonne_julia = GEMB.thermal_conductivity(temperature, density, mp_calonne)
         k_calonne_matlab = MATLAB_REF_THERMAL["K_calonne"][:]
 

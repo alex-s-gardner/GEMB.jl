@@ -37,7 +37,7 @@ end
     cfs = _make_grain_cfs()
 
     # Method "None" should skip grain evolution
-    mp_none = GEMB.ModelParameters(albedo_method="None")
+    mp_none = GEMB.ModelParameters(albedo_method=:None)
     (gs_out, gdn_out, gsp_out) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp_none)
@@ -47,7 +47,7 @@ end
     @test gsp_out == grain_sphericity
 
     # Method "GreuellKonzelmann" should also skip
-    mp_gk = GEMB.ModelParameters(albedo_method="GreuellKonzelmann")
+    mp_gk = GEMB.ModelParameters(albedo_method=:GreuellKonzelmann)
     (gs_out2, _, _) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp_gk)
@@ -56,7 +56,7 @@ end
 end
 
 @testset "Dendritic dry low gradient" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     temperature = [260.0, 260.0, 260.0]
@@ -80,7 +80,7 @@ end
 end
 
 @testset "Dendritic dry high gradient" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     # High temperature gradient (> 5 K/m)
@@ -102,7 +102,7 @@ end
 end
 
 @testset "Dendritic wet snow" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     temperature = [GEMB.CtoK, GEMB.CtoK, GEMB.CtoK]
@@ -123,7 +123,7 @@ end
 end
 
 @testset "Nondendritic dry (Marbouty)" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     # Moderate gradient (~20 K/m)
@@ -146,7 +146,7 @@ end
 end
 
 @testset "Marbouty density limit" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     temperature = [250.0, 252.0, 254.0]
@@ -166,7 +166,7 @@ end
 end
 
 @testset "Nondendritic wet snow (Brun)" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
 
     temperature = [GEMB.CtoK, GEMB.CtoK, GEMB.CtoK]
@@ -188,7 +188,7 @@ end
 end
 
 @testset "Clamping limits" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     # Large dt to force dendricity toward 0
     cfs = _make_grain_cfs(dt=86400.0 * 100)
 
@@ -209,7 +209,7 @@ end
 end
 
 @testset "Grain size cap" begin
-    mp = GEMB.ModelParameters(albedo_method="GardnerSharp")
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0 * 50)
 
     temperature = [GEMB.CtoK, GEMB.CtoK, GEMB.CtoK]

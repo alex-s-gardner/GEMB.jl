@@ -43,18 +43,18 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     local c0::Vector{Float64}
     local c1::Vector{Float64}
 
-    if mp.densification_method == "HerronLangway"
+    if mp.densification_method == :HerronLangway
         c0 = (11 .* exp.(-10160 ./ (temperature[idx] .* R))) .* cfs.precipitation_mean / 1000
         c1 = (575 .* exp.(-21400 ./ (temperature[.!idx] .* R))) .* (cfs.precipitation_mean / 1000)^0.5
 
-    elseif mp.densification_method == "Arthern"
+    elseif mp.densification_method == :Arthern
         H = exp.((-60000.0 ./ (temperature .* R)) .+ (42400.0 ./ (cfs.temperature_air_mean .* R))) .*
             (cfs.precipitation_mean * 9.81)
 
         c0 = 0.07 .* H[idx]
         c1 = 0.03 .* H[.!idx]
 
-    elseif mp.densification_method == "ArthernB"
+    elseif mp.densification_method == :ArthernB
         # calculate overburden pressure
         obp = vcat([0.0], cumsum(dz[1:end-1]) .* density[1:end-1])
 
@@ -62,19 +62,19 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         c0 = 9.2e-9 .* H[idx]
         c1 = 3.7e-9 .* H[.!idx]
 
-    elseif mp.densification_method == "LiZwally"
+    elseif mp.densification_method == :LiZwally
         c_all = (cfs.precipitation_mean ./ mp.density_ice) .*
             max.(139.21 .- 0.542 .* cfs.temperature_air_mean, 1.0) .* 8.36 .* max.(CtoK .- temperature, 1.0) .^ (-2.061)
         c0 = c_all[idx]
         c1 = c_all[.!idx]
 
-    elseif mp.densification_method == "Helsen"
+    elseif mp.densification_method == :Helsen
         c_all = (cfs.precipitation_mean ./ mp.density_ice) .*
             max.(76.138 .- 0.28965 .* cfs.temperature_air_mean, 1.0) .* 8.36 .* max.(CtoK .- temperature, 1.0) .^ (-2.061)
         c0 = c_all[idx]
         c1 = c_all[.!idx]
 
-    elseif mp.densification_method == "Ligtenberg"
+    elseif mp.densification_method == :Ligtenberg
         H = exp.((-60000.0 ./ (temperature .* R)) .+ (42400.0 ./ (cfs.temperature_air_mean .* R))) .*
             (cfs.precipitation_mean .* 9.81)
 

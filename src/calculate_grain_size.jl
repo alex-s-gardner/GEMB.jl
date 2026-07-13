@@ -33,7 +33,7 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     water_tolerance = 1e-13
 
     # Only run grain growth for these albedo methods
-    if !(mp.albedo_method == "GardnerSharp" || mp.albedo_method == "BrunLefebre")
+    if !(mp.albedo_method == :GardnerSharp || mp.albedo_method == :BrunLefebre)
         return grain_radius, grain_dendricity, grain_sphericity
     end
 

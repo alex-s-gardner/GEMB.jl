@@ -49,19 +49,19 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
     # Density of fresh snow [kg m-3]
     density_new_snow = 0.0
-    if mp.new_snow_method == "150kgm2"
+    if mp.new_snow_method == Symbol("150kgm2")
         density_new_snow = 150.0
-    elseif mp.new_snow_method == "350kgm2"
+    elseif mp.new_snow_method == Symbol("350kgm2")
         density_new_snow = 350.0
-    elseif mp.new_snow_method == "Fausto"
+    elseif mp.new_snow_method == :Fausto
         density_new_snow = 315.0
         # From Vionnet et al., 2012 (Crocus)
         gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
         gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)
         re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, gdn_tolerance)
-    elseif mp.new_snow_method == "Kaspers"
+    elseif mp.new_snow_method == :Kaspers
         density_new_snow = (7.36e-2 + 1.06e-3 * min(cfs.temperature_air_mean, CtoK - T_tolerance) + 6.69e-2 * cfs.precipitation_mean / 1000.0 + 4.77e-3 * cfs.wind_speed_mean) * 1000.0
-    elseif mp.new_snow_method == "KuipersMunneke"
+    elseif mp.new_snow_method == :KuipersMunneke
         density_new_snow = 481.0 + 4.834 * (cfs.temperature_air_mean - CtoK)
     end
 

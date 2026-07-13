@@ -32,7 +32,7 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
        ((mp.density_ice - density[1]) < d_tolerance)
         # all sw radiation is absorbed by the top grid cell
 
-        if mp.albedo_method == "GardnerSharp"
+        if mp.albedo_method == :GardnerSharp
             shortwave_flux[1] = (1.0 - albedo_surface) * max(0.0, (cfs.shortwave_downward - cfs.shortwave_downward_diffuse)) +
                 (1.0 - albedo_diffuse_surface) * cfs.shortwave_downward_diffuse
         else
@@ -41,7 +41,7 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
 
     else  # sw radiation is absorbed at depth within the glacier
 
-        if mp.albedo_method == "BrunLefebre"
+        if mp.albedo_method == :BrunLefebre
             # convert effective radius [mm] to grain size [m]
             gsz = (grain_radius .* 2) ./ 1000
 

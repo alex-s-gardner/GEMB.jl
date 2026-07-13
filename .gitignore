@@ -1,3 +1,28 @@
 /Manifest.toml
 .vscode/settings.json
 .DS_Store
+
+# Development artifacts
+*.html
+*.png
+*.jls
+junk*
+
+# Benchmark/profiling scripts (local only)
+examples/benchmark_*.jl
+examples/compare_outputs.jl
+examples/quick_benchmark.jl
+examples/time_test.jl
+examples/*.txt
+
+# Reports (generated during development)
+CROSS_VALIDATION_SUMMARY.md
+MATLAB_JULIA_COMPARISON.md
+OPTIMIZATION_REPORT.md
+OPTIMIZATION_RESULTS.txt
+OPTIMIZATION_SUMMARY.md
+PERFORMANCE_COMPARISON.md
+
+# Test files not in runtests.jl
+test/test_optimization_validation.jl
+.claude/settings.local.json
