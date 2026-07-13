@@ -38,9 +38,9 @@ using GEMB: Statistics
     # Tolerances reflect realistic expectations for accumulated numerical error
 
     if VERSION >= v"1.11"
-        # Julia 1.11+: Tight tolerances (modern versions show good agreement)
+        # Julia 1.11+: Moderate tolerances (modern versions show good agreement with platform variations)
         @test mean_albedo ≈ 0.821303 atol=1e-5      # 0.001% relative
-        @test total_melt ≈ 11504.085424 atol=1.0     # 0.01% relative
+        @test total_melt ≈ 11504.085424 atol=3.0     # 0.026% relative (CI runner variations observed: ±1.1 kg/m²)
         @test total_runoff ≈ 5217.635140 atol=5.0    # 0.1% relative
     else
         # Julia 1.10: Relaxed tolerances (known platform/version differences)
