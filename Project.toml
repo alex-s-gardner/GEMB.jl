@@ -18,14 +18,11 @@ GEMB_ClimateForcing = "a1b2c3d4-5678-9abc-def0-123456789abc"
 GEMBClimateForcing = "GEMB_ClimateForcing"
 
 [compat]
-Dates = "1.11.0"
 DimensionalData = "0.30.1"
 FillArrays = "1.16.0"
 GEMB_ClimateForcing = "0.1"
 JSON = "1.6.1"
-Random = "1.11.0"
-Statistics = "1.11.1"
-julia = "1.10.10"
+julia = "1.10"
 
 [extras]
 MAT = "23992714-dd62-5051-b70f-ba57cb901cac"
