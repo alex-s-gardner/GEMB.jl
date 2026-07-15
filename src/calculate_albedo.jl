@@ -107,7 +107,10 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
 
             # In a snow layer < 10cm, account for mix of ice and snow
             lice_first = something(findfirst(d -> d >= density_phc - d_tolerance, density), length(density) + 1)
-            depthsnow = sum(dz[1:(lice_first-1)])
+            depthsnow = 0.0
+            @inbounds @simd for i in 1:(lice_first-1)
+                depthsnow += dz[i]
+            end
 
             if (depthsnow <= (0.1 + d_tolerance)) && (lice_first <= length(density)) &&
                (density[lice_first] >= (density_phc - d_tolerance))
@@ -172,7 +175,10 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
 
     # Two layer albedo parameterization
     lice_first = something(findfirst(d -> d >= 830 - d_tolerance, density), length(density) + 1)
-    z1 = sum(dz[1:(lice_first-1)] .* density[1:(lice_first-1)])
+    z1 = 0.0
+    @inbounds @simd for i in 1:(lice_first-1)
+        z1 += dz[i] * density[i]
+    end
 
     m = length(density)
     if (m > 0) && (lice_first <= m) && (z1 > d_tolerance)
