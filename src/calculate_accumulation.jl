@@ -87,7 +87,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 temperature[1] = ((cfs.temperature_air * cfs.precipitation) + (temperature[1] * M_surface)) / M_surface_new
 
                 # adjust albedo
-                if mp.albedo_method != "150kgm2"
+                if mp.new_snow_method != Symbol("150kgm2")
                     albedo[1] = (mp.albedo_snow * cfs.precipitation + albedo[1] * M_surface) / M_surface_new
                 end
 

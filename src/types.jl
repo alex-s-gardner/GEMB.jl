@@ -14,27 +14,27 @@ Base.@kwdef struct ModelParameters
     run_prefix::String = "default"
 
     # --- Density & Densification ---
-    densification_method::String = "Arthern"
-    densification_coeffs_M01::String = "Gre_RACMO_GS_SW0"
-    new_snow_method::String = "350kgm2"
+    densification_method::Symbol = :Arthern
+    densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
+    new_snow_method::Symbol = Symbol("350kgm2")
     density_ice::Float64 = 910.0
     rain_temperature_threshold::Float64 = 273.15
 
     # --- Longwave Emissivity ---
-    emissivity_method::String = "uniform"
+    emissivity_method::Symbol = :uniform
     emissivity::Float64 = 0.97
     emissivity_grain_radius_large::Float64 = 0.97
     emissivity_grain_radius_threshold::Float64 = 10.0
     surface_roughness_effective_ratio::Float64 = 0.10
 
     # --- Thermal Conductivity ---
-    thermal_conductivity_method::String = "Sturm"
+    thermal_conductivity_method::Symbol = :Sturm
 
     # --- Melt & Water ---
     water_irreducible_saturation::Float64 = 0.07
 
     # --- Albedo & Radiation ---
-    albedo_method::String = "GardnerSharp"
+    albedo_method::Symbol = :GardnerSharp
     albedo_density_threshold::Float64 = Inf
     shortwave_subsurface_absorption::Bool = false
     albedo_snow::Float64 = 0.85
@@ -51,7 +51,7 @@ Base.@kwdef struct ModelParameters
     albedo_K::Float64 = 7.0
 
     # --- Output Controls ---
-    output_frequency::String = "all"
+    output_frequency::Symbol = :all
     output_padding::Int = 1000
 
     # --- Grid Geometry ---
@@ -88,6 +88,17 @@ struct ClimateForcing
     shortwave_downward::DimArray
     longwave_downward::DimArray
     vapor_pressure::DimArray
+
+    # Time-varying model parameters (DimArray with Ti dimension, typically Fill-backed)
+    black_carbon_snow::DimArray
+    black_carbon_ice::DimArray
+    cloud_optical_thickness::DimArray
+    solar_zenith_angle::DimArray
+    shortwave_downward_diffuse::DimArray
+    cloud_fraction::DimArray
+
+    # Time step [s]
+    time_step::Int
 
     # Metadata (scalars)
     temperature_air_mean::Float64

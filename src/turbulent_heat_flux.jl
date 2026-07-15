@@ -1,23 +1,30 @@
 """
-    turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs::ClimateForcingStep)
+    turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs::ClimateForcingStep; min_wind_speed=0.01)
 
 Compute sensible and latent heat fluxes using Monin-Obukhov similarity theory.
 Matches MATLAB's `turbulent_heat_flux.m`.
 
+`min_wind_speed` floors `cfs.wind_speed` (which would otherwise drive the bulk
+Richardson number to infinity at zero wind); clamping here avoids rebuilding the
+`ClimateForcingStep` in the caller.
+
 Returns (heat_flux_sensible, heat_flux_latent, latent_heat) [W m-2, W m-2, J kg-1].
 """
 function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
-    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep)
+    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep;
+    min_wind_speed::Float64=0.01)
+
+    wind_speed = max(cfs.wind_speed, min_wind_speed)
 
     # Bulk-transfer coefficient (Neutral)
     An = VON_KARMAN^2  # 0.4^2 = 0.16
-    C = An * cfs.wind_speed
+    C = An * wind_speed
 
     # Bulk Richardson Number
     Ri = ((100000 / cfs.pressure_air)^0.286) *
          (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
          (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
-          ((cfs.wind_speed / cfs.wind_observation_height)^2.0))
+          ((wind_speed / cfs.wind_observation_height)^2.0))
 
     # Constants for Beljaars and Holtslag (1991)
     a1 = 1.0

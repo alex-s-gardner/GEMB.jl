@@ -3,6 +3,7 @@ module GEMB
 using DimensionalData
 using Dates
 using Statistics
+using FillArrays: Fill
 
 # Physical constants
 include("constants.jl")

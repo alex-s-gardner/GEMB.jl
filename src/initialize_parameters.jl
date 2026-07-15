@@ -15,16 +15,16 @@ end
 
 function validate_parameters(mp::ModelParameters)
     # Densification method
-    @assert mp.densification_method in ("HerronLangway", "Arthern", "Ligtenberg") "densification_method must be one of: HerronLangway, Arthern, Ligtenberg"
+    @assert mp.densification_method in (:HerronLangway, :Arthern, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, Ligtenberg"
 
     # Densification coefficients
-    valid_coeffs = ("Ant_ERA5_GS_SW0", "Ant_ERA5v4_Paolo23", "Ant_ERA5_BF_SW1",
-        "Ant_RACMO_GS_SW0", "Ant_Ligtenberg", "Gre_ERA5_GS_SW0",
-        "Gre_RACMO_GS_SW0", "Gre_RACMO_GB_SW1", "Gre_KuipersMunneke")
+    valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
+        :Ant_RACMO_GS_SW0, :Ant_Ligtenberg, :Gre_ERA5_GS_SW0,
+        :Gre_RACMO_GS_SW0, :Gre_RACMO_GB_SW1, :Gre_KuipersMunneke)
     @assert mp.densification_coeffs_M01 in valid_coeffs "Invalid densification_coeffs_M01"
 
     # New snow method
-    @assert mp.new_snow_method in ("150kgm2", "350kgm2", "Fausto", "Kaspers", "KuipersMunneke") "Invalid new_snow_method"
+    @assert mp.new_snow_method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
 
     # Density of ice
     @assert 800 <= mp.density_ice <= 950 "density_ice must be in [800, 950]"
@@ -33,7 +33,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 270.15 <= mp.rain_temperature_threshold <= 276.15 "rain_temperature_threshold must be in [270.15, 276.15]"
 
     # Emissivity method
-    @assert mp.emissivity_method in ("uniform", "grain_radius_threshold", "grain_radius_w_threshold") "Invalid emissivity_method"
+    @assert mp.emissivity_method in (:uniform, :grain_radius_threshold, :grain_radius_w_threshold) "Invalid emissivity_method"
 
     # Emissivity values
     @assert 0 <= mp.emissivity <= 1 "emissivity must be in [0, 1]"
@@ -44,13 +44,13 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.surface_roughness_effective_ratio <= 3 "surface_roughness_effective_ratio must be in [0, 3]"
 
     # Thermal conductivity
-    @assert mp.thermal_conductivity_method in ("Sturm", "Calonne") "thermal_conductivity_method must be Sturm or Calonne"
+    @assert mp.thermal_conductivity_method in (:Sturm, :Calonne) "thermal_conductivity_method must be Sturm or Calonne"
 
     # Water
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
 
     # Albedo method
-    @assert mp.albedo_method in ("None", "GardnerSharp", "BrunLefebre", "GreuellKonzelmann", "Bougamont2005") "Invalid albedo_method"
+    @assert mp.albedo_method in (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann, :Bougamont2005) "Invalid albedo_method"
 
     # Albedo values
     @assert mp.albedo_density_threshold >= 0 "albedo_density_threshold must be >= 0"
@@ -72,7 +72,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 2 <= mp.albedo_K <= 12
 
     # Output
-    @assert mp.output_frequency in ("all", "monthly", "daily", "last") "Invalid output_frequency"
+    @assert mp.output_frequency in (:all, :monthly, :daily, :last) "Invalid output_frequency"
     @assert 0 <= mp.output_padding <= 10000
 
     # Grid geometry

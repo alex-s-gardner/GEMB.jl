@@ -36,7 +36,13 @@ function initialize_forcing(
     wind_speed_mean::Real=NaN,
     precipitation_mean::Real=NaN,
     temperature_observation_height::Real=NaN,
-    wind_observation_height::Real=NaN
+    wind_observation_height::Real=NaN,
+    black_carbon_snow::Real=0.0,
+    black_carbon_ice::Real=0.0,
+    cloud_optical_thickness::Real=0.0,
+    solar_zenith_angle::Real=0.0,
+    shortwave_downward_diffuse::Real=0.0,
+    cloud_fraction::Real=0.1
 )
     # Validate input sizes
     n = length(time)
@@ -84,6 +90,10 @@ function initialize_forcing(
         wind_observation_height = 10.0
     end
 
+    # Compute the forcing time step [s] from the (assumed uniform) time axis
+    dt_seconds = Dates.value(time[2] - time[1]) / 1000.0  # milliseconds to seconds
+    time_step = round(Int, dt_seconds)
+
     # Create DimArrays with Ti dimension
     tdim = Ti(time)
 
@@ -95,6 +105,13 @@ function initialize_forcing(
         DimArray(Float64.(shortwave_downward), (tdim,)),
         DimArray(Float64.(longwave_downward), (tdim,)),
         DimArray(Float64.(vapor_pressure), (tdim,)),
+        DimArray(Fill(Float64(black_carbon_snow), n), (tdim,)),
+        DimArray(Fill(Float64(black_carbon_ice), n), (tdim,)),
+        DimArray(Fill(Float64(cloud_optical_thickness), n), (tdim,)),
+        DimArray(Fill(Float64(solar_zenith_angle), n), (tdim,)),
+        DimArray(Fill(Float64(shortwave_downward_diffuse), n), (tdim,)),
+        DimArray(Fill(Float64(cloud_fraction), n), (tdim,)),
+        time_step,
         Float64(temperature_air_mean),
         Float64(wind_speed_mean),
         Float64(precipitation_mean),
