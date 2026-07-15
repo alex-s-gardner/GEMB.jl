@@ -15,6 +15,29 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance model. 
 
 The model is a translation from MATLAB to Julia, maintaining fidelity to the original implementation while leveraging Julia's performance and type system.
 
+## Quick Start
+
+Basic workflow for running GEMB:
+
+```julia
+using GEMB
+
+# 1. Initialize model parameters
+params = initialize_parameters()
+
+# 2. Create or load climate forcing data
+forcing = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
+
+# 3. Initialize the vertical profile
+profile = initialize_profile(params, forcing)
+
+# 4. Run the model
+output = gemb(profile, forcing, params)
+
+# 5. Extract surface temperature time series
+T_surface = surface_timeseries(output.temperature)
+```
+
 ## GEMB_ClimateForcing Extension
 
 GEMB.jl includes a package extension (`ext/GEMBClimateForcing.jl`) that integrates with the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package for loading real climate data (ERA5, ERA5-Land, MERRA-2) from CDS/GES-DISC.
@@ -109,11 +132,11 @@ GEMB follows a modular physics-based architecture:
    - `gemb(profile, climate_forcing, mp)` in `gemb_driver.jl`: Main driver function that loops over time, accumulates output
 
 5. **Utilities**:
-   - `gemb_spinup()` in `spinup.jl`: Cycles forcing to reach equilibrium (for multi-millennial spinups)
+   - `gemb_spinup()` in `spinup.jl`: Cycles forcing to reach equilibrium (for multi-millennial spinups). Returns the final equilibrated profile and all spinup output.
    - `gemb_profile()`, `gemb_interp()` in `profile_extract.jl`: Extract/interpolate profiles at specific times/depths
    - `surface_timeseries()`: Extract surface values from column arrays
    - `dz2z()`: Convert grid spacing to depth coordinates
-   - `forcing_climatology()` in `forcing_climatology.jl`: Creates synthetic climatology from time series
+   - `forcing_climatology()` in `forcing_climatology.jl`: Creates synthetic climatology from time series (useful for spinup)
    - `simulate_climate_forcing()`: Generates synthetic forcing data for testing
    - Climate utilities: `dewpoint_to_vapor_pressure()`, `vapor_pressure_to_relative_humidity()`, `relative_humidity_to_vapor_pressure()`
    - Climate fitting functions: `fit_air_temperature()`, `fit_precipitation()`, `fit_longwave_irradiance_delta()`, `fit_seasonal_daily_noise()`

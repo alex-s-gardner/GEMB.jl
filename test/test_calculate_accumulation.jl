@@ -129,6 +129,9 @@ end
     cfs = _make_accum_cfs(precipitation=2.0, temperature_air=260.0)
 
     old_mass = density[1] * dz[1]
+    old_dz1 = dz[1]
+    old_t1 = t_vec[1]
+    old_a1 = albedo_in[1]
 
     (t_out, dz_out, d_out, _, _, _, _, a_out, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
@@ -140,18 +143,18 @@ end
 
     # Mass conservation and mixing
     new_mass = old_mass + 2.0
-    expected_dz = dz[1] + 2.0 / density_snow
+    expected_dz = old_dz1 + 2.0 / density_snow
     expected_d = new_mass / expected_dz
 
     @test dz_out[1] ≈ expected_dz atol = 1e-10
     @test d_out[1] ≈ expected_d atol = 1e-10
 
     # Temperature weighting
-    expected_t = (260.0 * 2.0 + t_vec[1] * old_mass) / new_mass
+    expected_t = (260.0 * 2.0 + old_t1 * old_mass) / new_mass
     @test t_out[1] ≈ expected_t atol = 1e-10
 
     # Albedo weighting
-    expected_a = (0.85 * 2.0 + albedo_in[1] * old_mass) / new_mass
+    expected_a = (0.85 * 2.0 + old_a1 * old_mass) / new_mass
     @test a_out[1] ≈ expected_a atol = 1e-10
 end
 
@@ -183,6 +186,8 @@ end
     ci = GEMB.C_ICE
 
     old_mass = density[1] * dz[1]
+    old_dz1 = dz[1]
+    old_t1 = t_vec[1]
 
     (t_out, dz_out, d_out, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
@@ -194,13 +199,13 @@ end
 
     # Mass update: thickness stays same, density increases
     new_mass = old_mass + 10.0
-    @test d_out[1] ≈ new_mass / dz[1] atol = 1e-10
-    @test dz_out[1] ≈ dz[1] atol = 1e-10
+    @test d_out[1] ≈ new_mass / old_dz1 atol = 1e-10
+    @test dz_out[1] ≈ old_dz1 atol = 1e-10
 
     # Temperature update includes latent heat logic
     # T(1) = (precipitation * (temperature_air + LF/CI) + T(1) * mInit(1)) / mass
     term_rain = 10.0 * (275.0 + lf / ci)
-    term_snow = t_vec[1] * old_mass
+    term_snow = old_t1 * old_mass
     expected_t = (term_rain + term_snow) / new_mass
 
     @test t_out[1] ≈ expected_t atol = 1e-8

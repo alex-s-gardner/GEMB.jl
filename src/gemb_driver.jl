@@ -128,9 +128,31 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     thickness_added_total = 0.0
 
     # Main time loop
-    for t in times
-        # Extract single timestep forcing
-        forcing_step = climate_forcing[Ti=At(t)]
+    # Note: direct integer indexing into DimArrays (arr[i]) is ~6x faster than At() lookup
+    # (arr[Ti=At(t)]). DimArray[i] and parent(arr)[i] have identical performance.
+    _dt_f = Float64(dt_int)
+    for i in eachindex(times)
+        # Construct ClimateForcingStep using direct integer indexing into DimArrays
+        forcing_step = ClimateForcingStep(
+            _dt_f,
+            climate_forcing.temperature_air[i],
+            climate_forcing.pressure_air[i],
+            climate_forcing.precipitation[i],
+            climate_forcing.wind_speed[i],
+            climate_forcing.shortwave_downward[i],
+            climate_forcing.longwave_downward[i],
+            climate_forcing.vapor_pressure[i],
+            climate_forcing.temperature_air_mean,
+            climate_forcing.wind_speed_mean,
+            climate_forcing.precipitation_mean,
+            climate_forcing.temperature_observation_height,
+            climate_forcing.wind_observation_height,
+            climate_forcing.black_carbon_snow[i],
+            climate_forcing.black_carbon_ice[i],
+            climate_forcing.cloud_optical_thickness[i],
+            climate_forcing.solar_zenith_angle[i],
+            climate_forcing.shortwave_downward_diffuse[i],
+            climate_forcing.cloud_fraction[i])
 
         # Run physics for single timestep
         state, flux = gemb_core(state, forcing_step, model_parameters, verbose)
@@ -152,13 +174,19 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         cum_albedo_surface += state.albedo[1]
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
-        cum_firn_air_content += sum(state.dz .* (mp.density_ice .- min.(state.density, mp.density_ice))) / 1000
+        # Compute firn air content without temporary array allocation
+        _fac = 0.0
+        @inbounds for j in eachindex(state.dz)
+            _fac += state.dz[j] * (mp.density_ice - min(state.density[j], mp.density_ice))
+        end
+        cum_firn_air_content += _fac / 1000
         cum_thickness += thickness_added_total
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
         cum_count += 1
 
         # Store output at designated intervals
+        t = times[i]
         if t in output_times
             # Cumulative variables (1D arrays indexed by time)
             output[:melt][Ti=At(t)] = cum_melt

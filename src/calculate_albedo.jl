@@ -22,9 +22,7 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
     evaporation_condensation::Float64, melt_surface::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    # Copy inputs to avoid mutation
-    albedo = copy(albedo)
-    albedo_diffuse = copy(albedo_diffuse)
+    # Note: albedo and albedo_diffuse are modified in-place (only element [1]).
 
     T_tolerance = 1e-10
     d_tolerance = 1e-11
@@ -108,8 +106,7 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
            ((mp.albedo_density_threshold - density[1]) >= d_tolerance)
 
             # In a snow layer < 10cm, account for mix of ice and snow
-            lice_vec = findall(vcat(density, 999.0) .>= density_phc - d_tolerance)
-            lice_first = lice_vec[1]
+            lice_first = something(findfirst(d -> d >= density_phc - d_tolerance, density), length(density) + 1)
             depthsnow = sum(dz[1:(lice_first-1)])
 
             if (depthsnow <= (0.1 + d_tolerance)) && (lice_first <= length(density)) &&
@@ -174,8 +171,7 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
         -(c1^0.55) / (0.16 + 0.6 * S1^0.5 + (1.8 * c1^0.6) * (S1^(-0.25))))
 
     # Two layer albedo parameterization
-    lice_vec = findall(vcat(density, 999.0) .>= 830 - d_tolerance)
-    lice_first = lice_vec[1]
+    lice_first = something(findfirst(d -> d >= 830 - d_tolerance, density), length(density) + 1)
     z1 = sum(dz[1:(lice_first-1)] .* density[1:(lice_first-1)])
 
     m = length(density)

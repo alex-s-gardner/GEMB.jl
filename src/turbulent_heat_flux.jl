@@ -7,19 +7,21 @@ Matches MATLAB's `turbulent_heat_flux.m`.
 Returns (heat_flux_sensible, heat_flux_latent, latent_heat) [W m-2, W m-2, J kg-1].
 """
 function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
-    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep)
+    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep;
+    min_wind_speed::Float64=0.01)
 
     T_tolerance = 1e-10
 
     # Bulk-transfer coefficient (Neutral)
     An = VON_KARMAN^2  # 0.4^2 = 0.16
-    C = An * cfs.wind_speed
+    wind_speed = max(cfs.wind_speed, min_wind_speed)
+    C = An * wind_speed
 
     # Bulk Richardson Number
     Ri = ((100000 / cfs.pressure_air)^0.286) *
          (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
          (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
-          ((cfs.wind_speed / cfs.wind_observation_height)^2.0))
+          ((wind_speed / cfs.wind_observation_height)^2.0))
 
     # Constants for Beljaars and Holtslag (1991)
     a1 = 1.0

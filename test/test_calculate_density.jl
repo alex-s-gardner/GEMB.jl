@@ -40,8 +40,10 @@ end
     cfs = _make_density_cfs()
 
     mass_initial = density .* dz
+    density_before = copy(density)
+    dz_before = copy(dz)
 
-    (dz_out, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    (dz_out, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
     mass_final = density_out .* dz_out
 
@@ -49,10 +51,10 @@ end
     @test mass_final ≈ mass_initial atol = 1e-10
 
     # Density should increase over time
-    @test all(density_out .> density)
+    @test all(density_out .> density_before)
 
     # Thickness should decrease over time
-    @test all(dz_out .< dz)
+    @test all(dz_out .< dz_before)
 end
 
 @testset "Density clamping at ice density" begin
@@ -73,7 +75,7 @@ end
         densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
 
-    (_, density_out) = GEMB.calculate_density(t_vec, dz, density_near_ice, grain_radius, cfs, mp)
+    (_, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density_near_ice), grain_radius, cfs, mp)
 
     # Density must be clamped at density_ice
     @test all(density_out .<= 917.0 + 1e-10)
@@ -93,9 +95,10 @@ end
     )
     cfs = _make_density_cfs()
 
-    (_, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    density_before = copy(density)
+    (_, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
-    @test all(density_out .> density)
+    @test all(density_out .> density_before)
 end
 
 @testset "Arthern densification" begin
@@ -112,9 +115,10 @@ end
     )
     cfs = _make_density_cfs()
 
-    (_, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    density_before = copy(density)
+    (_, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
-    @test all(density_out .> density)
+    @test all(density_out .> density_before)
 end
 
 @testset "ArthernB grain size sensitivity" begin
@@ -132,11 +136,11 @@ end
     cfs = _make_density_cfs()
 
     # Standard grain size
-    (_, density_std) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    (_, density_std) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
     # Larger grain size -> slower densification
     grain_radius_large = grain_radius * 2
-    (_, density_large) = GEMB.calculate_density(t_vec, dz, density, grain_radius_large, cfs, mp)
+    (_, density_large) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius_large, cfs, mp)
 
     # ArthernB: rate is proportional to 1/r^2
     # Larger grains -> slower densification -> lower final density
@@ -158,13 +162,15 @@ end
     grain_radius = 0.5 * ones(n)
     cfs = _make_density_cfs()
 
+    density_before = copy(density)
+
     # Test Case 1: Standard RACMO
     mp1 = GEMB.ModelParameters(
         density_ice=917.0,
         densification_method=:Ligtenberg,
         densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
-    (_, d1) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp1)
+    (_, d1) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp1)
 
     # Test Case 2: ERA5 variant (different M coefficients)
     mp2 = GEMB.ModelParameters(
@@ -172,11 +178,11 @@ end
         densification_method=:Ligtenberg,
         densification_coeffs_M01=:Ant_ERA5_BF_SW1,
     )
-    (_, d2) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp2)
+    (_, d2) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp2)
 
     # Ensure densification occurred
-    @test all(d1 .> density)
-    @test all(d2 .> density)
+    @test all(d1 .> density_before)
+    @test all(d2 .> density_before)
 
     # Different coefficients should produce different results
     @test d1 != d2
@@ -190,15 +196,16 @@ end
     grain_radius = 0.5 * ones(n)
     cfs = _make_density_cfs()
 
+    density_before = copy(density)
     mp = GEMB.ModelParameters(
         density_ice=917.0,
         densification_method=:Ligtenberg,
         densification_coeffs_M01=:Gre_KuipersMunneke,
     )
 
-    (_, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    (_, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
-    @test all(density_out .> density)
+    @test all(density_out .> density_before)
 end
 
 @testset "Zero time step (no change)" begin
@@ -216,10 +223,12 @@ end
         densification_coeffs_M01=:Ant_RACMO_GS_SW0,
     )
 
-    (dz_out, density_out) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp)
+    density_before = copy(density)
+    dz_before = copy(dz)
+    (dz_out, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp)
 
-    @test density_out ≈ density
-    @test dz_out ≈ dz
+    @test density_out ≈ density_before
+    @test dz_out ≈ dz_before
 end
 
 @testset "Ligtenberg bare ice logic (density_ice = 820 vs 917)" begin
@@ -236,7 +245,7 @@ end
         densification_method=:Ligtenberg,
         densification_coeffs_M01=:Gre_RACMO_GS_SW0,
     )
-    (_, density_820) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp_820)
+    (_, density_820) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp_820)
 
     # Case B: density_ice ~ 917 (standard branch)
     mp_917 = GEMB.ModelParameters(
@@ -244,7 +253,7 @@ end
         densification_method=:Ligtenberg,
         densification_coeffs_M01=:Gre_RACMO_GS_SW0,
     )
-    (_, density_917) = GEMB.calculate_density(t_vec, dz, density, grain_radius, cfs, mp_917)
+    (_, density_917) = GEMB.calculate_density(t_vec, copy(dz), copy(density), grain_radius, cfs, mp_917)
 
     # Different density_ice branches should produce different results
     # Check only values well below 820

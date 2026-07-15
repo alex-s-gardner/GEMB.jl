@@ -19,16 +19,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     albedo_diffuse::Vector{Float64}, rain::Float64,
     mp::ModelParameters, verbose::Bool)
 
-    # Copy inputs to avoid mutation
-    temperature = copy(temperature)
-    dz = copy(dz)
-    density = copy(density)
-    water = copy(water)
-    grain_radius = copy(grain_radius)
-    grain_dendricity = copy(grain_dendricity)
-    grain_sphericity = copy(grain_sphericity)
-    albedo = copy(albedo)
-    albedo_diffuse = copy(albedo_diffuse)
+    # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
     T_tolerance = 1e-10
     d_tolerance = 1e-11
@@ -242,16 +233,18 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         runoff_total = sum(runoff) + flux_dn[Xi]
 
         # delete all cells with zero mass
-        D = M .<= 0 + water_tolerance
-        M = M[.!D]
-        water = water[.!D]
-        density = density[.!D]
-        temperature = temperature[.!D]
-        albedo = albedo[.!D]
-        grain_radius = grain_radius[.!D]
-        grain_dendricity = grain_dendricity[.!D]
-        grain_sphericity = grain_sphericity[.!D]
-        albedo_diffuse = albedo_diffuse[.!D]
+        to_delete = findall(M .<= water_tolerance)
+        if !isempty(to_delete)
+            deleteat!(M, to_delete)
+            deleteat!(water, to_delete)
+            deleteat!(density, to_delete)
+            deleteat!(temperature, to_delete)
+            deleteat!(albedo, to_delete)
+            deleteat!(grain_radius, to_delete)
+            deleteat!(grain_dendricity, to_delete)
+            deleteat!(grain_sphericity, to_delete)
+            deleteat!(albedo_diffuse, to_delete)
+        end
 
         # calculate new grid lengths
         dz = M ./ density

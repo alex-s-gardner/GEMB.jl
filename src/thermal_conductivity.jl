@@ -15,18 +15,25 @@ Returns vector of thermal conductivities [W m-1 K-1].
 """
 function thermal_conductivity(temperature::AbstractVector, density::AbstractVector, mp::ModelParameters)
     d_tolerance = 1e-11
+    density_ice = mp.density_ice
 
-    # Vectorized version using broadcasting and ifelse
-    snow_mask = density .< (mp.density_ice - d_tolerance)
-
+    K = Vector{Float64}(undef, length(density))
     if mp.thermal_conductivity_method == :Calonne
-        K = @. ifelse(snow_mask,
-                      0.024 - 1.23e-4 * density + 2.5e-6 * density^2,
-                      9.828 * exp(-5.7e-3 * temperature))
-    else  # "Sturm"
-        K = @. ifelse(snow_mask,
-                      0.138 - 1.01e-3 * density + 3.233e-6 * density^2,
-                      9.828 * exp(-5.7e-3 * temperature))
+        @inbounds for i in eachindex(density)
+            if density[i] < density_ice - d_tolerance
+                K[i] = 0.024 - 1.23e-4 * density[i] + 2.5e-6 * density[i]^2
+            else
+                K[i] = 9.828 * exp(-5.7e-3 * temperature[i])
+            end
+        end
+    else  # Sturm
+        @inbounds for i in eachindex(density)
+            if density[i] < density_ice - d_tolerance
+                K[i] = 0.138 - 1.01e-3 * density[i] + 3.233e-6 * density[i]^2
+            else
+                K[i] = 9.828 * exp(-5.7e-3 * temperature[i])
+            end
+        end
     end
 
     return K

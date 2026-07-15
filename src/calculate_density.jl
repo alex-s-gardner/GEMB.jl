@@ -22,9 +22,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    # Copy inputs to avoid mutation
-    dz = copy(dz)
-    density = copy(density)
+    # Note: density is modified in-place. dz is recomputed from mass_init / density.
 
     d_tolerance = 1e-11
 

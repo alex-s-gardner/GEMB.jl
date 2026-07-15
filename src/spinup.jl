@@ -8,7 +8,7 @@ Returns the spun-up profile DimStack.
 
 Matches MATLAB's `gemb_spinup.m`.
 """
-function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters, n_cycles::Int; verbose::Bool=false)
+function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters, cycles::Int; verbose::Bool=false)
     # Force output_frequency to :last for spinup efficiency
     mp_spinup = ModelParameters(;
         (field => getfield(mp, field) for field in fieldnames(ModelParameters) if field != :output_frequency)...,
@@ -16,9 +16,11 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters,
     )
 
     current_profile = profile
-    for cycle in 1:n_cycles
+    for cycle in 1:cycles
         out = gemb(current_profile, cf, mp_spinup; verbose=verbose)
         current_profile = gemb_profile(out)
+
+        println("Spinup cycle $cycle complete. Mean surface density: $(round(mean(parent(current_profile[:density])), digits=2)) kg/m³")
     end
     return current_profile
 end

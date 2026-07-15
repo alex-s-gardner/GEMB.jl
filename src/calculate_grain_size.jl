@@ -23,10 +23,8 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     grain_sphericity::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    # Copy inputs to avoid mutation
-    grain_radius = copy(grain_radius)
-    grain_dendricity = copy(grain_dendricity)
-    grain_sphericity = copy(grain_sphericity)
+    # Note: grain_dendricity and grain_sphericity are modified in-place.
+    # grain_radius is returned as a new array (derived from gsz).
 
     T_tolerance = 1e-10
     gdn_tolerance = 1e-10
@@ -50,7 +48,6 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Calculate temperature gradient across grid cells
     dT = zeros(length(temperature))
-    Ti = copy(temperature)
 
     # depth of grid point center from surface
     z_center = cumsum(dz) .- dz ./ 2
@@ -145,7 +142,7 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
 
         # DRY SNOW METAMORPHISM (Marbouty, 1980)
         P = J .& ((water .<= 0 + water_tolerance) .| ((grain_sphericity .<= 0 + gdn_tolerance) .& (abs.(dT) .> 5 + T_tolerance)))
-        Q = _Marbouty(Ti[P], density[P], dT[P])
+        Q = _Marbouty(temperature[P], density[P], dT[P])
 
         # Calculate grain growth
         gsz[P] = gsz[P] .+ Q .* dt_days

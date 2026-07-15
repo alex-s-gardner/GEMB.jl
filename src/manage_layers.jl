@@ -21,48 +21,41 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
     albedo_diffuse::Vector{Float64},
     mp::ModelParameters, verbose::Bool)
 
-    # Copy inputs to avoid mutation
-    temperature = copy(temperature)
-    dz = copy(dz)
-    density = copy(density)
-    water = copy(water)
-    grain_radius = copy(grain_radius)
-    grain_dendricity = copy(grain_dendricity)
-    grain_sphericity = copy(grain_sphericity)
-    albedo = copy(albedo)
-    albedo_diffuse = copy(albedo_diffuse)
+    # Note: arrays are modified in-place. May grow/shrink via layer management.
 
     d_tolerance = 1e-11
 
     # store initial mass [kg] and energy [J]
-    M = dz .* density
-    M_total_initial = sum(water) + sum(M)
-    E_total_initial = sum(M .* temperature .* C_ICE) +
-        sum(water .* (LF + CtoK * C_ICE))
+    M_total_initial = 0.0
+    E_total_initial = 0.0
+    @inbounds for i in eachindex(dz)
+        mi = dz[i] * density[i]
+        M_total_initial += mi + water[i]
+        E_total_initial += mi * temperature[i] * C_ICE + water[i] * (LF + CtoK * C_ICE)
+    end
 
     T_bottom = temperature[end]
     m = length(temperature)
 
-    z_cumulative = cumsum(dz)
-
-    # A logical mask that indicates which cells are in the top layers
-    top_layers = z_cumulative .<= (mp.column_ztop + d_tolerance)
-
-    # Define column_dzmin2 array
-    column_dzmin2 = mp.column_dzmin .* ones(m)
-
-    # Overwrite the bottom layers with stretched values
-    n_bottom = sum(.!top_layers)
-    if n_bottom > 0
-        column_dzmin2[.!top_layers] = cumprod(mp.column_zy .* ones(n_bottom)) .* mp.column_dzmin
+    # Compute per-cell dzmin/dzmax thresholds (replaces cumsum + ones + cumprod allocations)
+    column_dzmin2 = Vector{Float64}(undef, m)
+    column_dzmax2 = Vector{Float64}(undef, m)
+    z_cum = 0.0
+    zy_power = 1.0
+    @inbounds for i in 1:m
+        z_cum += dz[i]
+        if z_cum <= mp.column_ztop + d_tolerance
+            column_dzmin2[i] = mp.column_dzmin
+            column_dzmax2[i] = mp.column_dzmax
+        else
+            zy_power *= mp.column_zy
+            column_dzmin2[i] = mp.column_dzmin * zy_power
+            column_dzmax2[i] = mp.column_dzmax * zy_power
+        end
     end
 
-    # Define column_dzmax2 array
-    column_dzmax2 = mp.column_dzmax .* ones(m)
-
-    if n_bottom > 0
-        column_dzmax2[.!top_layers] = cumprod(mp.column_zy .* ones(n_bottom)) .* mp.column_dzmax
-    end
+    # Compute mass for merge calculations
+    M = dz .* density
 
     # Preallocate a logical array for cells to be deleted
     delete_cell = falses(m)
@@ -99,18 +92,20 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
         end
     end
 
-    # Delete combined cells
-    keep = .!delete_cell
-    water = water[keep]
-    dz = dz[keep]
-    density = density[keep]
-    temperature = temperature[keep]
-    albedo = albedo[keep]
-    grain_radius = grain_radius[keep]
-    grain_dendricity = grain_dendricity[keep]
-    grain_sphericity = grain_sphericity[keep]
-    albedo_diffuse = albedo_diffuse[keep]
-    column_dzmax2 = column_dzmax2[keep]
+    # Delete merged cells in-place using deleteat!
+    to_delete = findall(delete_cell)
+    if !isempty(to_delete)
+        deleteat!(temperature, to_delete)
+        deleteat!(dz, to_delete)
+        deleteat!(density, to_delete)
+        deleteat!(water, to_delete)
+        deleteat!(grain_radius, to_delete)
+        deleteat!(grain_dendricity, to_delete)
+        deleteat!(grain_sphericity, to_delete)
+        deleteat!(albedo, to_delete)
+        deleteat!(albedo_diffuse, to_delete)
+        deleteat!(column_dzmax2, to_delete)
+    end
 
     # Calculate new length of cells
     m = length(temperature)
@@ -119,23 +114,27 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
     # Find the cells that exceed tolerances
     f = findall(dz .> (column_dzmax2 .+ d_tolerance))
 
-    # Conserve quantities among the cells that will be split
-    dz[f] = dz[f] ./ 2
-    water[f] = water[f] ./ 2
+    if !isempty(f)
+        # Halve dz and water at split positions
+        @inbounds for idx in f
+            dz[idx] /= 2
+            water[idx] /= 2
+        end
 
-    # Sort the indices of all the cells including the ones that will be duplicated
-    fs = sort(vcat(collect(1:m), f))
-
-    # Recreate the variables with split cells
-    dz = dz[fs]
-    water = water[fs]
-    temperature = temperature[fs]
-    density = density[fs]
-    albedo = albedo[fs]
-    albedo_diffuse = albedo_diffuse[fs]
-    grain_radius = grain_radius[fs]
-    grain_dendricity = grain_dendricity[fs]
-    grain_sphericity = grain_sphericity[fs]
+        # Insert duplicates back-to-front to preserve indices
+        @inbounds for k in length(f):-1:1
+            idx = f[k]
+            insert!(dz, idx, dz[idx])
+            insert!(temperature, idx, temperature[idx])
+            insert!(density, idx, density[idx])
+            insert!(water, idx, water[idx])
+            insert!(grain_radius, idx, grain_radius[idx])
+            insert!(grain_dendricity, idx, grain_dendricity[idx])
+            insert!(grain_sphericity, idx, grain_sphericity[idx])
+            insert!(albedo, idx, albedo[idx])
+            insert!(albedo_diffuse, idx, albedo_diffuse[idx])
+        end
+    end
 
     ## CORRECT FOR TOTAL MODEL DEPTH
 
@@ -151,7 +150,6 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
         E_added = temperature[end] * (dz[end] * density[end]) * C_ICE + water[end] * (LF + CtoK * C_ICE)
 
         # Add a grid cell of the same size and temperature to the bottom
-        # Optimized: use push! instead of vcat for single elements
         push!(dz, dz[end])
         push!(temperature, temperature[end])
         push!(water, water[end])
@@ -168,15 +166,15 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
         E_added = -(temperature[end] * (dz[end] * density[end]) * C_ICE) - water[end] * (LF + CtoK * C_ICE)
 
         # Remove a grid cell from the bottom
-        dz = dz[1:end-1]
-        temperature = temperature[1:end-1]
-        water = water[1:end-1]
-        density = density[1:end-1]
-        albedo = albedo[1:end-1]
-        grain_radius = grain_radius[1:end-1]
-        grain_dendricity = grain_dendricity[1:end-1]
-        grain_sphericity = grain_sphericity[1:end-1]
-        albedo_diffuse = albedo_diffuse[1:end-1]
+        pop!(dz)
+        pop!(temperature)
+        pop!(water)
+        pop!(density)
+        pop!(albedo)
+        pop!(grain_radius)
+        pop!(grain_dendricity)
+        pop!(grain_sphericity)
+        pop!(albedo_diffuse)
     else
         # No mass or energy is added or removed
         mass_added = 0.0
@@ -189,10 +187,13 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose
-        M = dz .* density
-        M_total_final = sum(water) + sum(M)
-        E_total_final = sum(M .* temperature .* C_ICE) +
-            sum(water .* (LF + CtoK * C_ICE))
+        M_total_final = 0.0
+        E_total_final = 0.0
+        @inbounds for i in eachindex(dz)
+            mi = dz[i] * density[i]
+            M_total_final += mi + water[i]
+            E_total_final += mi * temperature[i] * C_ICE + water[i] * (LF + CtoK * C_ICE)
+        end
 
         M_delta = M_total_initial - M_total_final + mass_added
         E_delta = E_total_initial - E_total_final + E_added
