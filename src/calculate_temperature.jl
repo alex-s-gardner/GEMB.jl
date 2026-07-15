@@ -90,8 +90,6 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     Nd = Vector{Float64}(undef, m)
     Np = Vector{Float64}(undef, m)
     T_delta_sw = Vector{Float64}(undef, m)
-    Tu = Vector{Float64}(undef, m)
-    Td = Vector{Float64}(undef, m)
     Ad_penultimate = 0.0  # Ad[m-1] needed for ground heat flux
 
     @inbounds for i in 1:m
@@ -176,20 +174,21 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         ghf = Ad_penultimate * (temperature[end] - temperature[end-1]) * dt
         ghf_cumulative += ghf
 
-        # temperature diffusion - optimized with in-place operations
+        # temperature diffusion - single in-place pass (Patankar 1980).
+        # new T[i] = Np[i]*T[i] + Nu[i]*T[i-1] + Nd[i]*T[i+1], all reading the
+        # OLD temperature field. A one-element carry holds the old upstream
+        # value so no shifted Tu/Td copies are needed. Edge stencils reduce to
+        # T[1]/T[m] (matching the original boundary handling), but Nu[1]=Nd[m]
+        # =Nu[m]=0 make those terms vanish anyway.
         @inbounds begin
-            Tu[1] = temperature[1]
-            @simd for i in 2:m
-                Tu[i] = temperature[i-1]
+            Told_prev = temperature[1]   # old T[i-1]; unused at i=1 (Nu[1]=0)
+            for i in 1:m
+                Tu_i = i == 1 ? temperature[1] : Told_prev
+                Td_i = i == m ? temperature[m] : temperature[i+1]
+                Told_i = temperature[i]
+                temperature[i] = (Np[i] * Told_i) + (Nu[i] * Tu_i) + (Nd[i] * Td_i)
+                Told_prev = Told_i
             end
-
-            @simd for i in 1:m-1
-                Td[i] = temperature[i+1]
-            end
-            Td[m] = temperature[m]
-
-            # In-place fused broadcast (eliminates allocation)
-            @. temperature = (Np * temperature) + (Nu * Tu) + (Nd * Td)
         end
 
         # calculate cumulative evaporation (+)/condensation(-)
