@@ -153,8 +153,9 @@ end
     expected_t = (260.0 * 2.0 + old_t1 * old_mass) / new_mass
     @test t_out[1] ≈ expected_t atol = 1e-10
 
-    # Albedo weighting
-    expected_a = (0.85 * 2.0 + old_a1 * old_mass) / new_mass
+    # Albedo: for new_snow_method == Symbol("150kgm2") the merge-path albedo
+    # mixing is intentionally skipped, so the surface albedo is left unchanged.
+    expected_a = old_a1
     @test a_out[1] ≈ expected_a atol = 1e-10
 end
 

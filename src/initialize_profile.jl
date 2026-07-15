@@ -47,7 +47,6 @@ Matches MATLAB's `model_initialize_grid` (local function in model_initialize_pro
 Returns a Vector{Float64} of layer thicknesses from surface to depth.
 """
 function initialize_grid(mp::ModelParameters)
-    d_tolerance = 1e-11
 
     # Calculate number of top grid points
     n_top = mp.column_ztop / mp.column_dztop
@@ -55,7 +54,7 @@ function initialize_grid(mp::ModelParameters)
 
     n_top = Int(n_top)
 
-    if mp.column_dztop < 0.05 - d_tolerance
+    if mp.column_dztop < 0.05 - D_TOLERANCE
         @warn "Initial top grid cell length (column_dztop) is < 0.05 m."
     end
 
@@ -67,7 +66,7 @@ function initialize_grid(mp::ModelParameters)
     gp0 = mp.column_dztop
     z0 = mp.column_ztop
 
-    while mp.column_zmax > (z0 + d_tolerance)
+    while mp.column_zmax > (z0 + D_TOLERANCE)
         dz_new = gp0 * mp.column_zy
         push!(dzB, dz_new)
         gp0 = dz_new

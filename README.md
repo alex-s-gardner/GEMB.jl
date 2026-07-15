@@ -148,10 +148,31 @@ Tests validate:
 
 ## Performance
 
-Julia's JIT compilation and type inference provide significant performance benefits:
-- First run includes compilation time
-- Subsequent runs are 2-5x faster than MATLAB
-- Memory efficient with minimal allocations after warmup
+Julia's JIT compilation and type inference, combined with allocation optimizations to the
+hot physics loop, provide substantial performance benefits over the reference MATLAB
+implementation. The table below tracks wall-clock time and heap allocations across the
+development history of the Julia port, using the standard synthetic benchmark
+(`examples/synthetic_example.jl` / `examples/GEMB_example_synthetic.m`): 75-year
+climatological spinup followed by a full transient run on 3-hourly forcing
+(Apple M2 Max; Julia timings measured after JIT warmup).
+
+| Version | 75-yr spinup | Transient run | Spinup alloc | Run alloc |
+|---|---|---|---|---|
+| **MATLAB reference** | ~80 s | ~14 s | — | — |
+| Julia — initial translation | 21.9 s | 11.7 s | 154 GB | 84 GB |
+| + diffusion loop & `push!` rewrites | 18.7 s | 10.0 s | 100 GB | 47 GB |
+| + full hot-loop allocation rewrite | **9.0 s** | **5.8 s** | **9.5 GB** | **6.2 GB** |
+
+**vs MATLAB:** ~9× faster spinup, ~2× faster transient run (~6× combined).  
+**vs initial Julia port:** −59% runtime, −94% heap allocations.
+
+The hot-loop rewrite eliminated ~40 temporary `Vector`/`BitVector` objects per timestep
+across the grain-size, density, albedo, shortwave, and temperature physics functions,
+replacing mask-broadcasting and gather/scatter patterns with scalar `@inbounds for` loops
+and caller-owned scratch buffers.
+
+The first call to any function includes JIT compilation overhead; subsequent calls use
+compiled native code.
 
 ## Differences from MATLAB Version
 

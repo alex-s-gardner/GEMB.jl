@@ -7,21 +7,17 @@ Matches MATLAB's `turbulent_heat_flux.m`.
 Returns (heat_flux_sensible, heat_flux_latent, latent_heat) [W m-2, W m-2, J kg-1].
 """
 function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
-    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep;
-    min_wind_speed::Float64=0.01)
-
-    T_tolerance = 1e-10
+    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep)
 
     # Bulk-transfer coefficient (Neutral)
     An = VON_KARMAN^2  # 0.4^2 = 0.16
-    wind_speed = max(cfs.wind_speed, min_wind_speed)
-    C = An * wind_speed
+    C = An * cfs.wind_speed
 
     # Bulk Richardson Number
     Ri = ((100000 / cfs.pressure_air)^0.286) *
          (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
          (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
-          ((wind_speed / cfs.wind_observation_height)^2.0))
+          ((cfs.wind_speed / cfs.wind_observation_height)^2.0))
 
     # Constants for Beljaars and Holtslag (1991)
     a1 = 1.0
@@ -32,8 +28,8 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     PhiHzT = 0.0
     PhiHzQ = 0.0
 
-    if Ri > 0.0 + T_tolerance  # STABLE
-        if Ri < 0.2 - T_tolerance
+    if Ri > 0.0 + T_TOLERANCE  # STABLE
+        if Ri < 0.2 - T_TOLERANCE
             zL = Ri / (1.0 - 5.0 * Ri)
         else
             zL = Ri
@@ -68,7 +64,7 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     heat_flux_sensible = heat_flux_sensible / (coefM * coefHT)
 
     # Latent Heat Flux [W m-2]
-    if T_surface >= CtoK - T_tolerance
+    if T_surface >= CtoK - T_TOLERANCE
         # Liquid water surface
         latent_heat = LV
         # Saturation Vapor Pressure (Murray 1967)

@@ -92,7 +92,6 @@ function forcing_climatology(cf::ClimateForcing)
     clim_times = times_complete[1:steps_per_year]
     tdim = Ti(clim_times)
 
-    n = steps_per_year
     return ClimateForcing(
         DimArray(clim_ta, (tdim,)),
         DimArray(clim_pa, (tdim,)),
@@ -101,13 +100,6 @@ function forcing_climatology(cf::ClimateForcing)
         DimArray(clim_sw, (tdim,)),
         DimArray(clim_lw, (tdim,)),
         DimArray(clim_vp, (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.1, n), (tdim,)),
-        cf.time_step,
         cf.temperature_air_mean,
         cf.wind_speed_mean,
         cf.precipitation_mean,
