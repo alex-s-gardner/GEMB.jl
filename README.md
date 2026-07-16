@@ -161,12 +161,12 @@ after warmup:
 | Implementation | Total runtime | Speedup vs MATLAB |
 |---|---|---|
 | MATLAB (R2024b) | 98.8 s | 1× |
-| Julia (current) | **7.7 s** | **~12.8×** |
+| Julia (current) | **7.0 s** | **~14×** |
 
 Both were re-benchmarked on the same machine with the same protocol
 (`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
 
-The speedup came in two stages. First, a hot-loop **allocation** rewrite eliminated ~40
+The speedup came in three stages. First, a hot-loop **allocation** rewrite eliminated ~40
 temporary `Vector`/`BitVector` objects per timestep across the grain-size, density,
 albedo, shortwave, and temperature physics functions, replacing mask-broadcasting and
 gather/scatter patterns with scalar `@inbounds for` loops and caller-owned scratch buffers.
@@ -175,9 +175,21 @@ timestep, driven by a ~36-iteration sub-stepping loop): the diffusion stencil wa
 branch-free by peeling the boundary cells out of the loop, the shortwave-penetration update
 was fused into the stencil reads (removing one full-column pass per sub-step), and the
 sub-step-invariant turbulent-flux terms (bulk coefficient, Exner pressure factor, roughness
-logs) were hoisted out of the loop. The compute pass is numerically bit-identical to the
-prior implementation (max relative difference 2.9e-16 across all output fields; full
-MATLAB-validation test suite green).
+logs) were hoisted out of the loop.
+
+Third, a **type-stability and residual-allocation** pass. The driver's time loop was
+extracted into a function barrier: `ClimateForcing`'s fields are typed `::DimArray` (a
+`UnionAll`, not a concrete type), so indexing them per timestep inferred to `Any` and
+dispatched at runtime — passing the forcing series into the inner loop as concrete arrays
+lets the compiler specialize, eliminating the per-step dynamic dispatch (isolated driver
+call: −11% runtime, −41% allocations). The remaining broadcast temporaries in
+`calculate_melt` (pore-water refreeze, water-squeeze, melt/refreeze passes) and the
+split-detection `BitVector` in `manage_layers` were also converted to scalar loops. This
+cut total hot-path allocations by ~30% (27.1M → 19.1M objects).
+
+Every optimization stage is numerically bit-identical to the prior implementation (max
+relative difference 2.9e-16 across all output fields; full MATLAB-validation test suite
+green).
 
 The first call to any function includes JIT compilation overhead; subsequent calls use
 compiled native code.
