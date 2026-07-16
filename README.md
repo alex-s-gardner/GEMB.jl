@@ -161,15 +161,32 @@ climatological spinup followed by a full transient run on 3-hourly forcing
 | **MATLAB reference** | ~80 s | ~14 s | — | — |
 | Julia — initial translation | 21.9 s | 11.7 s | 154 GB | 84 GB |
 | + diffusion loop & `push!` rewrites | 18.7 s | 10.0 s | 100 GB | 47 GB |
-| + full hot-loop allocation rewrite | **9.0 s** | **5.8 s** | **9.5 GB** | **6.2 GB** |
+| + full hot-loop allocation rewrite | 9.0 s | 5.8 s | 9.5 GB | 6.2 GB |
+| + scalar-loop physics & substep-loop optimization | **4.5 s** | **2.8 s** | 13.0 GiB | 7.7 GiB |
 
-**vs MATLAB:** ~9× faster spinup, ~2× faster transient run (~6× combined).  
-**vs initial Julia port:** −59% runtime, −94% heap allocations.
+**vs MATLAB:** ~18× faster spinup, ~5× faster transient run (~13× combined).  
+**vs initial Julia port:** −79% spinup / −76% transient-run wall time.
 
 The hot-loop rewrite eliminated ~40 temporary `Vector`/`BitVector` objects per timestep
 across the grain-size, density, albedo, shortwave, and temperature physics functions,
 replacing mask-broadcasting and gather/scatter patterns with scalar `@inbounds for` loops
 and caller-owned scratch buffers.
+
+The most recent step targeted **compute** rather than allocations. In the thermal solver
+(`calculate_temperature`, ~55% of each timestep, driven by a ~36-iteration sub-stepping
+loop) the diffusion stencil was made branch-free by peeling the boundary cells out of the
+loop, the shortwave-penetration update was fused into the stencil reads (removing one
+full-column pass per sub-step), and the sub-step-invariant turbulent-flux terms (bulk
+coefficient, Exner pressure factor, roughness logs) were hoisted out of the loop. Combined
+with the earlier scalar-loop physics rewrites, this roughly halved wall time again while
+remaining numerically bit-identical to the reference (max relative difference 2.9e-16
+across all output fields; full MATLAB-validation test suite green).
+
+> **Measurement note:** timings are post-JIT-warmup minimums on an Apple M2 Max. The final
+> row's allocation figures are measured with `@time` (GiB) on the current benchmark harness
+> and are not directly comparable to the older rows above, which predate the current API and
+> forcing struct. The latest optimizations are compute-only, so allocation counts are
+> essentially unchanged from the immediately preceding commit.
 
 The first call to any function includes JIT compilation overhead; subsequent calls use
 compiled native code.
