@@ -20,8 +20,35 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     An = VON_KARMAN^2  # 0.4^2 = 0.16
     C = An * wind_speed
 
+    # Exner-like pressure factor (100000/p)^0.286; reused below for the
+    # sensible-heat flux, so compute the pow only once.
+    pressure_factor = (100000 / cfs.pressure_air)^0.286
+
+    # Neutral roughness log terms (invariant in T_surface).
+    logM = log(cfs.wind_observation_height / z0)
+    logHT = log(cfs.temperature_observation_height / zT)
+    logHQ = log(cfs.temperature_observation_height / zQ)
+
+    return _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs,
+        wind_speed, C, pressure_factor, logM, logHT, logHQ)
+end
+
+"""
+    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, pressure_factor, logM, logHT, logHQ)
+
+Core of [`turbulent_heat_flux`](@ref) with the sub-timestep-invariant quantities
+(`wind_speed`, bulk coefficient `C`, Exner `pressure_factor`, and the neutral
+roughness logs `logM`/`logHT`/`logHQ`) hoisted to the caller. `calculate_temperature`
+computes these once per timestep and reuses them across all thermal sub-steps,
+where only `T_surface` changes. Numerically identical to the inline form.
+"""
+@inline function _turbulent_heat_flux(T_surface::Float64, density_air::Float64,
+    z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep,
+    wind_speed::Float64, C::Float64, pressure_factor::Float64,
+    logM::Float64, logHT::Float64, logHQ::Float64)
+
     # Bulk Richardson Number
-    Ri = ((100000 / cfs.pressure_air)^0.286) *
+    Ri = pressure_factor *
          (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
          (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
           ((wind_speed / cfs.wind_observation_height)^2.0))
@@ -62,12 +89,12 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     end
 
     # Final Transfer Coefficients
-    coefM = log(cfs.wind_observation_height / z0) - PhiMz + PhiMz0
-    coefHT = log(cfs.temperature_observation_height / zT) - PhiHz + PhiHzT
-    coefHQ = log(cfs.temperature_observation_height / zQ) - PhiHz + PhiHzQ
+    coefM = logM - PhiMz + PhiMz0
+    coefHT = logHT - PhiHz + PhiHzT
+    coefHQ = logHQ - PhiHz + PhiHzQ
 
     # Sensible Heat Flux [W m-2]
-    heat_flux_sensible = density_air * C * C_AIR * (cfs.temperature_air - T_surface) * (100000 / cfs.pressure_air)^0.286
+    heat_flux_sensible = density_air * C * C_AIR * (cfs.temperature_air - T_surface) * pressure_factor
     heat_flux_sensible = heat_flux_sensible / (coefM * coefHT)
 
     # Latent Heat Flux [W m-2]

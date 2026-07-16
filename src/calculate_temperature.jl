@@ -74,6 +74,17 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     # minimum wind speed to avoid division by zero in turbulent flux calculations
     min_wind_speed = 0.01
 
+    # Sub-timestep-invariant turbulent-flux quantities (only T_surface changes
+    # across sub-steps). Hoisted here and passed to _turbulent_heat_flux so the
+    # bulk coefficient, Exner factor, and roughness logs are computed once per
+    # timestep rather than once per sub-step.
+    thf_wind_speed = max(cfs.wind_speed, min_wind_speed)
+    thf_C = VON_KARMAN^2 * thf_wind_speed
+    thf_pressure_factor = (100000 / cfs.pressure_air)^0.286
+    thf_logM = log(cfs.wind_observation_height / z0)
+    thf_logHT = log(cfs.temperature_observation_height / zT)
+    thf_logHQ = log(cfs.temperature_observation_height / zQ)
+
     ## THERMAL CONDUCTIVITY (Sturm, 1997)
     K = thermal_conductivity(temperature, density, mp)
 
@@ -146,8 +157,10 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         # calculate temperature of snow surface
         T_surface = min(273.15, temperature[1])
 
-        # TURBULENT HEAT FLUX
-        heat_flux_sensible, heat_flux_latent, latent_heat = turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs; min_wind_speed)
+        # TURBULENT HEAT FLUX (invariant quantities hoisted above the loop)
+        heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
+            T_surface, density_air, z0, zT, zQ, cfs,
+            thf_wind_speed, thf_C, thf_pressure_factor, thf_logM, thf_logHT, thf_logHQ)
 
         lhf_cumulative += heat_flux_latent * dt
         shf_cumulative += heat_flux_sensible * dt
@@ -165,30 +178,48 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         longwave_upward_cumulative += -longwave_upward
         T_delta_longwave_upward = longwave_upward / TCs
 
-        # new grid point temperature
-        # SW penetrates surface
-        temperature .+= T_delta_sw
-        temperature[1] += T_delta_longwave_downward + T_delta_longwave_upward + T_delta_thf
-
-        # energy flux across lower boundary
-        ghf = Ad_penultimate * (temperature[end] - temperature[end-1]) * dt
-        ghf_cumulative += ghf
+        # new grid point temperature.
+        #
+        # The pre-diffusion field is the old temperature plus the SW-penetration
+        # increment (T_delta_sw, per cell) plus, for the surface cell only, the
+        # longwave/turbulent increment. Rather than materializing that field
+        # with a separate `temperature .+= T_delta_sw` full-column pass, we fold
+        # T_delta_sw into each cell's value on the fly inside the diffusion
+        # stencil below (one fewer full-column pass per sub-timestep).
+        lw_thf_1 = T_delta_longwave_downward + T_delta_longwave_upward + T_delta_thf
 
         # temperature diffusion - single in-place pass (Patankar 1980).
-        # new T[i] = Np[i]*T[i] + Nu[i]*T[i-1] + Nd[i]*T[i+1], all reading the
-        # OLD temperature field. A one-element carry holds the old upstream
-        # value so no shifted Tu/Td copies are needed. Edge stencils reduce to
-        # T[1]/T[m] (matching the original boundary handling), but Nu[1]=Nd[m]
-        # =Nu[m]=0 make those terms vanish anyway.
+        # new T[i] = Np[i]*pre[i] + Nu[i]*pre[i-1] + Nd[i]*pre[i+1], where pre[]
+        # is the pre-diffusion field described above (all reads of the OLD
+        # field). A one-element carry holds pre[i-1] so no shifted copies are
+        # needed. The endpoints are peeled out (their stencil terms vanish via
+        # Nu[1]=0 and Nu[m]=Nd[m]=0, Np[m]=1) so the interior loop is
+        # branch-free. This is bit-identical to first doing `temperature .+=
+        # T_delta_sw; temperature[1] += lw_thf_1` and then the branched stencil:
+        # the per-cell additions and the left-to-right grouping are preserved,
+        # and T_delta_sw[m] == 0 leaves the Dirichlet bottom cell unchanged.
         @inbounds begin
-            Told_prev = temperature[1]   # old T[i-1]; unused at i=1 (Nu[1]=0)
-            for i in 1:m
-                Tu_i = i == 1 ? temperature[1] : Told_prev
-                Td_i = i == m ? temperature[m] : temperature[i+1]
-                Told_i = temperature[i]
-                temperature[i] = (Np[i] * Told_i) + (Nu[i] * Tu_i) + (Nd[i] * Td_i)
-                Told_prev = Told_i
+            # surface-cell pre-diffusion value (includes SW + longwave/turbulent)
+            pre_1 = (temperature[1] + T_delta_sw[1]) + lw_thf_1
+
+            # energy flux across lower boundary, using the pre-diffusion field
+            pre_m = temperature[m] + T_delta_sw[m]
+            pre_mm1 = (m - 1 == 1) ? pre_1 : temperature[m-1] + T_delta_sw[m-1]
+            ghf = Ad_penultimate * (pre_m - pre_mm1) * dt
+            ghf_cumulative += ghf
+
+            # i = 1: Nu[1]=0, so upstream term vanishes.
+            pre_prev = pre_1
+            pre_next = temperature[2] + T_delta_sw[2]
+            temperature[1] = (Np[1] * pre_1) + (Nd[1] * pre_next)
+            # interior cells 2..m-1: no boundary branches.
+            for i in 2:m-1
+                pre_i = pre_next
+                pre_next = temperature[i+1] + T_delta_sw[i+1]
+                temperature[i] = (Np[i] * pre_i) + (Nu[i] * pre_prev) + (Nd[i] * pre_next)
+                pre_prev = pre_i
             end
+            # i = m: Nu[m]=Nd[m]=0, Np[m]=1, T_delta_sw[m]=0 → cell m unchanged (Dirichlet).
         end
 
         # calculate cumulative evaporation (+)/condensation(-)
