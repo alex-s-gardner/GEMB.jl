@@ -148,45 +148,36 @@ Tests validate:
 
 ## Performance
 
-Julia's JIT compilation and type inference, combined with allocation optimizations to the
-hot physics loop, provide substantial performance benefits over the reference MATLAB
-implementation. The table below tracks wall-clock time and heap allocations across the
-development history of the Julia port, using the standard synthetic benchmark
-(`examples/synthetic_example.jl` / `examples/GEMB_example_synthetic.m`): 75-year
-climatological spinup followed by a full transient run on 3-hourly forcing
-(Apple M2 Max; Julia timings measured after JIT warmup).
+Julia's JIT compilation and type inference, combined with allocation and compute
+optimizations to the hot physics loop, provide substantial performance benefits over the
+reference MATLAB implementation.
 
-| Version | 75-yr spinup | Transient run | Spinup alloc | Run alloc |
-|---|---|---|---|---|
-| **MATLAB reference** | ~80 s | ~14 s | — | — |
-| Julia — initial translation | 21.9 s | 11.7 s | 154 GB | 84 GB |
-| + diffusion loop & `push!` rewrites | 18.7 s | 10.0 s | 100 GB | 47 GB |
-| + full hot-loop allocation rewrite | 9.0 s | 5.8 s | 9.5 GB | 6.2 GB |
-| + scalar-loop physics & substep-loop optimization | **4.5 s** | **2.8 s** | 13.0 GiB | 7.7 GiB |
+**Benchmark workload** (`examples/synthetic_example.jl` / `examples/GEMB_example_synthetic.m`):
+a 75-year climatological spinup followed by a 32-year transient run — **~107 model-years at
+3-hourly resolution** — on a single firn column. Total wall-clock time for the full
+workflow (spinup + transient run), measured on an Apple M2 Max as the minimum of 3 runs
+after warmup:
 
-**vs MATLAB:** ~18× faster spinup, ~5× faster transient run (~13× combined).  
-**vs initial Julia port:** −79% spinup / −76% transient-run wall time.
+| Implementation | Total runtime | Speedup vs MATLAB |
+|---|---|---|
+| MATLAB (R2024b) | 98.8 s | 1× |
+| Julia (current) | **7.7 s** | **~12.8×** |
 
-The hot-loop rewrite eliminated ~40 temporary `Vector`/`BitVector` objects per timestep
-across the grain-size, density, albedo, shortwave, and temperature physics functions,
-replacing mask-broadcasting and gather/scatter patterns with scalar `@inbounds for` loops
-and caller-owned scratch buffers.
+Both were re-benchmarked on the same machine with the same protocol
+(`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
 
-The most recent step targeted **compute** rather than allocations. In the thermal solver
-(`calculate_temperature`, ~55% of each timestep, driven by a ~36-iteration sub-stepping
-loop) the diffusion stencil was made branch-free by peeling the boundary cells out of the
-loop, the shortwave-penetration update was fused into the stencil reads (removing one
-full-column pass per sub-step), and the sub-step-invariant turbulent-flux terms (bulk
-coefficient, Exner pressure factor, roughness logs) were hoisted out of the loop. Combined
-with the earlier scalar-loop physics rewrites, this roughly halved wall time again while
-remaining numerically bit-identical to the reference (max relative difference 2.9e-16
-across all output fields; full MATLAB-validation test suite green).
-
-> **Measurement note:** timings are post-JIT-warmup minimums on an Apple M2 Max. The final
-> row's allocation figures are measured with `@time` (GiB) on the current benchmark harness
-> and are not directly comparable to the older rows above, which predate the current API and
-> forcing struct. The latest optimizations are compute-only, so allocation counts are
-> essentially unchanged from the immediately preceding commit.
+The speedup came in two stages. First, a hot-loop **allocation** rewrite eliminated ~40
+temporary `Vector`/`BitVector` objects per timestep across the grain-size, density,
+albedo, shortwave, and temperature physics functions, replacing mask-broadcasting and
+gather/scatter patterns with scalar `@inbounds for` loops and caller-owned scratch buffers.
+Second, a **compute** pass on the thermal solver (`calculate_temperature`, ~55% of each
+timestep, driven by a ~36-iteration sub-stepping loop): the diffusion stencil was made
+branch-free by peeling the boundary cells out of the loop, the shortwave-penetration update
+was fused into the stencil reads (removing one full-column pass per sub-step), and the
+sub-step-invariant turbulent-flux terms (bulk coefficient, Exner pressure factor, roughness
+logs) were hoisted out of the loop. The compute pass is numerically bit-identical to the
+prior implementation (max relative difference 2.9e-16 across all output fields; full
+MATLAB-validation test suite green).
 
 The first call to any function includes JIT compilation overhead; subsequent calls use
 compiled native code.
