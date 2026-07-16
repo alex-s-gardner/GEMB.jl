@@ -111,8 +111,14 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
     m = length(temperature)
 
     ## Split cells
-    # Find the cells that exceed tolerances
-    f = findall(dz .> (column_dzmax2 .+ d_tolerance))
+    # Find the cells that exceed tolerances (scalar scan avoids the broadcast
+    # BitVector temporary; only allocates the index vector when splits exist).
+    f = Int[]
+    @inbounds for i in 1:m
+        if dz[i] > column_dzmax2[i] + d_tolerance
+            push!(f, i)
+        end
+    end
 
     if !isempty(f)
         # Halve dz and water at split positions
