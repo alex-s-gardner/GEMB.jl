@@ -102,12 +102,13 @@ end
         dt_divisors=Float64.(GEMB.fast_divisors(108000000)) ./ 10000
     )
 
+    initial_gradient = t_vec[1] - t_vec[2]  # 23.0 (save before call mutates t_vec)
+
     t_out, _, _, _, _, _ = GEMB.calculate_temperature(
         t_vec, dz, density, water_surface, grain_radius,
         shortwave_flux, cfs, mp, false)
 
     # Diffusion should reduce the temperature gradient between layers 1 and 2
-    initial_gradient = t_vec[1] - t_vec[2]  # 23.0
     final_gradient = t_out[1] - t_out[2]
     @test final_gradient < initial_gradient  # Gradient should decrease via diffusion
     @test t_out[2] > 250.0  # Layer 2 should warm from diffusion

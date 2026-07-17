@@ -19,14 +19,22 @@ function forcing_climatology(cf::ClimateForcing, datetime_range::Tuple{DateTime,
     times = collect(dims(cf.temperature_air, Ti))
     keep = (times .>= datetime_range[1]) .& (times .<= datetime_range[2])
 
+    tkeep = Ti(times[keep])
     cf_subset = ClimateForcing(
-        DimArray(parent(cf.temperature_air)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.pressure_air)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.precipitation)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.wind_speed)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.shortwave_downward)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.longwave_downward)[keep], (Ti(times[keep]),)),
-        DimArray(parent(cf.vapor_pressure)[keep], (Ti(times[keep]),)),
+        DimArray(parent(cf.temperature_air)[keep], (tkeep,)),
+        DimArray(parent(cf.pressure_air)[keep], (tkeep,)),
+        DimArray(parent(cf.precipitation)[keep], (tkeep,)),
+        DimArray(parent(cf.wind_speed)[keep], (tkeep,)),
+        DimArray(parent(cf.shortwave_downward)[keep], (tkeep,)),
+        DimArray(parent(cf.longwave_downward)[keep], (tkeep,)),
+        DimArray(parent(cf.vapor_pressure)[keep], (tkeep,)),
+        DimArray(parent(cf.black_carbon_snow)[keep], (tkeep,)),
+        DimArray(parent(cf.black_carbon_ice)[keep], (tkeep,)),
+        DimArray(parent(cf.cloud_optical_thickness)[keep], (tkeep,)),
+        DimArray(parent(cf.solar_zenith_angle)[keep], (tkeep,)),
+        DimArray(parent(cf.shortwave_downward_diffuse)[keep], (tkeep,)),
+        DimArray(parent(cf.cloud_fraction)[keep], (tkeep,)),
+        cf.time_step,
         cf.temperature_air_mean,
         cf.wind_speed_mean,
         cf.precipitation_mean,
@@ -92,7 +100,11 @@ function forcing_climatology(cf::ClimateForcing)
     clim_times = times_complete[1:steps_per_year]
     tdim = Ti(clim_times)
 
-    n = steps_per_year
+    # Time-varying model parameters are constant (Fill-backed); carry their scalar
+    # value onto the climatological time axis.
+    nclim = steps_per_year
+    param_fill(field) = DimArray(Fill(parent(field)[1], nclim), (tdim,))
+
     return ClimateForcing(
         DimArray(clim_ta, (tdim,)),
         DimArray(clim_pa, (tdim,)),
@@ -101,12 +113,12 @@ function forcing_climatology(cf::ClimateForcing)
         DimArray(clim_sw, (tdim,)),
         DimArray(clim_lw, (tdim,)),
         DimArray(clim_vp, (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.0, n), (tdim,)),
-        DimArray(Fill(0.1, n), (tdim,)),
+        param_fill(cf.black_carbon_snow),
+        param_fill(cf.black_carbon_ice),
+        param_fill(cf.cloud_optical_thickness),
+        param_fill(cf.solar_zenith_angle),
+        param_fill(cf.shortwave_downward_diffuse),
+        param_fill(cf.cloud_fraction),
         cf.time_step,
         cf.temperature_air_mean,
         cf.wind_speed_mean,

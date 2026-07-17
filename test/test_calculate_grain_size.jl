@@ -67,16 +67,20 @@ end
     grain_dendricity = [0.8, 0.8, 0.8]
     grain_sphericity = [0.2, 0.2, 0.2]
 
+    gdn_before = copy(grain_dendricity)
+    gsp_before = copy(grain_sphericity)
+    gr_before = copy(grain_radius)
+
     (gs_out, gdn_out, gsp_out) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # Dendricity should decrease (decay)
-    @test all(gdn_out .< grain_dendricity)
+    @test all(gdn_out .< gdn_before)
     # Sphericity should increase
-    @test all(gsp_out .> grain_sphericity)
+    @test all(gsp_out .> gsp_before)
     # Grain radius should change
-    @test gs_out != grain_radius
+    @test gs_out != gr_before
 end
 
 @testset "Dendritic dry high gradient" begin
@@ -92,13 +96,16 @@ end
     grain_dendricity = [0.8, 0.8, 0.8]
     grain_sphericity = [0.2, 0.2, 0.2]
 
+    gdn_before = copy(grain_dendricity)
+    gsp_before = copy(grain_sphericity)
+
     (_, gdn_out, gsp_out) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # Under high gradient: dendricity decreases, sphericity decreases
-    @test all(gdn_out .< grain_dendricity)
-    @test all(gsp_out .< grain_sphericity)
+    @test all(gdn_out .< gdn_before)
+    @test all(gsp_out .< gsp_before)
 end
 
 @testset "Dendritic wet snow" begin
@@ -113,13 +120,16 @@ end
     grain_dendricity = [0.8, 0.8, 0.8]
     grain_sphericity = [0.2, 0.2, 0.2]
 
+    gdn_before = copy(grain_dendricity)
+    gsp_before = copy(grain_sphericity)
+
     (_, gdn_out, gsp_out) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # Wet snow causes rapid rounding
-    @test all(gdn_out .< grain_dendricity)
-    @test all(gsp_out .> grain_sphericity)
+    @test all(gdn_out .< gdn_before)
+    @test all(gsp_out .> gsp_before)
 end
 
 @testset "Nondendritic dry (Marbouty)" begin

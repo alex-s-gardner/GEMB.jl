@@ -18,16 +18,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     albedo_diffuse::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
-    # Copy inputs to avoid mutation
-    temperature = copy(temperature)
-    dz = copy(dz)
-    density = copy(density)
-    water = copy(water)
-    grain_radius = copy(grain_radius)
-    grain_dendricity = copy(grain_dendricity)
-    grain_sphericity = copy(grain_sphericity)
-    albedo = copy(albedo)
-    albedo_diffuse = copy(albedo_diffuse)
+    # Note: arrays are modified in-place or extended via pushfirst! when new snow is added.
 
     # Define tolerances
     T_tolerance = 1e-10
@@ -96,7 +87,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 temperature[1] = ((cfs.temperature_air * cfs.precipitation) + (temperature[1] * M_surface)) / M_surface_new
 
                 # adjust albedo
-                if mp.albedo_method != "150kgm2"
+                if mp.new_snow_method != Symbol("150kgm2")
                     albedo[1] = (mp.albedo_snow * cfs.precipitation + albedo[1] * M_surface) / M_surface_new
                 end
 

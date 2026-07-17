@@ -19,16 +19,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     albedo_diffuse::Vector{Float64}, rain::Float64,
     mp::ModelParameters, verbose::Bool)
 
-    # Copy inputs to avoid mutation
-    temperature = copy(temperature)
-    dz = copy(dz)
-    density = copy(density)
-    water = copy(water)
-    grain_radius = copy(grain_radius)
-    grain_dendricity = copy(grain_dendricity)
-    grain_sphericity = copy(grain_sphericity)
-    albedo = copy(albedo)
-    albedo_diffuse = copy(albedo_diffuse)
+    # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
     T_tolerance = 1e-10
     d_tolerance = 1e-11
@@ -58,7 +49,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     # calculate temperature excess above 0 degC
     T_excess = max.(0.0, temperature .- CtoK)
 
-    # new grid point center temperature
+    # new grid point center temperature. Rebind to a fresh array (do not mutate
+    # the caller's temperature vector) to preserve the previous behavior.
     temperature = min.(temperature, CtoK)
 
     # specify irreducible water content saturation [fraction]
@@ -67,32 +59,53 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     ## REFREEZE PORE WATER
 
     if sum(water) > water_tolerance
-        # calculate maximum freeze amount [kg]
-        freeze_max = max.(0.0, -((temperature .- CtoK) .* M .* C_ICE) ./ LF)
+        # Fused per-cell refreeze: freeze pore water and update snow/ice
+        # properties. Numerically identical (same per-element ops and
+        # left-to-right ordering) to the previous broadcast chain, but computes
+        # everything in a single pass. density, dz, and water are rebound to
+        # fresh arrays (matching the previous `density = M ./ dz` etc.) so the
+        # caller's inputs are not mutated; M and temperature are mutated in
+        # place since they are already function-local fresh arrays.
+        dz_orig = dz
+        density = similar(density)
+        dz = similar(dz_orig)
+        water = copy(water)
+        @inbounds for i in 1:m
+            # maximum freeze amount [kg]
+            freeze_max_i = max(0.0, -((temperature[i] - CtoK) * M[i] * C_ICE) / LF)
 
-        # freeze pore water and change snow/ice properties
-        water_delta = min.(freeze_max, water)
-        water = water .- water_delta
-        M = M .+ water_delta
-        density = M ./ dz
-        temperature = temperature .+ Float64.(M .> water_tolerance) .* (water_delta .* (LF .+ (CtoK .- temperature) .* C_ICE) ./ (M .* C_ICE))
+            # freeze pore water and change snow/ice properties
+            wd = min(freeze_max_i, water[i])
+            water_delta[i] = wd
+            water[i] = water[i] - wd
+            M[i] = M[i] + wd
+            density[i] = M[i] / dz_orig[i]
+            mask = M[i] > water_tolerance ? 1.0 : 0.0
+            temperature[i] = temperature[i] + mask *
+                (wd * (LF + (CtoK - temperature[i]) * C_ICE) / (M[i] * C_ICE))
 
-        # if pore water froze in ice then adjust density and dz thickness
-        density[density .> mp.density_ice - d_tolerance] .= mp.density_ice
-        dz = M ./ density
+            # if pore water froze in ice then adjust density and dz thickness
+            if density[i] > mp.density_ice - d_tolerance
+                density[i] = mp.density_ice
+            end
+            dz[i] = M[i] / density[i]
+        end
     end
 
-    # squeeze water from snow pack
-    water_irreducible = (mp.density_ice .- density) .* mp.water_irreducible_saturation .* (M ./ density)
-    water_excess = max.(0.0, water .- water_irreducible)
+    # squeeze water from snow pack (compute water_excess without materializing
+    # the water_irreducible temporary)
+    water_excess = Vector{Float64}(undef, m)
+    @inbounds for i in 1:m
+        water_irreducible = (mp.density_ice - density[i]) * mp.water_irreducible_saturation * (M[i] / density[i])
+        water_excess[i] = max(0.0, water[i] - water_irreducible)
+    end
 
     ## MELT, PERCOLATION AND REFREEZE
 
-    freeze = zeros(m)
-
-    # Add previous freeze to freeze and reset water_delta
-    freeze = freeze .+ water_delta
-    water_delta .= 0.0
+    # Seed freeze with the pore-water refreeze accumulated above, then reset
+    # water_delta for reuse in the percolation loop.
+    freeze = copy(water_delta)
+    fill!(water_delta, 0.0)
 
     # run melt algorithm if there is melt water or excess pore water
     if (sum(T_excess) > T_tolerance) || (sum(water_excess) > water_tolerance)
@@ -126,22 +139,32 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
 
-        # convert temperature excess to melt [kg]
-        melt_maximum = T_excess .* density .* dz .* C_ICE ./ LF
-        melt = min.(melt_maximum, M)
+        # convert temperature excess to melt [kg] and compute the max refreeze
+        # amount in a single fused pass. melt[i] = min(melt_maximum[i], M[i]);
+        # freeze_max[i] = max(0, -((T-CtoK)*density*dz*C_ICE)/LF). Also track the
+        # running melt sum and the deepest cell with melt/excess pore water,
+        # avoiding the melt_maximum, freeze_max, and findlast BitVector
+        # temporaries. Numerically identical to the previous broadcasts.
+        melt = Vector{Float64}(undef, m)
+        freeze_max = Vector{Float64}(undef, m)
+        melt_sum = 0.0
+        X = 1
+        @inbounds for i in 1:m
+            melt_max_i = T_excess[i] * density[i] * dz[i] * C_ICE / LF
+            mi = min(melt_max_i, M[i])
+            melt[i] = mi
+            melt_sum += mi
+            freeze_max[i] = max(0.0, -((temperature[i] - CtoK) * density[i] * dz[i] * C_ICE) / LF)
+            if mi > water_tolerance || water_excess[i] > water_tolerance
+                X = i
+            end
+        end
         melt_surface = melt[1]
-        melt_total = max(0.0, sum(melt) - rain)
-
-        # calculate maximum refreeze amount [kg]
-        freeze_max = max.(0.0, -((temperature .- CtoK) .* density .* dz .* C_ICE) ./ LF)
+        melt_total = max(0.0, melt_sum - rain)
 
         # initialize refreeze, runoff, flux_dn and water_delta vectors
         runoff = zeros(m)
         flux_dn = zeros(m + 1)
-
-        # determine the deepest grid cell where melt/pore water is generated
-        X_idx = findlast((melt .> water_tolerance) .| (water_excess .> water_tolerance))
-        X = isnothing(X_idx) ? 1 : X_idx
 
         Xi = 1
         m = length(temperature)
@@ -242,16 +265,18 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         runoff_total = sum(runoff) + flux_dn[Xi]
 
         # delete all cells with zero mass
-        D = M .<= 0 + water_tolerance
-        M = M[.!D]
-        water = water[.!D]
-        density = density[.!D]
-        temperature = temperature[.!D]
-        albedo = albedo[.!D]
-        grain_radius = grain_radius[.!D]
-        grain_dendricity = grain_dendricity[.!D]
-        grain_sphericity = grain_sphericity[.!D]
-        albedo_diffuse = albedo_diffuse[.!D]
+        to_delete = findall(M .<= water_tolerance)
+        if !isempty(to_delete)
+            deleteat!(M, to_delete)
+            deleteat!(water, to_delete)
+            deleteat!(density, to_delete)
+            deleteat!(temperature, to_delete)
+            deleteat!(albedo, to_delete)
+            deleteat!(grain_radius, to_delete)
+            deleteat!(grain_dendricity, to_delete)
+            deleteat!(grain_sphericity, to_delete)
+            deleteat!(albedo_diffuse, to_delete)
+        end
 
         # calculate new grid lengths
         dz = M ./ density

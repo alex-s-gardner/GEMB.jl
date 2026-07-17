@@ -8,7 +8,8 @@ Returns `(state, flux)` where `state` is the updated column state and
 `flux` contains energy/mass budget terms for output accumulation.
 """
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
-    # Destructure state
+    # Destructure state - arrays are mutated in-place by physics functions.
+    # This is safe because gemb_driver rebinds state to new_state after each call.
     temperature = state.temperature
     dz = state.dz
     density = state.density
@@ -52,7 +53,6 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
             shortwave_flux, cfs, mp, verbose)
 
     # 6. Change in thickness of top cell due to evaporation/condensation
-    dz = copy(dz)
     dz[1] = dz[1] + evaporation_condensation / density[1]
 
     if verbose

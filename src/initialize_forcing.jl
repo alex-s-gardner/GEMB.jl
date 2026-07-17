@@ -22,12 +22,6 @@ Matches MATLAB's `model_initialize_forcing.m`.
 - `precipitation_mean::Float64`: Climatological mean precipitation [kg m-2 yr-1]
 - `temperature_observation_height::Float64`: Height of temperature observation [m]
 - `wind_observation_height::Float64`: Height of wind observation [m]
-- `black_carbon_snow::Float64`: Black carbon concentration in snow [ppb]
-- `black_carbon_ice::Float64`: Black carbon concentration in ice [ppb]
-- `cloud_optical_thickness::Float64`: Cloud optical thickness
-- `solar_zenith_angle::Float64`: Solar zenith angle [rad]
-- `shortwave_downward_diffuse::Float64`: Diffuse fraction of downward shortwave
-- `cloud_fraction::Float64`: Cloud fraction
 """
 function initialize_forcing(
     time::AbstractVector{DateTime},
@@ -48,7 +42,7 @@ function initialize_forcing(
     cloud_optical_thickness::Real=0.0,
     solar_zenith_angle::Real=0.0,
     shortwave_downward_diffuse::Real=0.0,
-    cloud_fraction::Real=0.1,
+    cloud_fraction::Real=0.1
 )
     # Validate input sizes
     n = length(time)
@@ -96,8 +90,9 @@ function initialize_forcing(
         wind_observation_height = 10.0
     end
 
-    # Compute time_step from time series (integer seconds)
-    time_step = round(Int, Dates.value(time[2] - time[1]) / 1000)
+    # Compute the forcing time step [s] from the (assumed uniform) time axis
+    dt_seconds = Dates.value(time[2] - time[1]) / 1000.0  # milliseconds to seconds
+    time_step = round(Int, dt_seconds)
 
     # Create DimArrays with Ti dimension
     tdim = Ti(time)
@@ -121,6 +116,6 @@ function initialize_forcing(
         Float64(wind_speed_mean),
         Float64(precipitation_mean),
         Float64(temperature_observation_height),
-        Float64(wind_observation_height),
+        Float64(wind_observation_height)
     )
 end

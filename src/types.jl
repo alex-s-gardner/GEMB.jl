@@ -1,6 +1,5 @@
 using DimensionalData
 using Dates
-using FillArrays
 
 """
     ModelParameters
@@ -74,7 +73,11 @@ end
 Time-series surface meteorological forcing for GEMB.
 All forcing arrays share a common `Ti` (time) dimension.
 
-Index by time to extract a `ClimateForcingStep`: `cf[Ti=At(t)]`
+Required fields: temperature_air, pressure_air, precipitation, wind_speed,
+shortwave_downward, longwave_downward, vapor_pressure.
+
+Metadata: temperature_air_mean, wind_speed_mean, precipitation_mean,
+temperature_observation_height, wind_observation_height.
 """
 struct ClimateForcing
     # Time-series fields (all DimArray with Ti dimension)
@@ -85,6 +88,8 @@ struct ClimateForcing
     shortwave_downward::DimArray
     longwave_downward::DimArray
     vapor_pressure::DimArray
+
+    # Time-varying model parameters (DimArray with Ti dimension, typically Fill-backed)
     black_carbon_snow::DimArray
     black_carbon_ice::DimArray
     cloud_optical_thickness::DimArray
@@ -92,37 +97,15 @@ struct ClimateForcing
     shortwave_downward_diffuse::DimArray
     cloud_fraction::DimArray
 
-    # Scalar metadata
+    # Time step [s]
     time_step::Int
+
+    # Metadata (scalars)
     temperature_air_mean::Float64
     wind_speed_mean::Float64
     precipitation_mean::Float64
     temperature_observation_height::Float64
     wind_observation_height::Float64
-end
-
-function Base.getindex(cf::ClimateForcing; Ti)
-    return ClimateForcingStep(
-        Float64(cf.time_step),
-        cf.temperature_air[Ti],
-        cf.pressure_air[Ti],
-        cf.precipitation[Ti],
-        cf.wind_speed[Ti],
-        cf.shortwave_downward[Ti],
-        cf.longwave_downward[Ti],
-        cf.vapor_pressure[Ti],
-        cf.temperature_air_mean,
-        cf.wind_speed_mean,
-        cf.precipitation_mean,
-        cf.temperature_observation_height,
-        cf.wind_observation_height,
-        cf.black_carbon_snow[Ti],
-        cf.black_carbon_ice[Ti],
-        cf.cloud_optical_thickness[Ti],
-        cf.solar_zenith_angle[Ti],
-        cf.shortwave_downward_diffuse[Ti],
-        cf.cloud_fraction[Ti],
-    )
 end
 
 """

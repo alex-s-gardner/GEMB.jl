@@ -166,6 +166,7 @@ end
 
     dz[end] = 0.01
     dz[end-1] = 0.05
+    expected_dz_last = dz[end] + dz[end-1]  # save before function mutates dz
     mp = _layer_mp(column_zmax=sum(dz))  # prevent padding
     verbose = false
 
@@ -175,6 +176,5 @@ end
             mp, verbose)
 
     @test length(dz_out) == 9
-    expected_dz_last = dz[end] + dz[end-1]
     @test dz_out[end] ≈ expected_dz_last atol = 1e-10
 end
