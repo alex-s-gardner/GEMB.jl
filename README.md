@@ -25,12 +25,7 @@ GEMB simulates a wide range of physical processes critical to glacier health:
 
 ## Installation
 
-```julia
-using Pkg
-Pkg.add("GEMB")
-```
-
-Or for the development version:
+GEMB.jl is not yet registered in the Julia General registry. Install directly from GitHub:
 
 ```julia
 using Pkg
