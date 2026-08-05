@@ -72,7 +72,7 @@ z_center = dz2z(parent(output[:dz]))
 temp_surface = surface_timeseries(parent(output[:temperature]))
 
 # Regrid to fixed vertical coordinate for plotting
-temp_gridded = gemb_interp(z_center, parent(output[:temperature]), profile_spunup)
+temp_gridded = gemb_interp(z_center, parent(output[:temperature]), collect(Float64, parent(profile_spunup[:z_center])))
 
 # Convert vapor pressure back to relative humidity
 rh = vapor_pressure_to_relative_humidity(
