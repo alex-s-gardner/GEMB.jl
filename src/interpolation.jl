@@ -8,12 +8,13 @@ evolves with every timestep.
 
 # Arguments
 - `z_center`: MxN matrix of grid cell center heights (from `dz2z(OutData.dz)`)
-- `A`: MxN matrix of data to regrid (e.g., `OutData.temperature`)
+- `A`: MxN matrix (or `DimArray` with `Z` and `Ti` dimensions) of data to regrid
 - `z_target`: Vector of target depth coordinates defining the output grid
 - `interp_method`: Interpolation method (`:linear` default, `:nearest`)
 
 # Returns
-An `M_regularized x N` matrix where the vertical postings correspond to `z_target`.
+A `DimArray` of size `length(z_target) × N` with `Z(z_target)` and `Ti` dimensions.
+When `A` is a `DimArray` with a `Ti` dimension, the time coordinates are preserved.
 
 Matches MATLAB's `gemb_interp.m`.
 """
@@ -21,11 +22,13 @@ function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::Abst
     @assert size(z_center) == size(A) "Dimensions of z_center and A must agree."
     @assert size(z_center, 1) > 1 "Inputs z_center and A must contain multiple rows representing profile depth."
 
-    n_target = length(z_target)
     n_times = size(A, 2)
 
+    # Extract time coordinates if A carries them
+    ti_dim = A isa DimArray ? dims(A, Ti) : Ti(1:n_times)
+
     # Preallocate output
-    A_regularized = fill(NaN, n_target, n_times)
+    A_regularized = fill(NaN, Z(z_target), ti_dim)
 
     # Loop through each timestep
     for k in 1:n_times
