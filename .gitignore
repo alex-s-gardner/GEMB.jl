@@ -14,6 +14,7 @@ examples/compare_outputs.jl
 examples/quick_benchmark.jl
 examples/time_test.jl
 examples/*.txt
+bench/*.txt
 
 # Reports (generated during development)
 CROSS_VALIDATION_SUMMARY.md
