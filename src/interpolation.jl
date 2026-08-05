@@ -1,5 +1,5 @@
 """
-    gemb_interp(Z_center::AbstractMatrix, A::AbstractMatrix, profile::DimStack; interp_method=:linear)
+    gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::AbstractVector; interp_method=:linear)
 
 Regularize GEMB Lagrangian output onto a consistent vertical grid.
 
@@ -7,22 +7,20 @@ This function is necessary because the vertical spacing of GEMB output
 evolves with every timestep.
 
 # Arguments
-- `Z_center`: MxN matrix of grid cell center heights (from `dz2z(OutData.dz)`)
+- `z_center`: MxN matrix of grid cell center heights (from `dz2z(OutData.dz)`)
 - `A`: MxN matrix of data to regrid (e.g., `OutData.temperature`)
-- `profile`: Profile DimStack containing `z_center` field defining the target grid
+- `z_target`: Vector of target depth coordinates defining the output grid
 - `interp_method`: Interpolation method (`:linear` default, `:nearest`)
 
 # Returns
-An `M_regularized x N` matrix where the vertical postings correspond to `profile[:z_center]`.
+An `M_regularized x N` matrix where the vertical postings correspond to `z_target`.
 
 Matches MATLAB's `gemb_interp.m`.
 """
-function gemb_interp(Z_center::AbstractMatrix, A::AbstractMatrix, profile::DimStack; interp_method::Symbol=:linear)
-    @assert size(Z_center) == size(A) "Dimensions of Z_center and A must agree."
-    @assert size(Z_center, 1) > 1 "Inputs Z_center and A must contain multiple rows representing profile depth."
+function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::AbstractVector; interp_method::Symbol=:linear)
+    @assert size(z_center) == size(A) "Dimensions of z_center and A must agree."
+    @assert size(z_center, 1) > 1 "Inputs z_center and A must contain multiple rows representing profile depth."
 
-    # Target z values from the profile
-    z_target = collect(Float64, parent(profile[:z_center]))
     n_target = length(z_target)
     n_times = size(A, 2)
 
@@ -39,7 +37,7 @@ function gemb_interp(Z_center::AbstractMatrix, A::AbstractMatrix, profile::DimSt
         end
 
         # Source data for this column (only finite values)
-        z_src = Z_center[isf, k]
+        z_src = z_center[isf, k]
         a_src = A[isf, k]
 
         if interp_method == :linear
