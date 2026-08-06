@@ -63,6 +63,7 @@ profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup, 100)
 # Run GEMB with transient forcing and the spun-up profile
 output = gemb(profile_spunup, cf, mp)
 
+
 ## Post-processing examples
 
 # Get grid cell centers for plotting
@@ -72,7 +73,7 @@ z_center = dz2z(parent(output[:dz]))
 temp_surface = surface_timeseries(parent(output[:temperature]))
 
 # Regrid to fixed vertical coordinate for plotting
-temp_gridded = gemb_interp(z_center, output[:temperature], collect(Float64, parent(profile_spunup[:z_center])))
+temp_gridded = gemb_interp(z_center, output[:temperature],profile_spunup[:z_center])
 
 # Convert vapor pressure back to relative humidity
 rh = vapor_pressure_to_relative_humidity(
