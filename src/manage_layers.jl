@@ -150,7 +150,7 @@ function manage_layers(temperature::Vector{Float64}, dz::Vector{Float64},
     local mass_added::Float64
     local E_added::Float64
 
-    if z_total < (mp.column_zmax - d_tolerance)
+    if z_total < (mp.column_zmin - d_tolerance)
         # Mass and energy to be added
         mass_added = (dz[end] * density[end]) + water[end]
         E_added = temperature[end] * (dz[end] * density[end]) * C_ICE + water[end] * (LF + CtoK * C_ICE)
