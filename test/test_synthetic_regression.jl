@@ -17,13 +17,14 @@ using GEMB: Statistics
     # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)
 
-    # Initialize profile
-    profile = initialize_profile(mp, cf)
+    # Initialize profile. steady_state=false reproduces the pure-ice
+    # initialization used to generate the MATLAB reference values below.
+    profile = initialize_profile(mp, cf; steady_state=false)
 
     # Create climatological forcing and spin up
     cf_climatology = forcing_climatology(cf)
     mp_spinup = ModelParameters(output_frequency=:last)
-    profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup, 75)
+    profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 
     # Run GEMB with spun-up profile
     output = gemb(profile_spunup, cf, mp)

@@ -15,7 +15,7 @@ mp_warmup = ModelParameters(output_frequency="daily")
 profile_warmup = initialize_profile(mp_warmup, cf_warmup)
 cf_clim_warmup = forcing_climatology(cf_warmup)
 mp_spinup_warmup = ModelParameters(output_frequency="last")
-profile_spunup_warmup = gemb_spinup(profile_warmup, cf_clim_warmup, mp_spinup_warmup, 75)
+profile_spunup_warmup = gemb_spinup(profile_warmup, cf_clim_warmup, mp_spinup_warmup; max_iterations=75)
 output_warmup = gemb(profile_spunup_warmup, cf_warmup, mp_warmup)
 println("   Warmup complete!")
 
@@ -30,7 +30,7 @@ Profile.init(n=10^7, delay=0.001)  # Increase sample buffer
     profile = initialize_profile(mp, cf)
     cf_clim = forcing_climatology(cf)
     mp_spinup = ModelParameters(output_frequency="last")
-    profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup, 75)
+    profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup; max_iterations=75)
     output = gemb(profile_spunup, cf, mp)
 end
 
@@ -50,7 +50,7 @@ cf_clim_spinup = forcing_climatology(cf_spinup)
 mp_sp = ModelParameters(output_frequency="last")
 
 @profile begin
-    profile_spunup_prof = gemb_spinup(profile_spinup, cf_clim_spinup, mp_sp, 75)
+    profile_spunup_prof = gemb_spinup(profile_spinup, cf_clim_spinup, mp_sp; max_iterations=75)
 end
 
 html_file_spinup = "gemb_profile_spinup.html"

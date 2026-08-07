@@ -43,7 +43,7 @@ println("   Climatology length: $(length(cf_climatology.time)) days")
 # Spin up a profile for 75 years of average forcing:
 println("\n5. Running spinup (75 years)...")
 mp_spinup = ModelParameters(output_frequency="last")
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup, 75)
+profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 println("   Spinup complete!")
 println("   Post-spinup layers: $(length(profile_spunup.dz))")
 println("   Post-spinup column height: $(round(sum(profile_spunup.dz), digits=2)) m")

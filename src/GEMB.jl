@@ -4,6 +4,7 @@ using DimensionalData
 using Dates
 using Statistics
 using FillArrays: Fill
+import DataInterpolations
 
 # Physical constants
 include("constants.jl")
@@ -69,6 +70,7 @@ export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
 export forcing_climatology, simulate_climate_forcing
 export dz2z, surface_timeseries, fast_divisors, decyear2datenum, datetime2decyear
+export herron_langway_steady_state, annual_pdd_melt, fresh_snow_density
 export dewpoint_to_vapor_pressure, vapor_pressure_to_relative_humidity
 export relative_humidity_to_vapor_pressure
 export fit_air_temperature, fit_precipitation, fit_longwave_irradiance_delta

@@ -20,7 +20,7 @@ cf_climatology = forcing_climatology(cf)
 
 # Spin up a profile for 75 years of average forcing:
 mp_spinup = ModelParameters(output_frequency=:last)
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup, 75)
+profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 
 # Run GEMB with the spun-up profile:
 output = gemb(profile_spunup, cf, mp)

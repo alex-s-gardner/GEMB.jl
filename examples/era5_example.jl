@@ -58,7 +58,7 @@ cf_spinup = forcing_climatology(cf)
 
 # Spin up for 100 years to reach quasi-steady state
 mp_spinup = ModelParameters(output_frequency="last")
-profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup, 100)
+profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup; max_iterations=100)
 
 # Run GEMB with transient forcing and the spun-up profile
 output = gemb(profile_spunup, cf, mp)
