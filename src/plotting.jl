@@ -50,4 +50,12 @@ fig = gemb_plot_output(output; depthlims=(-5, 0))
 save("gemb_diagnostics.png", fig)
 ```
 """
-function gemb_plot_output end
+function gemb_plot_output(args...; kwargs...)
+    error("""
+        `gemb_plot_output` requires a Makie backend. Load one before calling this function:
+
+            using CairoMakie   # for file output (PNG, SVG, PDF)
+            using GLMakie      # for interactive windows
+            using WGLMakie     # for Jupyter / Pluto notebooks
+        """)
+end
