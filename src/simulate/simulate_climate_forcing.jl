@@ -637,13 +637,17 @@ function simulate_climate_forcing(set_id::String, time_step_hours::Int=0)
         dt_hours = Float64(time_step_hours)
     end
 
-    # Create DateTime time vector directly
+    # Create DateTime time vector directly. The interval is half-open:
+    # [start_year-01-01, (end_year+1)-01-01), i.e. the trailing boundary instant
+    # (end_year+1)-01-01T00:00 is excluded. Including it would append a lone
+    # orphan step in a new day/year that pollutes daily output binning; dropping
+    # it yields whole days only (e.g. 32 years × 365.25 d × 8 steps).
     dt_start = DateTime(location_parameters.start_year, 1, 1)
     dt_end = DateTime(location_parameters.end_year + 1, 1, 1)
 
     # Generate time vector using Dates arithmetic
     dt_step = Dates.Millisecond(round(Int64, dt_hours * 3600 * 1000))
-    time_vec = collect(dt_start:dt_step:dt_end)
+    time_vec = collect(dt_start:dt_step:(dt_end - dt_step))
 
     # Convert DateTime to decimal year for internal simulation functions
     dec_year = datetime2decyear(time_vec)

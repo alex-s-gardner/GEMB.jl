@@ -50,11 +50,11 @@ cf = GEMB.ClimateForcing(forcing_data)
 # Initialize model parameters
 mp = ModelParameters(output_frequency="daily")
 
-# Initialize the firn column
-profile = initialize_profile(mp, cf)
-
 # Create climatological forcing for spinup
 cf_spinup = forcing_climatology(cf)
+
+# Initialize the firn column
+profile = initialize_profile(mp, cf_spinup)
 
 # Spin up for 100 years to reach quasi-steady state
 mp_spinup = ModelParameters(output_frequency="last")

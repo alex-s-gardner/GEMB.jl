@@ -71,7 +71,6 @@ The `examples/` directory contains working examples:
 
 * `examples/synthetic_example.jl` - Simple example using synthetic climate forcing
 * `examples/era5_example.jl` - Example using ERA5 reanalysis data
-* `examples/compare_outputs.jl` - Cross-validation between MATLAB and Julia implementations
 
 ## Key Functions
 

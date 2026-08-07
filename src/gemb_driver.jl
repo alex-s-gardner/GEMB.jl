@@ -346,6 +346,13 @@ end
 """
 Compute output times based on output frequency.
 Returns the last timestep of each day/month, all timesteps, or just the final one.
+
+For `:daily`/`:monthly`, a timestep is emitted when the next timestep falls in a
+different day/month. The final timestep is compared against a synthetic successor
+(`times[end] + dt`) rather than emitted unconditionally, so a trailing *partial*
+period (e.g. a lone midnight boundary step belonging to a new day) is not saved —
+only complete days/months are written. This matches MATLAB's `gemb.m` output
+indexing (which appends `dates(end) + (dates(end)-dates(end-1))` before diffing).
 """
 function _compute_output_times(times::Vector{DateTime}, frequency::Symbol)
     frequency == :all && return times
@@ -353,8 +360,11 @@ function _compute_output_times(times::Vector{DateTime}, frequency::Symbol)
     groupfn = frequency == :daily ? Date :
               frequency == :monthly ? (t -> (year(t), month(t))) :
               error("output_frequency must be one of: :all, :daily, :monthly, :last")
-    out = [times[i] for i in 1:(length(times)-1) if groupfn(times[i]) != groupfn(times[i+1])]
-    push!(out, times[end])
-    return out
+    n = length(times)
+    n == 1 && return copy(times)
+    # Synthetic successor for the final step (uniform time axis assumed).
+    ext_last = times[n] + (times[n] - times[n-1])
+    return [times[i] for i in 1:n
+            if groupfn(times[i]) != groupfn(i < n ? times[i+1] : ext_last)]
 end
 

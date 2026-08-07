@@ -45,7 +45,7 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     current_profile  = profile
 
     for cycle in 1:max_iterations
-        out = gemb(current_profile, cf, mp_spinup; verbose=verbose)
+        out = gemb(current_profile, cf, mp_spinup)
         current_profile = gemb_profile(out)
 
         if convergence_delta_density !== nothing

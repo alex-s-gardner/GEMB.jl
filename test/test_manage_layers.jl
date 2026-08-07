@@ -98,7 +98,7 @@ end
     albedo = 0.8 * ones(n)
     albedo_diffuse = 0.8 * ones(n)
 
-    mp = _layer_mp(column_zmax=1.0)  # target 1.0m -> adds padding
+    mp = _layer_mp(column_zmin=1.0)  # depth 0.5m < zmin -> adds padding
     verbose = false
 
     (_, dz_out, _, _, _, _, _, _, _, m_add, _) =

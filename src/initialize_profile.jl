@@ -25,17 +25,28 @@ the melt point (`min(T_mean, 273.15)`).
 # Keyword arguments
 - `steady_state`: use the Herron–Langway steady-state density profile (default
   `true`); set `false` to force the legacy pure-ice initialization.
+- `constant_density`: when `true`, initialize the density profile to pure ice
+  (`mp.density_ice`) everywhere, bypassing the steady-state/ablation regime
+  logic (default `false`).
+- `constant_temperature`: when `true`, initialize the temperature profile to the
+  mean annual air temperature (`cf.temperature_air_mean`) everywhere, without
+  clamping to the melt point (default `false`).
 - `ddf_snow`: snow degree-day factor [mm w.e. °C-1 d-1] for the melt estimate
   (default 3.0).
 - `melt_accum_ratio`: initialize pure ice when `melt ≥ melt_accum_ratio × accum`
   (default 0.6).
+
+Setting both `constant_density=true` and `constant_temperature=true` reproduces
+the MATLAB `model_initialize_profile` initialization (pure ice, uniform
+mean-annual temperature).
 
 Returns a DimStack with Z dimension containing:
 - z_center, dz, temperature, density, water, grain_radius,
   grain_dendricity, grain_sphericity, albedo, albedo_diffuse
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-    steady_state::Bool=true, ddf_snow::Real=3.0, melt_accum_ratio::Real=0.6)
+    steady_state::Bool=true, constant_density::Bool=false,
+    constant_temperature::Bool=false, ddf_snow::Real=3.0, melt_accum_ratio::Real=0.6)
 
     T_mean = cf.temperature_air_mean
 
@@ -50,14 +61,16 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     m = length(dz)
 
     # Temperature: mean annual, clamped to the melt point (matters in the warm /
-    # ablation regime where T_mean approaches or exceeds 273.15 K).
-    T_init = min(T_mean, CtoK)
+    # ablation regime where T_mean approaches or exceeds 273.15 K). When
+    # constant_temperature=true, use the unclamped mean annual temperature
+    # everywhere (matches the MATLAB initialization).
+    T_init = constant_temperature ? T_mean : min(T_mean, CtoK)
 
     # Decide firn (steady-state density) vs. ablation/ice (pure ice) regime.
     accum = cf.precipitation_mean                        # [kg m-2 yr-1]
     melt = annual_pdd_melt(cf; ddf_snow=ddf_snow)        # [kg m-2 yr-1]
 
-    if !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
+    if constant_density || !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
         density = fill(mp.density_ice, m)
     else
         # Warn if outside the Arthern et al. (2010) dry-firn calibration envelope.
