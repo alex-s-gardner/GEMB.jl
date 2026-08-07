@@ -1,4 +1,34 @@
 """
+    fresh_snow_density(mp::ModelParameters, T_air_mean, precip_mean, wind_speed_mean)
+
+Return the density of fresh snow [kg m-3] for the configured `mp.new_snow_method`.
+
+Depends only on climatological means (temperature [K], accumulation [kg m-2 yr-1],
+wind speed [m s-1]), so it is shared by `calculate_accumulation` (per timestep) and
+`initialize_profile` (as the surface density ρ₀ of the steady-state firn profile).
+
+Methods: `150kgm2` → 150; `350kgm2` → 350; `:Fausto` → 315; `:Kaspers` and
+`:KuipersMunneke` → temperature/accumulation/wind-dependent fits.
+"""
+function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
+    precip_mean::Real, wind_speed_mean::Real)
+    T_tolerance = 1e-10
+    if mp.new_snow_method == Symbol("150kgm2")
+        return 150.0
+    elseif mp.new_snow_method == Symbol("350kgm2")
+        return 350.0
+    elseif mp.new_snow_method == :Fausto
+        return 315.0
+    elseif mp.new_snow_method == :Kaspers
+        return (7.36e-2 + 1.06e-3 * min(T_air_mean, CtoK - T_tolerance) +
+                6.69e-2 * precip_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
+    elseif mp.new_snow_method == :KuipersMunneke
+        return 481.0 + 4.834 * (T_air_mean - CtoK)
+    end
+    return 0.0
+end
+
+"""
     calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Add precipitation and deposition to the model column.
@@ -38,22 +68,14 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             sum(water .* (LF + CtoK * C_ICE))
     end
 
-    # Density of fresh snow [kg m-3]
-    density_new_snow = 0.0
-    if mp.new_snow_method == Symbol("150kgm2")
-        density_new_snow = 150.0
-    elseif mp.new_snow_method == Symbol("350kgm2")
-        density_new_snow = 350.0
-    elseif mp.new_snow_method == :Fausto
-        density_new_snow = 315.0
-        # From Vionnet et al., 2012 (Crocus)
+    # Density of fresh snow [kg m-3] (shared with initialize_profile)
+    density_new_snow = fresh_snow_density(mp, cfs.temperature_air_mean,
+        cfs.precipitation_mean, cfs.wind_speed_mean)
+    if mp.new_snow_method == :Fausto
+        # From Vionnet et al., 2012 (Crocus): wind-dependent grain properties.
         gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
         gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)
         re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, gdn_tolerance)
-    elseif mp.new_snow_method == :Kaspers
-        density_new_snow = (7.36e-2 + 1.06e-3 * min(cfs.temperature_air_mean, CtoK - T_tolerance) + 6.69e-2 * cfs.precipitation_mean / 1000.0 + 4.77e-3 * cfs.wind_speed_mean) * 1000.0
-    elseif mp.new_snow_method == :KuipersMunneke
-        density_new_snow = 481.0 + 4.834 * (cfs.temperature_air_mean - CtoK)
     end
 
     M_surface = dz[1] * density[1]

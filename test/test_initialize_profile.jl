@@ -14,7 +14,8 @@ using GEMB: DimArray, Ti
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile = GEMB.initialize_profile(mp, cf)
+    # steady_state=false → legacy pure-ice init, matching MATLAB fidelity here.
+    profile = GEMB.initialize_profile(mp, cf; steady_state=false)
 
     # Check that profile has expected fields
     @test haskey(profile, :temperature)

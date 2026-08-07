@@ -17,7 +17,7 @@ end
 
 # Run the representative hot path: 1994-2025 3-hourly simulation with 75-year spinup.
 function run_hotpath(profile, cf_clim, mp_spinup, cf, mp)
-    profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup, 75)
+    profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup; max_iterations=75)
     output = gemb(profile_spunup, cf, mp)
     return output
 end

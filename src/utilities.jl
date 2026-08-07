@@ -156,3 +156,37 @@ function decyear2datenum(decyear)
 
     return datenum_out
 end
+
+"""
+    annual_pdd_melt(cf::ClimateForcing; ddf_snow=3.0)
+
+Estimate the annual potential melt [kg m-2 yr-1] from a positive-degree-day (PDD)
+scheme applied to the air-temperature forcing.
+
+`PDD = Σ max(T_air − 273.15, 0) · Δt_days` is summed over the whole forcing series
+and annualized by `365.25 / total_days` so forcing that is not exactly one year
+still yields an annual rate. The potential melt is `ddf_snow · PDD`, where
+`ddf_snow` is the snow degree-day factor [mm w.e. °C-1 d-1] (default 3.0, a
+standard value for snow).
+
+Used by [`initialize_profile`](@ref) to decide whether a site accumulates firn
+(build a Herron–Langway steady-state profile) or ablates (initialize pure ice).
+"""
+function annual_pdd_melt(cf::ClimateForcing; ddf_snow::Real=3.0)
+    T = Float64.(parent(cf.temperature_air))         # [K]
+    dt_days = cf.time_step / 86400.0                 # timestep length [d]
+
+    pdd = 0.0
+    @inbounds for t in T
+        pd = t - CtoK
+        if pd > 0.0
+            pdd += pd * dt_days                       # [°C · d]
+        end
+    end
+
+    total_days = length(T) * dt_days
+    total_days <= 0 && return 0.0
+    pdd_annual = pdd * (365.25 / total_days)          # [°C · d yr-1]
+
+    return Float64(ddf_snow) * pdd_annual             # [kg m-2 yr-1]
+end
