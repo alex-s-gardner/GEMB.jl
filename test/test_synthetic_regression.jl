@@ -54,18 +54,11 @@ using GEMB_ClimateForcing
     total_melt = sum(parent(output[:melt]))
     total_runoff = sum(parent(output[:runoff]))
 
-    # Reference = deterministic Julia output. Tolerances allow modest
-    # cross-platform/version spread from FP evaluation-order differences
-    # amplified over the 75-cycle spinup (arm64 vs x86_64 diverge by up to
-    # ~13 kg/m² for runoff/melt and ~5e-4 for albedo).
-    if VERSION >= v"1.11"
-        @test mean_albedo ≈ 0.822099 atol=5e-4       # ~0.06% relative
-        @test total_melt ≈ 11384.264341 atol=15.0    # ~0.13% relative
-        @test total_runoff ≈ 5024.274200 atol=15.0   # ~0.3% relative
-    else
-        # Julia 1.10: relaxed tolerances (larger platform/version spread observed)
-        @test mean_albedo ≈ 0.822099 atol=1e-3       # ~0.1% relative
-        @test total_melt ≈ 11384.264341 atol=100.0   # ~0.9% relative
-        @test total_runoff ≈ 5024.274200 atol=500.0  # up to ~10% relative
-    end
+    # Reference = deterministic Julia output on arm64 (macOS). Tolerances bracket
+    # the cross-platform FP evaluation-order spread amplified over the 75-cycle
+    # spinup (~7.9M iterations): x86_64 CI vs arm64 differs by ~28-32 kg/m² for
+    # melt/runoff and ~6e-4 for albedo. atols are set ~2x that spread.
+    @test mean_albedo ≈ 0.822099 atol=2e-3      # ~0.24% relative
+    @test total_melt ≈ 11384.264341 atol=60.0   # ~0.53% relative
+    @test total_runoff ≈ 5024.274200 atol=60.0  # ~1.2% relative
 end
