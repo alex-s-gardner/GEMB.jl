@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.10'
+          - '1.11'
           - '1'
         os:
           - ubuntu-latest
@@ -27,6 +27,17 @@ jobs:
           - x64
     steps:
       - uses: actions/checkout@v4
+      # The test suite depends on the unregistered companion package
+      # GEMB_ClimateForcing.jl, resolved via `[sources]` in test/Project.toml
+      # (requires Julia >= 1.11). The source path is a sibling of this repo, so
+      # check the companion out next to the GEMB.jl checkout.
+      - name: Check out GEMB_ClimateForcing.jl (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: alex-s-gardner/GEMB_ClimateForcing.jl
+          path: GEMB_ClimateForcing.jl
+      - name: Move companion to sibling path
+        run: mv GEMB_ClimateForcing.jl ../GEMB_ClimateForcing.jl
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
