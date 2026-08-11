@@ -84,8 +84,10 @@ end
 
     new_state, flux = GEMB.gemb_core(state, cfs, mp, true)
 
-    # Initial 10 layers (0.8m). zmax=0.9m -> adds 1 padding layer = 11 layers
-    @test length(new_state.dz) == 11
+    # Initial 10 layers (0.8 m total). The column depth (0.8 m) sits above
+    # column_zmin (0.5 m), so manage_layers adds no bottom padding layer and
+    # no cell crosses the merge/split thresholds -> 10 layers unchanged.
+    @test length(new_state.dz) == 10
 
     # Output sizes should be consistent
     @test length(new_state.dz) == length(new_state.temperature)
@@ -109,8 +111,9 @@ end
 
     new_state, flux = GEMB.gemb_core(state, cfs, mp, true)
 
-    # 10 (original) + 1 (snow accumulation) + 1 (zmax padding) = 12
-    @test length(new_state.dz) == 12
+    # 10 (original) + 1 (snow accumulation) = 11. The 0.8 m column is above
+    # column_zmin (0.5 m), so no bottom padding layer is added.
+    @test length(new_state.dz) == 11
 
     # Top layer should be fresh snow density
     @test round(new_state.density[1]; digits=2) == 150.0

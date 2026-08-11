@@ -79,58 +79,6 @@ function surface_timeseries(A::AbstractMatrix)
 end
 
 """
-    dewpoint_to_vapor_pressure(temperature_dewpoint)
-
-Convert dewpoint temperature [K] to actual vapor pressure [Pa].
-
-Uses the NOAA formula: vapor_pressure = 611 * 10^(7.5 * Td / (237.3 + Td))
-where Td is dewpoint in Celsius.
-
-Matches MATLAB's `dewpoint_to_vapor_pressure.m`.
-"""
-function dewpoint_to_vapor_pressure(temperature_dewpoint)
-    Td = temperature_dewpoint .- 273.15
-    return 611.0 .* (10.0 .^ (7.5 .* Td ./ (237.3 .+ Td)))
-end
-
-"""
-    vapor_pressure_to_relative_humidity(vapor_pressure, temperature_air)
-
-Calculate relative humidity [%] from vapor pressure [Pa] and air temperature [K].
-
-Uses Tetens' formula for saturation vapor pressure and clamps the result to [0, 100].
-
-Matches MATLAB's `vapor_pressure_to_relative_humidity.m`.
-"""
-function vapor_pressure_to_relative_humidity(vapor_pressure, temperature_air)
-    Tc = temperature_air .- 273.15
-    A = 610.78
-    B = 17.27
-    C = 237.3
-    es = A .* exp.((B .* Tc) ./ (Tc .+ C))
-    relative_humidity = (vapor_pressure ./ es) .* 100.0
-    return clamp.(relative_humidity, 0.0, 100.0)
-end
-
-"""
-    relative_humidity_to_vapor_pressure(temperature_air, relative_humidity)
-
-Estimate actual vapor pressure [Pa] from air temperature [K] and relative humidity [%].
-
-Uses Tetens' formula for saturation vapor pressure.
-
-Matches MATLAB's `relative_humidity_to_vapor_pressure.m`.
-"""
-function relative_humidity_to_vapor_pressure(temperature_air, relative_humidity)
-    Tc = temperature_air .- 273.15
-    A = 610.78   # Pa
-    B = 17.27    # dimensionless
-    C = 237.3    # degrees Celsius
-    es = A .* exp.((B .* Tc) ./ (Tc .+ C))
-    return es .* (relative_humidity ./ 100.0)
-end
-
-"""
     decyear2datenum(decyear)
 
 Convert decimal year to MATLAB datenum format (days since 0000-01-01).

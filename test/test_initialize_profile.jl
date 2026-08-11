@@ -100,7 +100,8 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     # Here we just validate grid structure
     
     params = GEMB.initialize_parameters()
-    forcing = GEMB.simulate_climate_forcing("test_1", 3)
+    ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
+    forcing = GEMB.ClimateForcing(ds)
     profile = GEMB.initialize_profile(params, forcing)
     
     # Validate number of layers

@@ -153,10 +153,48 @@ end
     expected_t = (260.0 * 2.0 + old_t1 * old_mass) / new_mass
     @test t_out[1] ≈ expected_t atol = 1e-10
 
-    # Albedo: for new_snow_method == Symbol("150kgm2") the merge-path albedo
-    # mixing is intentionally skipped, so the surface albedo is left unchanged.
-    expected_a = old_a1
+    # Albedo: on the merge path the surface albedo is mass-weighted between the
+    # fresh-snow albedo and the existing surface albedo whenever an albedo method
+    # is active (albedo_method != :None).
+    expected_a = (mp.albedo_snow * 2.0 + old_a1 * old_mass) / new_mass
     @test a_out[1] ≈ expected_a atol = 1e-10
+end
+
+@testset "Small snow event (albedo unchanged when albedo_method == :None)" begin
+    # Companion case to the merge test above: with albedo_method == :None the
+    # merge path leaves the surface albedo untouched, even as mass/density/
+    # temperature are still mixed.
+    n = 5
+    t_vec = 260.0 * ones(n)
+    dz = 0.1 * ones(n)
+    density = 400.0 * ones(n)
+    water = zeros(n)
+    grain_radius = 0.5 * ones(n)
+    grain_dendricity = 0.5 * ones(n)
+    grain_sphericity = 0.5 * ones(n)
+    albedo_in = 0.7 * ones(n)
+    albedo_diffuse_in = 0.7 * ones(n)
+
+    mp = GEMB.ModelParameters(
+        new_snow_method=Symbol("150kgm2"),
+        column_dzmin=0.05,
+        density_ice=917.0,
+        albedo_snow=0.85,
+        albedo_method=:None,
+        rain_temperature_threshold=273.15,
+    )
+    cfs = _make_accum_cfs(precipitation=2.0, temperature_air=260.0)
+
+    old_a1 = albedo_in[1]
+
+    (_, dz_out, _, _, _, _, _, a_out, _, _) = GEMB.calculate_accumulation(
+        t_vec, dz, density, water, grain_radius,
+        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        cfs, mp, false)
+
+    # Still a merge (no new layer), but albedo is left unchanged.
+    @test length(dz_out) == n
+    @test a_out[1] ≈ old_a1 atol = 1e-10
 end
 
 @testset "Rain event" begin

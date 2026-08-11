@@ -1,5 +1,6 @@
 # Comprehensive profiling script for GEMB.jl synthetic example
 using GEMB
+using GEMB_ClimateForcing
 using Profile
 using ProfileCanvas
 
@@ -10,10 +11,12 @@ println("="^70)
 # Step 1: Warmup run (compile everything)
 println("\n[1/4] Warmup run (compiling)...")
 time_step_hours = 3
-cf_warmup = simulate_climate_forcing("test_1", time_step_hours)
+ds_warmup = simulate_climate_forcing("test_1", time_step_hours)
+cf_warmup = GEMB.ClimateForcing(ds_warmup)
 mp_warmup = ModelParameters(output_frequency="daily")
 profile_warmup = initialize_profile(mp_warmup, cf_warmup)
-cf_clim_warmup = forcing_climatology(cf_warmup)
+ds_clim_warmup = forcing_climatology(ds_warmup)
+cf_clim_warmup = GEMB.ClimateForcing(ds_clim_warmup)
 mp_spinup_warmup = ModelParameters(output_frequency="last")
 profile_spunup_warmup = gemb_spinup(profile_warmup, cf_clim_warmup, mp_spinup_warmup; max_iterations=75)
 output_warmup = gemb(profile_spunup_warmup, cf_warmup, mp_warmup)
@@ -25,10 +28,12 @@ Profile.clear()
 Profile.init(n=10^7, delay=0.001)  # Increase sample buffer
 
 @profile begin
-    cf = simulate_climate_forcing("test_1", time_step_hours)
+    ds = simulate_climate_forcing("test_1", time_step_hours)
+    cf = GEMB.ClimateForcing(ds)
     mp = ModelParameters(output_frequency="daily")
     profile = initialize_profile(mp, cf)
-    cf_clim = forcing_climatology(cf)
+    ds_clim = forcing_climatology(ds)
+    cf_clim = GEMB.ClimateForcing(ds_clim)
     mp_spinup = ModelParameters(output_frequency="last")
     profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup; max_iterations=75)
     output = gemb(profile_spunup, cf, mp)
@@ -43,10 +48,12 @@ println("   Full profile saved to $html_file")
 println("\n[3/4] Profiling spinup phase...")
 Profile.clear()
 
-cf_spinup = simulate_climate_forcing("test_1", time_step_hours)
+ds_spinup = simulate_climate_forcing("test_1", time_step_hours)
+cf_spinup = GEMB.ClimateForcing(ds_spinup)
 mp_spinup_prof = ModelParameters(output_frequency="daily")
 profile_spinup = initialize_profile(mp_spinup_prof, cf_spinup)
-cf_clim_spinup = forcing_climatology(cf_spinup)
+ds_clim_spinup = forcing_climatology(ds_spinup)
+cf_clim_spinup = GEMB.ClimateForcing(ds_clim_spinup)
 mp_sp = ModelParameters(output_frequency="last")
 
 @profile begin

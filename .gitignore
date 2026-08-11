@@ -27,3 +27,4 @@ PERFORMANCE_COMPARISON.md
 # Test files not in runtests.jl
 test/test_optimization_validation.jl
 .claude/settings.local.json
+test/Manifest.toml
