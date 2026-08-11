@@ -31,14 +31,7 @@ gemb_spinup
 ```@docs
 gemb_profile
 gemb_interp
-forcing_climatology
 surface_timeseries
-```
-
-## Synthetic Forcing
-
-```@docs
-simulate_climate_forcing
 ```
 
 ## GEMB_ClimateForcing Extension
@@ -58,24 +51,31 @@ When both packages are loaded, a conversion method `ClimateForcing(::DimStack)` 
 using GEMB
 using GEMB_ClimateForcing
 
-# Download data
+# Download ERA5-Land data
 forcing_data = climate_forcing(:era5land, lat, lon; 
                                 time_range=..., 
                                 token=ENV["CDS_API_KEY"])
 
 # Convert to ClimateForcing (extension method)
 cf = GEMB.ClimateForcing(forcing_data)
+
+# Or generate synthetic forcing
+ds = simulate_climate_forcing("test_1", 3)   # returns DimStack
+cf = GEMB.ClimateForcing(ds)
+
+# Compute climatological average (DimStack → DimStack)
+ds_clim = forcing_climatology(ds)
+cf_clim = GEMB.ClimateForcing(ds_clim)
 ```
 
 The extension automatically validates required fields and metadata, then calls `initialize_forcing` internally. See the extension source at `ext/GEMBClimateForcing.jl` for details.
 
-## Humidity Conversions
-
-```@docs
-dewpoint_to_vapor_pressure
-relative_humidity_to_vapor_pressure
-vapor_pressure_to_relative_humidity
-```
+Humidity conversion utilities (`dewpoint_to_vapor_pressure`, `vapor_pressure_to_relative_humidity`,
+`relative_humidity_to_vapor_pressure`) and climate fitting functions (`fit_air_temperature`,
+`fit_precipitation`, `fit_longwave_irradiance_delta`, `fit_seasonal_daily_noise`) are provided
+by `GEMB_ClimateForcing`. See the
+[GEMB_ClimateForcing documentation](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl)
+for details.
 
 ## Utilities
 

@@ -43,21 +43,9 @@ include("gemb_driver.jl")
 include("spinup.jl")
 include("profile_extract.jl")
 include("interpolation.jl")
-include("forcing_climatology.jl")
 
 # Plotting (implementation provided by the GEMBMakieExt extension)
 include("plotting.jl")
-
-# Synthetic forcing
-include("simulate/simulate_climate_forcing.jl")
-
-# Climate fitting functions
-include("fit_climate/fit_air_temperature.jl")
-include("fit_climate/fit_precipitation.jl")
-include("fit_climate/fit_longwave_irradiance_delta.jl")
-include("fit_climate/fit_seasonal_daily_noise.jl")
-include("fit_climate/varname2longname.jl")
-include("fit_climate/simulate_coeffs_disp.jl")
 
 # Re-export DimensionalData essentials
 using DimensionalData: DimArray, DimStack, Ti, Z, dims
@@ -68,12 +56,7 @@ export ModelParameters, ClimateForcing, ClimateForcingStep
 export initialize_parameters, initialize_forcing, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
-export forcing_climatology, simulate_climate_forcing
-export dz2z, surface_timeseries, fast_divisors, decyear2datenum, datetime2decyear
+export dz2z, surface_timeseries, fast_divisors, decyear2datenum
 export herron_langway_steady_state, annual_pdd_melt, fresh_snow_density
-export dewpoint_to_vapor_pressure, vapor_pressure_to_relative_humidity
-export relative_humidity_to_vapor_pressure
-export fit_air_temperature, fit_precipitation, fit_longwave_irradiance_delta
-export fit_seasonal_daily_noise, varname2longname, simulate_coeffs_disp
 
 end

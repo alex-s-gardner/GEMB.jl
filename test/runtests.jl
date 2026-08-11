@@ -1,4 +1,5 @@
 using GEMB
+using GEMB_ClimateForcing
 using Test
 using Dates
 using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
@@ -49,8 +50,15 @@ include("test_utils.jl")
     @testset "GEMB Spinup" begin
         include("test_gemb_spinup.jl")
     end
-    @testset "Vapor Pressure" begin
-        include("test_vapor_pressure.jl")
+    @testset "GEMB_ClimateForcing Integration" begin
+        # Verify simulate → convert → run model end-to-end
+        ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
+        @test ds isa DimStack
+        cf = GEMB.ClimateForcing(ds)
+        @test cf isa GEMB.ClimateForcing
+        mp = GEMB.ModelParameters()
+        profile = GEMB.initialize_profile(mp, cf)
+        @test length(profile.dz) > 0
     end
     @testset "Grid Utilities" begin
         include("test_grid_utilities.jl")

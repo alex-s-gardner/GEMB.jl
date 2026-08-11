@@ -27,19 +27,21 @@ pkg> add GEMB
 
 Using GEMB requires four basic steps:
 
-1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, [`simulate_climate_forcing`](@ref) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5/MERRA-2 data.
+1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5/MERRA-2 data.
 2. **Define Model Parameters** -- Use [`ModelParameters`](@ref) to set model configuration (densification model, albedo method, grid geometry, etc.).
 3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
 4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
 
 ```julia
 using GEMB
+using GEMB_ClimateForcing
 
 # Initialize model parameters
 mp = ModelParameters(output_frequency="daily")
 
-# Generate synthetic climate forcing (3-hour time step)
-cf = simulate_climate_forcing("test_1", 3)
+# Generate synthetic climate forcing (3-hour time step) — returns DimStack
+ds = simulate_climate_forcing("test_1", 3)
+cf = GEMB.ClimateForcing(ds)   # convert to ClimateForcing
 
 # Initialize the firn column profile
 profile = initialize_profile(mp, cf)
@@ -85,16 +87,21 @@ For research applications, the column should be spun up to a quasi-steady state 
 ```julia
 using GEMB
 
+using GEMB_ClimateForcing
+
 mp = ModelParameters(output_frequency="last")
 
-# Generate or load climate forcing
-cf = simulate_climate_forcing("test_1", 3)
+# Generate synthetic climate forcing (returns DimStack)
+ds = simulate_climate_forcing("test_1", 3)
+cf = GEMB.ClimateForcing(ds)
 
-# Initialize the column
+# Create a single-year climatological average for spinup
+ds_clim = forcing_climatology(ds)
+cf_clim = GEMB.ClimateForcing(ds_clim)
+
+# Initialize the column and spin up
 profile = initialize_profile(mp, cf)
-
-# Spin up over 5 cycles
-spun_up_profile = gemb_spinup(profile, cf, mp, 5)
+spun_up_profile = gemb_spinup(profile, cf_clim, mp, 5)
 
 # Now run with transient forcing
 mp_run = ModelParameters(output_frequency="daily")

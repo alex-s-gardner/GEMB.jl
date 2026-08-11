@@ -51,7 +51,8 @@ cf = GEMB.ClimateForcing(forcing_data)
 mp = ModelParameters(output_frequency="daily")
 
 # Create climatological forcing for spinup
-cf_spinup = forcing_climatology(cf)
+ds_spinup = forcing_climatology(forcing_data)
+cf_spinup = GEMB.ClimateForcing(ds_spinup)
 
 # Initialize the firn column
 profile = initialize_profile(mp, cf_spinup)

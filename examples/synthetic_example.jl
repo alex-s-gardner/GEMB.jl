@@ -2,18 +2,21 @@
 # Equivalent to MATLAB's GEMB_example_synthetic.m
 
 using GEMB
+using GEMB_ClimateForcing
 
 ## Set up the model and run it:
 
 # Generate 3-hourly synthetic climate forcing data:
 time_step_hours = 3
-cf = simulate_climate_forcing("test_1", time_step_hours)
+ds = simulate_climate_forcing("test_1", time_step_hours)
+cf = GEMB.ClimateForcing(ds)
 
 # Initialize model parameters:
 mp = ModelParameters(output_frequency=:daily)
 
 # Create a climatological average time series:
-cf_climatology = forcing_climatology(cf)
+ds_climatology = forcing_climatology(ds)
+cf_climatology = GEMB.ClimateForcing(ds_climatology)
 
 # Initialize a column:
 profile = initialize_profile(mp, cf_climatology)

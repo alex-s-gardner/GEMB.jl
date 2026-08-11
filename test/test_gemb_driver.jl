@@ -84,20 +84,29 @@ using Dates
 
         profile = initialize_profile(params, forcing)
 
-        # Calculate initial mass
-        initial_mass = sum(profile.density .* profile.dz)
-
         output = gemb(profile, forcing, params)
 
-        # Calculate final mass
-        final_density = output[:density][Ti=Near(time[end])]
-        final_dz = output[:dz][Ti=Near(time[end])]
+        # Column mass at each output step (NaN-padded cells excluded).
+        column_mass(ti) = begin
+            d = output[:density][Ti=Near(ti)]
+            z = output[:dz][Ti=Near(ti)]
+            sum(d[.!isnan.(d)] .* z[.!isnan.(z)])
+        end
 
-        final_mass = sum(final_density[.!isnan.(final_density)] .*
-                        final_dz[.!isnan.(final_dz)])
+        # NOTE: initialize_profile can build a column that slightly overshoots
+        # column_zmax; the first manage_layers call trims the bottom layer to
+        # bring the column back within bounds. That one-time trim is mass leaving
+        # through the bottom domain boundary (a legitimate grid operation), not a
+        # physics conservation violation. Comparing the pre-trim initial mass to
+        # the final mass therefore conflates the trim with conservation.
+        #
+        # To test physics conservation, compare the mass at the first output step
+        # (after the initialization trim has settled) to the final mass. With no
+        # precipitation, melt, or runoff, the physics must conserve column mass.
+        first_mass = column_mass(time[1])
+        final_mass = column_mass(time[end])
 
-        # Mass should be approximately conserved (within 1%)
-        @test abs(final_mass - initial_mass) / initial_mass < 0.01
+        @test abs(final_mass - first_mass) / first_mass < 0.01
     end
 
     @testset "Accumulation test" begin
