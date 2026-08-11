@@ -21,12 +21,14 @@ Basic workflow for running GEMB:
 
 ```julia
 using GEMB
+using GEMB_ClimateForcing  # synthetic/real forcing lives in the companion package
 
 # 1. Initialize model parameters
 params = initialize_parameters()
 
-# 2. Create or load climate forcing data
-forcing = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
+# 2. Create climate forcing (DimStack) and convert to GEMB.ClimateForcing
+ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
+forcing = GEMB.ClimateForcing(ds)
 
 # 3. Initialize the vertical profile
 profile = initialize_profile(params, forcing)
@@ -37,6 +39,12 @@ output = gemb(profile, forcing, params)
 # 5. Extract surface temperature time series
 T_surface = surface_timeseries(output.temperature)
 ```
+
+Note: `simulate_climate_forcing`, `forcing_climatology`, the `fit_*` climate
+functions, and the humidity conversions were moved out of GEMB.jl into the
+companion `GEMB_ClimateForcing.jl` (commit a669134). GEMB.jl keeps only the
+physics model; a `DimStack` is the neutral interface, and `GEMB.ClimateForcing(ds)`
+(provided by the `GEMBClimateForcing` extension) converts it.
 
 ## GEMB_ClimateForcing Extension
 
@@ -72,6 +80,15 @@ The extension validates required fields and metadata, then calls `initialize_for
 ## Development Commands
 
 ### Testing
+
+**Prerequisite:** The test target depends on the unregistered companion package
+`GEMB_ClimateForcing.jl`, resolved via `[sources]` in `test/Project.toml`
+pointing at `../../GEMB_ClimateForcing.jl` (a sibling of this repo). `[sources]`
+is only honored on **Julia ≥ 1.11**; on 1.10 `Pkg.test()` fails with
+`expected package GEMB_ClimateForcing to be registered`. Check the companion out
+as a sibling directory, and keep the CI matrix off the `'1'` alias (which can
+resolve to a 1.10.x release).
+
 ```bash
 # Run all tests
 julia --project=. -e 'using Pkg; Pkg.test()'
@@ -136,10 +153,12 @@ GEMB follows a modular physics-based architecture:
    - `gemb_profile()`, `gemb_interp()` in `profile_extract.jl`: Extract/interpolate profiles at specific times/depths
    - `surface_timeseries()`: Extract surface values from column arrays
    - `dz2z()`: Convert grid spacing to depth coordinates
-   - `forcing_climatology()` in `forcing_climatology.jl`: Creates synthetic climatology from time series (useful for spinup)
-   - `simulate_climate_forcing()`: Generates synthetic forcing data for testing
-   - Climate utilities: `dewpoint_to_vapor_pressure()`, `vapor_pressure_to_relative_humidity()`, `relative_humidity_to_vapor_pressure()`
-   - Climate fitting functions: `fit_air_temperature()`, `fit_precipitation()`, `fit_longwave_irradiance_delta()`, `fit_seasonal_daily_noise()`
+
+   Climate-forcing generation (`simulate_climate_forcing()`, `forcing_climatology()`,
+   the `fit_*` fitting functions, and humidity conversions like
+   `dewpoint_to_vapor_pressure()`) now live in the companion `GEMB_ClimateForcing.jl`,
+   not in this package. They return/consume a `DimStack`; use `GEMB.ClimateForcing(ds)`
+   to convert into the `ClimateForcing` type GEMB consumes.
 
 ### Data Flow
 
