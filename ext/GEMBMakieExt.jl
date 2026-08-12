@@ -68,13 +68,15 @@ _cmap(v::Symbol) = get(_CMAP, v, :viridis)
 # Scalar variables grouped by physical theme + shared unit so multiple series
 # share one axis (increasing data density, removing near-duplicate panels).
 # Each entry: (panel title with units, [member variables]).
+# Air temperature is placed first so it sits at the top of the right column,
+# above (aligned with) the temperature profile heatmap in the left column.
 const _SCALAR_GROUPS = [
+    ("Air temperature [°C]", [:temperature_air]),
     ("Energy fluxes [W m⁻²]",
         [:shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent]),
     ("Mass fluxes [kg m⁻²]",
         [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation]),
     ("Surface albedo [–]", [:albedo_surface]),
-    ("Air temperature [°C]", [:temperature_air]),
     ("Firn air content [m]", [:firn_air_content]),
     ("Densification [m]", [:densification_from_compaction, :densification_from_melt]),
 ]
@@ -147,6 +149,32 @@ function _provenance_str(md)
         push!(parts, string(off > 0 ? "+" : "", round(off, digits=1), " m"))
     end
 
+    return join(parts, ", ")
+end
+
+# Spinup provenance from the output stack metadata: the climatology averaging
+# window and whether the spinup converged, e.g.
+# "spinup 1950-01-01→1980-12-31, converged". If the run was not spun up, reports
+# "no spinup"; if no spinup metadata is present at all, yields "".
+function _spinup_str(md)
+    md === nothing && return ""
+    getmd(k) = md isa AbstractDict ? get(md, k, nothing) :
+               (haskey(md, k) ? md[k] : nothing)
+
+    performed = getmd("spinup_performed")
+    performed === false && return "no spinup"
+    performed === nothing && return ""   # metadata predates provenance support
+
+    parts = String[]
+    t0, t1 = getmd("climatology_window_start"), getmd("climatology_window_stop")
+    if t0 isa DateTime && t1 isa DateTime
+        push!(parts, string("spinup ", Dates.format(t0, "yyyy-mm-dd"),
+                            "→", Dates.format(t1, "yyyy-mm-dd")))
+    else
+        push!(parts, "spinup")
+    end
+    conv = getmd("spinup_converged")
+    conv isa Bool && push!(parts, conv ? "converged" : "not converged")
     return join(parts, ", ")
 end
 
@@ -227,11 +255,19 @@ function GEMB.gemb_plot_output(output::DimStack;
     # explicitly: `dz` is a grid-management diagnostic (not a physical field), and
     # the depth-resolved albedo fields duplicate the surface-albedo time series.
     if variables === nothing
-        default_drop = (:dz, :albedo, :albedo_diffuse)
+        # `dz` is a grid-management diagnostic and the depth-resolved albedo fields
+        # duplicate the surface-albedo series; dendricity/sphericity are dropped by
+        # default (grain radius already represents the grain-metamorphism family).
+        default_drop = (:dz, :albedo, :albedo_diffuse, :grain_dendricity, :grain_sphericity)
         profile_vars = filter(v -> v ∉ default_drop, profile_vars)
     end
     scalar_groups = [(t, [v for v in g if v in wanted]) for (t, g) in _SCALAR_GROUPS]
     scalar_groups = [(t, g) for (t, g) in scalar_groups if !isempty(g)]
+    # Densification is dropped from the default panel set (kept available when the
+    # caller lists its variables explicitly via `variables`).
+    if variables === nothing
+        scalar_groups = [(t, g) for (t, g) in scalar_groups if t != "Densification [m]"]
+    end
 
     # ---- Shared time axis (decimal year) ----------------------------------
     times = collect(dims(output, Ti))
@@ -347,7 +383,9 @@ function _header!(pos, output, times, z_center, tcols, title)
            median(diff(Dates.value.(times))) / 3.6e6 : NaN
     freq = _freq_word(dt_h)
     strided = length(tcols) < length(times)
-    prov = _provenance_str(DimensionalData.metadata(output))
+    md = DimensionalData.metadata(output)
+    prov = _provenance_str(md)
+    spin = _spinup_str(md)
     budget = _mass_budget_str(output, times)
 
     meta = string(
@@ -355,6 +393,7 @@ function _header!(pos, output, times, z_center, tcols, title)
         prov == "" ? "" : prov * "  │  ",
         freq, " ",
         Dates.format(t0, "yyyy-mm-dd"), " → ", Dates.format(t1, "yyyy-mm-dd"),
+        spin == "" ? "" : "  │  " * spin,
         budget == "" ? "" : "  │  " * budget,
         strided ? "  │  heatmaps strided to $(length(tcols)) cols" : "",
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
