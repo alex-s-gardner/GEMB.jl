@@ -61,10 +61,23 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         melt_surface = 0.0,
     )
 
-    # Compute output times
-    output_times = Set(_compute_output_times(times, mp.output_frequency))
-    out_time = sort(collect(output_times))
+    # Compute output times. `_compute_output_times` already returns a sorted, unique
+    # subset of `times`, so it becomes the output time axis directly; the `Set` is kept
+    # only for O(1) membership testing inside the time loop below.
+    out_time = _compute_output_times(times, mp.output_frequency)
+    output_times = Set(out_time)
     n_outputs = length(out_time)
+
+    # Period-based frequencies emit only *complete* days/weeks/months. A forcing record
+    # shorter than one period therefore yields no output at all; warn rather than
+    # silently returning empty arrays.
+    if n_outputs == 0
+        @warn "gemb: output_frequency=:$(mp.output_frequency) produced no output times — " *
+              "the forcing record ($(length(times)) steps, $(times[1]) to $(times[end])) " *
+              "does not span a complete $(mp.output_frequency == :monthly ? "month" :
+                                          mp.output_frequency == :weekly ? "week" : "day"). " *
+              "Returning empty output."
+    end
     column_length = length(state.dz)
     profile_size = column_length + mp.output_padding
 

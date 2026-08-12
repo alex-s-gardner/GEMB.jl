@@ -1,4 +1,6 @@
 using DimensionalData
+using DimensionalData: AbstractDimStack, data_eltype
+import DimensionalData as DD
 using Dates
 
 """
@@ -68,44 +70,118 @@ Base.@kwdef struct ModelParameters
 end
 
 """
-    ClimateForcing
+    ClimateForcing <: DimensionalData.AbstractDimStack
 
-Time-series surface meteorological forcing for GEMB.
-All forcing arrays share a common `Ti` (time) dimension.
+Time-series surface meteorological forcing for GEMB, implemented as an
+`AbstractDimStack`. It therefore supports the full DimensionalData stack API —
+`keys`, `length`, `dims`, `map`, `layers`, and DimStack-style indexing such as
+date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
+— all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-Required fields: temperature_air, pressure_air, precipitation, wind_speed,
-shortwave_downward, longwave_downward, vapor_pressure.
+# Layers (13 time-series `DimArray`s sharing a common `Ti` dimension)
+Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
+`wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
+Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
+`black_carbon_ice`, `cloud_optical_thickness`, `solar_zenith_angle`,
+`shortwave_downward_diffuse`, `cloud_fraction`.
 
-Metadata: temperature_air_mean, wind_speed_mean, precipitation_mean,
-temperature_observation_height, wind_observation_height.
+# Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
+`time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
+`precipitation_mean`, `temperature_observation_height`, `wind_observation_height`.
+
+Both layers and scalar metadata are reachable by name via property access
+(`cf.temperature_air` returns the layer `DimArray`; `cf.time_step` returns the
+concrete scalar), so existing `cf.<field>` code continues to work unchanged.
+Construct via the 19-argument positional constructor (13 `DimArray`s then the 6
+scalars, in the order listed above) or, more commonly, via [`initialize_forcing`](@ref).
 """
-struct ClimateForcing
-    # Time-series fields (all DimArray with Ti dimension)
-    temperature_air::DimArray
-    pressure_air::DimArray
-    precipitation::DimArray
-    wind_speed::DimArray
-    shortwave_downward::DimArray
-    longwave_downward::DimArray
-    vapor_pressure::DimArray
+struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T,N,L,D}
+    data::L
+    dims::D
+    refdims::R
+    layerdims::NamedTuple{K,LD}
+    metadata::M
+    layermetadata::NamedTuple{K,LM}
+    # Inner constructors mirror `DimStack` so the generic AbstractDimStack
+    # `rebuild`/`stacktype` machinery (which reconstructs via
+    # `basetypeof(s){K,...}(data, dims, refdims, layerdims, metadata, layermetadata)`)
+    # finds a matching signature.
+    function ClimateForcing(
+        data, dims, refdims, layerdims::LD, metadata, layermetadata::NamedTuple{K}
+    ) where LD <: NamedTuple{K} where K
+        T = data_eltype(data)
+        N = length(dims)
+        ClimateForcing{K,T,N}(data, dims, refdims, layerdims, metadata, layermetadata)
+    end
+    function ClimateForcing{K,T,N}(
+        data::L, dims::D, refdims::R, layerdims::NamedTuple{K,LD}, metadata::M, layermetadata::NamedTuple{K,LM}
+    ) where {K,T,N,L,D,R,LD,M,LM}
+        new{K,T,N,L,D,R,LD,M,LM}(data, dims, refdims, layerdims, metadata, layermetadata)
+    end
+end
 
-    # Time-varying model parameters (DimArray with Ti dimension, typically Fill-backed)
-    black_carbon_snow::DimArray
-    black_carbon_ice::DimArray
-    cloud_optical_thickness::DimArray
-    solar_zenith_angle::DimArray
-    shortwave_downward_diffuse::DimArray
-    cloud_fraction::DimArray
+# The 13 forcing layers, in positional-constructor order.
+const CLIMATE_FORCING_LAYER_KEYS = (
+    :temperature_air, :pressure_air, :precipitation, :wind_speed,
+    :shortwave_downward, :longwave_downward, :vapor_pressure,
+    :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
+    :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
+)
+# The scalar metadata carried alongside the layers, in positional-constructor order.
+const CLIMATE_FORCING_META_KEYS = (
+    :time_step, :temperature_air_mean, :wind_speed_mean, :precipitation_mean,
+    :temperature_observation_height, :wind_observation_height,
+)
 
-    # Time step [s]
-    time_step::Int
+"""
+    ClimateForcing(temperature_air, pressure_air, precipitation, wind_speed,
+                   shortwave_downward, longwave_downward, vapor_pressure,
+                   black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+                   solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+                   time_step, temperature_air_mean, wind_speed_mean,
+                   precipitation_mean, temperature_observation_height,
+                   wind_observation_height)
 
-    # Metadata (scalars)
-    temperature_air_mean::Float64
-    wind_speed_mean::Float64
-    precipitation_mean::Float64
-    temperature_observation_height::Float64
-    wind_observation_height::Float64
+Positional constructor: 13 forcing `DimArray`s (sharing a `Ti` dimension) followed
+by the 6 scalar metadata values. Builds the stack layers and stores the scalars in
+the stack `metadata` as a `NamedTuple` (keeping their concrete types).
+"""
+function ClimateForcing(
+    temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+)
+    das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
+        temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    ))
+    meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
+        time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+    ))
+    stackdims = DD.combinedims(collect(das))
+    data = map(parent, das)
+    layerdims = map(DD.basedims, das)
+    layermetadata = map(DD.metadata, das)
+    ClimateForcing(data, stackdims, (), layerdims, meta, layermetadata)
+end
+
+# Preserve the `cf.<field>` interface on top of the stack layout: forcing fields
+# resolve to their layer `DimArray`, scalar metadata to the concrete stored value,
+# and everything else (`data`, `dims`, `refdims`, ...) to the underlying struct field.
+Base.@constprop :aggressive function Base.getproperty(cf::ClimateForcing, k::Symbol)
+    if k in CLIMATE_FORCING_LAYER_KEYS
+        return cf[k]
+    elseif k in CLIMATE_FORCING_META_KEYS
+        return getfield(cf, :metadata)[k]
+    else
+        return getfield(cf, k)
+    end
 end
 
 """

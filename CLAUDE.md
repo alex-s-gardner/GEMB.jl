@@ -136,7 +136,7 @@ GEMB follows a modular physics-based architecture:
 
 1. **Types** (`types.jl`): Defines three key structs:
    - `ModelParameters`: All model configuration. Method/option fields use `Symbol` types (e.g., `:Arthern`, `:GardnerSharp`, `:daily`)
-   - `ClimateForcing`: Time-series meteorological forcing with DimensionalData.jl `DimArray`s. Includes `time_step::Int` (seconds) and time-varying model parameters as Fill arrays. Supports direct time indexing: `cf[Ti=At(t)]` returns a `ClimateForcingStep`
+   - `ClimateForcing`: Time-series meteorological forcing, a `DimensionalData.AbstractDimStack` subtype. The 13 forcing variables are stack layers (`DimArray`s); `time_step::Int` (seconds) and the scalar means/observation heights live in the stack `metadata` (a `NamedTuple`). Both are reachable by name via property access (`cf.temperature_air`, `cf.time_step`). Time-varying model parameters are stored as Fill arrays. Supports the DimStack API and time indexing: `cf[Ti=At(t)]` returns a `ClimateForcing` (a sub-stack), not a `ClimateForcingStep`
    - `ClimateForcingStep`: Single timestep forcing values (plain struct of scalars for the physics loop)
 
 2. **Initialization** (`initialize_*.jl`):
@@ -188,7 +188,7 @@ Initialize Profile → Time Loop [
 - **DimensionalData.jl**: All input/output arrays use `DimArray` with explicit dimensions (`Ti` for time, `Z` for vertical). Indexing uses keyword syntax: `output[:temperature][Z=1:10, Ti=At(t)]`
 - **State as NamedTuple**: The column state (temperature, dz, density, etc.) is passed between timesteps as a plain NamedTuple of vectors — no DimStack overhead in the hot loop
 - **Symbols for Options**: Model parameters that select methods use `Symbol` (e.g., `albedo_method=:GardnerSharp`, `output_frequency=:daily`)
-- **ClimateForcing Indexing**: `climate_forcing[Ti=At(t)]` returns a `ClimateForcingStep` directly. Time-varying model parameters (black carbon, cloud properties) are stored as `FillArrays.Fill`-backed DimArrays, ready to become truly time-varying
+- **ClimateForcing Indexing**: `ClimateForcing` is an `AbstractDimStack`, so `climate_forcing[Ti(a .. b)]` / `climate_forcing[Ti=At(t)]` slice it like any DimStack and return a `ClimateForcing`. `ClimateForcingStep` (the per-timestep scalar struct) is built separately in the `gemb` hot loop by integer-indexing the unwrapped forcing vectors. Time-varying model parameters (black carbon, cloud properties) are stored as `FillArrays.Fill`-backed DimArrays, ready to become truly time-varying
 - **Immutable Parameters**: `ModelParameters` is immutable; create new instance for modifications
 - **Energy/Mass Conservation**: When `verbose=true`, `gemb_core()` validates conservation laws each timestep
 - **Output Padding**: Profile outputs include padding (`output_padding` parameter) to accommodate column growth without reallocation
