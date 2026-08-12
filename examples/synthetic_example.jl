@@ -20,11 +20,21 @@ cf_climatology = forcing_climatology(cf)
 # Initialize a column:
 profile = initialize_profile(mp, cf_climatology)
 
-# Spin up a profile for 75 years of average forcing:
+# Spin up a profile for up to 75 years of average forcing, exiting early once the
+# depth-averaged density converges:
 mp_spinup = initialize_parameters(output_frequency=:last)
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
+profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup;
+                             max_iterations=75, convergence_delta_density=0.01)
 
-# Run GEMB with the spun-up profile:
+# The spun-up profile carries provenance: which climatology years were averaged
+# and how the spinup converged (`metadata` is re-exported from DimensionalData).
+prov = metadata(profile_spunup)
+println("Spinup: ", prov[:spinup_cycles], " cycles, converged=", prov[:spinup_converged],
+        ", climatology years=", prov[:climatology_n_years])
+
+# Run GEMB with the spun-up profile. The provenance (including spinup_performed=true)
+# is carried onto the output metadata; a profile run without spinup would instead
+# record spinup_performed=false.
 output = gemb(profile_spunup, cf, mp)
 
 ## Examine results:

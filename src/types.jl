@@ -87,7 +87,11 @@ Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
-`precipitation_mean`, `temperature_observation_height`, `wind_observation_height`.
+`precipitation_mean`, `temperature_observation_height`, `wind_observation_height`,
+source provenance (`dataset`, `latitude`, `longitude`, `elevation_offset`) and
+climatology provenance (`climatology_window_start`, `climatology_window_stop`,
+`climatology_n_years`, `climatology_steps_per_year`; set by
+[`forcing_climatology`](@ref)).
 
 Both layers and scalar metadata are reachable by name via property access
 (`cf.temperature_air` returns the layer `DimArray`; `cf.time_step` returns the
@@ -135,6 +139,8 @@ const CLIMATE_FORCING_META_KEYS = (
     :time_step, :temperature_air_mean, :wind_speed_mean, :precipitation_mean,
     :temperature_observation_height, :wind_observation_height,
     :dataset, :latitude, :longitude, :elevation_offset,
+    :climatology_window_start, :climatology_window_stop,
+    :climatology_n_years, :climatology_steps_per_year,
 )
 
 """
@@ -153,6 +159,12 @@ the stack `metadata` as a `NamedTuple` (keeping their concrete types).
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, and `elevation_offset` (m the forcing was elevation-adjusted
 by) — are stored alongside the physics scalars and default to `""`/`NaN`/`0.0`.
+
+Climatology provenance keywords — `climatology_window_start`,
+`climatology_window_stop` (the requested averaging window, `DateTime` or
+`nothing`), `climatology_n_years` (number of complete years averaged), and
+`climatology_steps_per_year` — are set by [`forcing_climatology`](@ref) and
+default to `nothing`/`0` for non-climatological forcing.
 """
 function ClimateForcing(
     temperature_air, pressure_air, precipitation, wind_speed,
@@ -163,6 +175,8 @@ function ClimateForcing(
     temperature_observation_height, wind_observation_height;
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation_offset::Real=0.0,
+    climatology_window_start=nothing, climatology_window_stop=nothing,
+    climatology_n_years::Integer=0, climatology_steps_per_year::Integer=0,
 )
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
@@ -174,6 +188,8 @@ function ClimateForcing(
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
         temperature_observation_height, wind_observation_height,
         String(dataset), Float64(latitude), Float64(longitude), Float64(elevation_offset),
+        climatology_window_start, climatology_window_stop,
+        Int(climatology_n_years), Int(climatology_steps_per_year),
     ))
     stackdims = DD.combinedims(collect(das))
     data = map(parent, das)

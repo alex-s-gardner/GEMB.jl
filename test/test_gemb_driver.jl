@@ -208,4 +208,32 @@ using Dates
         # Boundaries land on Sundays (day before Monday-anchored week starts).
         @test all(dayname.(weekly) .== "Sunday")
     end
+
+    @testset "Output provenance (spinup vs. no spinup)" begin
+        n = 365
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        params = initialize_parameters(output_frequency=:last)
+        profile = initialize_profile(params, forcing)
+
+        # No spinup: gemb runs directly on the freshly initialized profile.
+        out_nospin = gemb(profile, forcing, params)
+        md1 = DimensionalData.metadata(out_nospin)
+        @test md1["spinup_performed"] == false
+        @test !haskey(md1, "spinup_cycles")
+        # Forcing provenance is still present.
+        @test haskey(md1, "dataset")
+
+        # With spinup: spinup_* / climatology_* provenance carries onto the output.
+        ps = gemb_spinup(profile, forcing, params;
+                         max_iterations=3, convergence_delta_density=0.01)
+        out_spin = gemb(ps, forcing, params)
+        md2 = DimensionalData.metadata(out_spin)
+        @test md2["spinup_performed"] == true
+        @test md2["spinup_cycles"] == 3
+        @test haskey(md2, "climatology_n_years")
+    end
 end
