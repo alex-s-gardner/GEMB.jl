@@ -127,10 +127,14 @@ const CLIMATE_FORCING_LAYER_KEYS = (
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
 )
-# The scalar metadata carried alongside the layers, in positional-constructor order.
+# The scalar metadata carried alongside the layers. The first six are the physics
+# scalars (positional in the constructor); the trailing four are provenance
+# (passed as keyword args) that trace where the forcing came from and how it was
+# adjusted, so they can be surfaced in `gemb` output and diagnostic plots.
 const CLIMATE_FORCING_META_KEYS = (
     :time_step, :temperature_air_mean, :wind_speed_mean, :precipitation_mean,
     :temperature_observation_height, :wind_observation_height,
+    :dataset, :latitude, :longitude, :elevation_offset,
 )
 
 """
@@ -145,6 +149,10 @@ const CLIMATE_FORCING_META_KEYS = (
 Positional constructor: 13 forcing `DimArray`s (sharing a `Ti` dimension) followed
 by the 6 scalar metadata values. Builds the stack layers and stores the scalars in
 the stack `metadata` as a `NamedTuple` (keeping their concrete types).
+
+Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
+`latitude`, `longitude`, and `elevation_offset` (m the forcing was elevation-adjusted
+by) — are stored alongside the physics scalars and default to `""`/`NaN`/`0.0`.
 """
 function ClimateForcing(
     temperature_air, pressure_air, precipitation, wind_speed,
@@ -152,7 +160,9 @@ function ClimateForcing(
     black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
-    temperature_observation_height, wind_observation_height,
+    temperature_observation_height, wind_observation_height;
+    dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
+    elevation_offset::Real=0.0,
 )
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
@@ -163,6 +173,7 @@ function ClimateForcing(
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
         temperature_observation_height, wind_observation_height,
+        String(dataset), Float64(latitude), Float64(longitude), Float64(elevation_offset),
     ))
     stackdims = DD.combinedims(collect(das))
     data = map(parent, das)

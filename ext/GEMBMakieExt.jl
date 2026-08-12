@@ -36,7 +36,7 @@ const _LABELS = Dict{Symbol,String}(
     :densification_from_melt => "melt",
     :valid_profile_length => "valid layers",
     # 2-D (profile) variables
-    :temperature => "temperature [K]",
+    :temperature => "temperature [°C]",
     :density => "density [kg m⁻³]",
     :water => "water [kg m⁻²]",
     :grain_radius => "grain radius [mm]",
@@ -47,15 +47,19 @@ const _LABELS = Dict{Symbol,String}(
 )
 _label(v::Symbol) = get(_LABELS, v, string(v))
 
-# Perceptually-uniform colormap per 2-D variable, chosen so each field reads at
-# maximum contrast (cmocean maps: thermal/dense/haline/matter/ice).
-const _CMAP = Dict{Symbol,Symbol}(
+# Colormap per 2-D variable. Most are perceptually-uniform named maps; `water`
+# and `density` use hand-built blue ramps so their endpoints carry meaning:
+#   water   — white (no liquid water) → deep blue (maximum water content)
+#   density — pale blue (low-density fresh snow) → medium blue (glacier ice)
+# Dendricity and sphericity share the grain-radius map so the grain-metamorphism
+# panels read as one family.
+const _CMAP = Dict{Symbol,Any}(
     :temperature => :thermal,
-    :density => :dense,
-    :water => :haline,
+    :density => cgrad([colorant"#eef4fb", colorant"#3b7dc4"]),
+    :water => cgrad([colorant"#ffffff", colorant"#08306b"]),
     :grain_radius => :matter,
-    :grain_dendricity => :speed,
-    :grain_sphericity => :speed,
+    :grain_dendricity => :matter,
+    :grain_sphericity => :matter,
     :albedo => :ice,
     :albedo_diffuse => :ice,
 )
@@ -70,7 +74,7 @@ const _SCALAR_GROUPS = [
     ("Mass fluxes [kg m⁻²]",
         [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation]),
     ("Surface albedo [–]", [:albedo_surface]),
-    ("Air temperature [K]", [:temperature_air]),
+    ("Air temperature [°C]", [:temperature_air]),
     ("Firn air content [m]", [:firn_air_content]),
     ("Densification [m]", [:densification_from_compaction, :densification_from_melt]),
 ]
@@ -99,6 +103,51 @@ function _robust_limits(A::AbstractArray; plo=2, phi=98)
         return (lo - pad, hi + pad)
     end
     return (lo, hi)
+end
+
+# Map a median sampling cadence (hours) to an input run-frequency word. Falls
+# back to a rounded interval when it doesn't match a common cadence.
+function _freq_word(dt_h::Real)
+    isnan(dt_h) && return "?"
+    approx(target) = abs(dt_h - target) <= 0.05 * target
+    approx(1) && return "hourly"
+    approx(3) && return "3-hourly"
+    approx(6) && return "6-hourly"
+    approx(12) && return "12-hourly"
+    approx(24) && return "daily"
+    approx(24 * 7) && return "weekly"
+    approx(24 * 30) && return "monthly"
+    approx(24 * 365) && return "annual"
+    return dt_h >= 24 ? "$(round(dt_h/24, digits=1))-daily" :
+           "$(round(dt_h, digits=1))-hourly"
+end
+
+# Human-readable forcing provenance from the output stack metadata, e.g.
+# "ERA5-Land @ 72.58°N, 38.46°W, +100 m". Every piece is optional: a stack with
+# no provenance metadata yields "" and the banner renders as it did before.
+function _provenance_str(md)
+    md === nothing && return ""
+    getmd(k) = md isa AbstractDict ? get(md, k, nothing) :
+               (haskey(md, k) ? md[k] : nothing)
+
+    parts = String[]
+    ds = getmd("dataset")
+    ds isa AbstractString && !isempty(ds) && push!(parts, ds)
+
+    lat, lon = getmd("latitude"), getmd("longitude")
+    if lat isa Real && lon isa Real && isfinite(lat) && isfinite(lon)
+        lats = string(round(abs(lat), digits=2), "°", lat >= 0 ? "N" : "S")
+        lons = string(round(abs(lon), digits=2), "°", lon >= 0 ? "E" : "W")
+        coord = "$lats, $lons"
+        isempty(parts) ? push!(parts, coord) : (parts[end] *= " @ " * coord)
+    end
+
+    off = getmd("elevation_offset")
+    if off isa Real && isfinite(off) && abs(off) > 0
+        push!(parts, string(off > 0 ? "+" : "", round(off, digits=1), " m"))
+    end
+
+    return join(parts, ", ")
 end
 
 # Even index stride so a heatmap never exceeds `maxcols` columns — a raster
@@ -173,10 +222,16 @@ function GEMB.gemb_plot_output(output::DimStack;
 
     # ---- Left column: profile heatmaps ------------------------------------
     for (i, v) in enumerate(profile_vars)
-        gridded = gemb_interp(z_center[:, tcols], parent(output[v])[:, tcols], z_target)
+        vals = parent(output[v])[:, tcols]
+        # Temperature is stored in K; show it in °C so the profile shares the
+        # air-temperature panel's units.
+        v === :temperature && (vals = vals .- 273.15)
+        gridded = gemb_interp(z_center[:, tcols], vals, z_target)
         ax = Axis(left[i, 1]; ylabel="depth [m]")
         push!(prof_axes, ax)
         lo, hi = _robust_limits(parent(gridded))
+        # Anchor water's ramp at zero so "no liquid water" reads as white.
+        v === :water && (lo = 0.0)
         hm = heatmap!(ax, x_hm, collect(dims(gridded, Z)), parent(gridded');
             colormap=_cmap(v), colorrange=(lo, hi))
         Colorbar(left[i, 2], hm; label=_label(v), width=12)
@@ -187,6 +242,18 @@ function GEMB.gemb_plot_output(output::DimStack;
     for (i, (gtitle, members)) in enumerate(scalar_groups)
         ax = Axis(right[i, 1]; ylabel=gtitle)
         push!(scal_axes, ax)
+        # Air temperature: show in °C with the curve filled to zero — warm
+        # (> 0 °C) in red, cold (≤ 0 °C) in blue — so melt-permissive periods
+        # read at a glance.
+        if members == [:temperature_air]
+            tc = Float64.(parent(output[:temperature_air])) .- 273.15
+            band!(ax, decyear, min.(tc, 0.0), 0.0;
+                color=(:blue, 0.5))
+            band!(ax, decyear, 0.0, max.(tc, 0.0);
+                color=(:red, 0.5))
+            lines!(ax, decyear, tc; color=:black, linewidth=0.4)
+            continue
+        end
         # With ~10⁵ sub-daily points, overplotted opaque lines saturate to a
         # solid block; thin, semi-transparent strokes let density show through.
         alpha = length(members) > 1 ? 0.75 : 0.9
@@ -221,20 +288,19 @@ function _header!(pos, output, times, z_center, tcols, title)
         "?"
     end
     t0, t1 = first(times), last(times)
-    # Median sampling cadence in hours.
+    # Median sampling cadence in hours, expressed as an input run frequency word
+    # (e.g. "hourly", "daily") prefixed to the time span.
     dt_h = length(times) > 1 ?
            median(diff(Dates.value.(times))) / 3.6e6 : NaN
-    cad = isnan(dt_h) ? "?" :
-          dt_h >= 24 ? "$(round(dt_h/24, digits=1)) d" : "$(round(dt_h, digits=1)) h"
-    finite = filter(isfinite, z_center)
-    zmax = isempty(finite) ? NaN : -minimum(finite)
+    freq = _freq_word(dt_h)
     strided = length(tcols) < length(times)
+    prov = _provenance_str(DimensionalData.metadata(output))
 
     meta = string(
         "GEMB v$ver  │  ",
+        prov == "" ? "" : prov * "  │  ",
+        freq, " ",
         Dates.format(t0, "yyyy-mm-dd"), " → ", Dates.format(t1, "yyyy-mm-dd"),
-        "  │  ", length(times), " steps (~", cad, ")",
-        "  │  max depth ", round(zmax, digits=1), " m",
         strided ? "  │  heatmaps strided to $(length(tcols)) cols" : "",
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
     )

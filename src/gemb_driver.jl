@@ -37,7 +37,11 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
         climate_forcing.temperature_observation_height,
-        climate_forcing.wind_observation_height,
+        climate_forcing.wind_observation_height;
+        dataset=climate_forcing.dataset,
+        latitude=climate_forcing.latitude,
+        longitude=climate_forcing.longitude,
+        elevation_offset=climate_forcing.elevation_offset,
     )
 
     # Pre-compute dt_divisors for thermal sub-stepping
@@ -117,7 +121,16 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo_diffuse=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-    ))
+    );
+        # Carry forcing provenance onto the output so downstream consumers
+        # (e.g. `gemb_plot_output`) can report where the forcing came from.
+        metadata=Dict{String,Any}(
+            "dataset" => climate_forcing.dataset,
+            "latitude" => climate_forcing.latitude,
+            "longitude" => climate_forcing.longitude,
+            "elevation_offset" => climate_forcing.elevation_offset,
+        ),
+    )
 
     # Run the time loop through a function barrier. ClimateForcing's fields are
     # typed `::DimArray` (a UnionAll, not a concrete type), so indexing them

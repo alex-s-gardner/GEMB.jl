@@ -86,6 +86,10 @@ function forcing_climatology(cf::ClimateForcing)
         cf.wind_speed_mean,
         cf.precipitation_mean,
         cf.temperature_observation_height,
-        cf.wind_observation_height,
+        cf.wind_observation_height;
+        dataset=cf.dataset,
+        latitude=cf.latitude,
+        longitude=cf.longitude,
+        elevation_offset=cf.elevation_offset,
     )
 end
