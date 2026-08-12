@@ -13,20 +13,17 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [weakdeps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
-GEMB_ClimateForcing = "a64e60a8-608f-46bc-88f4-efdcc7581069"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [extensions]
-GEMBClimateForcing = "GEMB_ClimateForcing"
 GEMBMakieExt = "Makie"
 
 [compat]
 DataInterpolations = "9.2.0"
 DimensionalData = "0.30.1"
 FillArrays = "1.16.0"
-GEMB_ClimateForcing = "0.1"
 GLMakie = "0.9, 0.10, 0.11, 0.12, 0.13"
 JSON = "1.6.1"
 Makie = "0.21, 0.22, 0.23, 0.24"

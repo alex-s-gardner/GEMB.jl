@@ -1,24 +1,17 @@
 """
-Extension for GEMB.jl to convert GEMB_ClimateForcing DimStack to ClimateForcing struct.
+    ClimateForcing(stack::DimStack) -> ClimateForcing
 
-This extension is automatically loaded when both GEMB and GEMB_ClimateForcing are loaded.
-It provides a conversion constructor that validates the DimStack structure and converts
-it to GEMB's ClimateForcing type.
-"""
-module GEMBClimateForcing
+Convert a forcing `DimStack` to a GEMB `ClimateForcing` struct.
 
-using GEMB
-using GEMB_ClimateForcing
-using DimensionalData
-using Dates
-
-"""
-    GEMB.ClimateForcing(stack::DimStack) -> ClimateForcing
-
-Convert a GEMB_ClimateForcing DimStack to a GEMB ClimateForcing struct.
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface: any source
+(e.g. the companion `GEMB_ClimateForcing.jl` package, or a hand-built stack) can
+supply forcing as long as it carries the required layers, a `DateTime`-indexed
+`Ti` dimension, and the required metadata. This method is GEMB's acceptance
+contract for such a stack; it validates the structure and delegates to
+[`initialize_forcing`](@ref).
 
 # Arguments
-- `stack::DimStack`: DimStack from `climate_forcing()` with required variables
+- `stack::DimStack`: forcing stack with the required variables and metadata
 
 # Required Variables in DimStack
 - `temperature_air`: Air temperature (K)
@@ -36,7 +29,7 @@ Convert a GEMB_ClimateForcing DimStack to a GEMB ClimateForcing struct.
 - `temperature_observation_height`: Height of temperature observations (m)
 - `wind_observation_height`: Height of wind observations (m)
 
-# Optional Variables (defaults used if not present)
+# Optional Metadata (defaults used if not present)
 - `black_carbon_snow`: Black carbon concentration in snow (default: 0.0)
 - `black_carbon_ice`: Black carbon concentration in ice (default: 0.0)
 - `cloud_optical_thickness`: Cloud optical thickness (default: 0.0)
@@ -47,14 +40,14 @@ Convert a GEMB_ClimateForcing DimStack to a GEMB ClimateForcing struct.
 # Examples
 ```julia
 using GEMB
-using GEMB_ClimateForcing
+using GEMB_ClimateForcing  # one producer of a conforming DimStack
 
 # Load forcing data
 forcing_data = climate_forcing(:era5land, 67.0, -50.0;
                                 time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                 token=ENV["CDS_API_KEY"])
 
-# Convert to ClimateForcing (extension method)
+# Convert to ClimateForcing
 cf = GEMB.ClimateForcing(forcing_data)
 
 # Use with GEMB
@@ -63,7 +56,7 @@ profile = GEMB.initialize_profile(mp, cf)
 output = GEMB.gemb(profile, cf, mp)
 ```
 """
-function GEMB.ClimateForcing(stack::DimStack)
+function ClimateForcing(stack::DimStack)
     # Validate required fields
     required_fields = [
         :temperature_air, :pressure_air, :vapor_pressure,
@@ -136,9 +129,8 @@ function GEMB.ClimateForcing(stack::DimStack)
     shortwave_downward_diffuse = get(meta, "shortwave_downward_diffuse", 0.0)
     cloud_fraction = get(meta, "cloud_fraction", 0.1)
 
-    # Call GEMB.initialize_forcing to create ClimateForcing struct
-    # This includes GEMB's validation logic
-    return GEMB.initialize_forcing(
+    # Delegate to initialize_forcing, which applies GEMB's validation logic
+    return initialize_forcing(
         time,
         temperature_air,
         pressure_air,
@@ -160,5 +152,3 @@ function GEMB.ClimateForcing(stack::DimStack)
         cloud_fraction = cloud_fraction
     )
 end
-
-end # module

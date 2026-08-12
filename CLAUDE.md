@@ -44,11 +44,21 @@ Note: `simulate_climate_forcing`, `forcing_climatology`, the `fit_*` climate
 functions, and the humidity conversions were moved out of GEMB.jl into the
 companion `GEMB_ClimateForcing.jl` (commit a669134). GEMB.jl keeps only the
 physics model; a `DimStack` is the neutral interface, and `GEMB.ClimateForcing(ds)`
-(provided by the `GEMBClimateForcing` extension) converts it.
+(a core method, always available) converts it.
 
-## GEMB_ClimateForcing Extension
+## DimStack Forcing Interface and the GEMB_ClimateForcing Companion
 
-GEMB.jl includes a package extension (`ext/GEMBClimateForcing.jl`) that integrates with the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package for loading real climate data (ERA5, ERA5-Land, MERRA-2) from CDS/GES-DISC.
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface. The
+conversion `GEMB.ClimateForcing(::DimStack)` is a **core** method
+(`src/climate_forcing_conversion.jl`, always available — no extension required):
+it validates the required layers, a `DateTime`-indexed `Ti` dimension, and the
+required metadata, then delegates to `initialize_forcing()`.
+
+Any source can produce a conforming `DimStack`. The
+[GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl)
+companion is one such producer, loading real climate data (ERA5, ERA5-Land,
+MERRA-2) from CDS/GES-DISC. It is an optional dependency — install it only when
+you need real/synthetic forcing (it is also a test dependency; see below).
 
 Installation (GEMB_ClimateForcing is not yet in the General registry):
 ```julia
@@ -56,7 +66,7 @@ using Pkg
 Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 ```
 
-When both packages are loaded, the extension provides a conversion method:
+Usage with the companion producer:
 ```julia
 using GEMB
 using GEMB_ClimateForcing
@@ -66,7 +76,7 @@ forcing_data = climate_forcing(:era5land, 67.0, -50.0;
                                 time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                 token=ENV["CDS_API_KEY"])
 
-# Convert DimStack → ClimateForcing (automatic via extension)
+# Convert DimStack → ClimateForcing (core method)
 cf = GEMB.ClimateForcing(forcing_data)
 
 # Use with GEMB
@@ -74,8 +84,6 @@ mp = initialize_parameters()
 profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
-
-The extension validates required fields and metadata, then calls `initialize_forcing()` internally.
 
 ## Development Commands
 
