@@ -48,7 +48,7 @@ cf = GEMB.initialize_forcing(forcing_data)
 ## Run GEMB
 
 # Initialize model parameters
-mp = ModelParameters(output_frequency="daily")
+mp = initialize_parameters(output_frequency=:daily)
 
 # Create climatological forcing for spinup
 cf_spinup = forcing_climatology(cf)
@@ -57,7 +57,7 @@ cf_spinup = forcing_climatology(cf)
 profile = initialize_profile(mp, cf_spinup)
 
 # Spin up for 100 years to reach quasi-steady state
-mp_spinup = ModelParameters(output_frequency="last")
+mp_spinup = initialize_parameters(output_frequency=:last)
 profile_spunup = gemb_spinup(profile, cf_spinup, mp_spinup; max_iterations=100)
 
 # Run GEMB with transient forcing and the spun-up profile

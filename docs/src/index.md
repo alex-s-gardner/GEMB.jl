@@ -37,7 +37,7 @@ using GEMB
 using GEMB_ClimateForcing
 
 # Initialize model parameters
-mp = ModelParameters(output_frequency="daily")
+mp = initialize_parameters(output_frequency=:daily)
 
 # Generate synthetic climate forcing (3-hour time step) — returns DimStack
 ds = simulate_climate_forcing("test_1", 3)
@@ -73,7 +73,7 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
 cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
-mp = ModelParameters(output_frequency="daily")
+mp = initialize_parameters(output_frequency=:daily)
 profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
@@ -89,7 +89,7 @@ using GEMB
 
 using GEMB_ClimateForcing
 
-mp = ModelParameters(output_frequency="last")
+mp = initialize_parameters(output_frequency=:last)
 
 # Generate synthetic climate forcing (returns DimStack)
 ds = simulate_climate_forcing("test_1", 3)
@@ -103,7 +103,7 @@ profile = initialize_profile(mp, cf)
 spun_up_profile = gemb_spinup(profile, cf_clim, mp, 5)
 
 # Now run with transient forcing
-mp_run = ModelParameters(output_frequency="daily")
+mp_run = initialize_parameters(output_frequency=:daily)
 output = gemb(spun_up_profile, cf, mp_run)
 ```
 
