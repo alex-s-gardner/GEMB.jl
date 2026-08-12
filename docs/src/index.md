@@ -27,7 +27,7 @@ pkg> add GEMB
 
 Using GEMB requires four basic steps:
 
-1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5/MERRA-2 data.
+1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5-Land data.
 2. **Define Model Parameters** -- Use [`ModelParameters`](@ref) to set model configuration (densification model, albedo method, grid geometry, etc.).
 3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
 4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
@@ -54,7 +54,7 @@ The output is a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/
 
 ## Using Real Climate Data
 
-For production runs with ERA5, ERA5-Land, or MERRA-2 reanalysis data, use the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package which automatically downloads and formats climate data:
+For production runs with ERA5-Land reanalysis data, use the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package which automatically downloads and formats climate data:
 
 ```julia
 # Install GEMB_ClimateForcing (first time only)
@@ -96,8 +96,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = GEMB.initialize_forcing(ds)
 
 # Create a single-year climatological average for spinup
-ds_clim = forcing_climatology(ds)
-cf_clim = GEMB.initialize_forcing(ds_clim)
+cf_clim = forcing_climatology(cf)
 
 # Initialize the column and spin up
 profile = initialize_profile(mp, cf)

@@ -41,8 +41,7 @@ using GEMB_ClimateForcing
     profile = initialize_profile(mp, cf; steady_state=false)
 
     # Create climatological forcing and spin up
-    ds_climatology = forcing_climatology(ds)
-    cf_climatology = GEMB.initialize_forcing(ds_climatology)
+    cf_climatology = forcing_climatology(cf)
     mp_spinup = ModelParameters(output_frequency=:last)
     profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 

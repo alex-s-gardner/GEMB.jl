@@ -36,12 +36,14 @@ Pkg.add(url="https://github.com/alex-s-gardner/GEMB.jl")
 
 ```julia
 using GEMB
+using GEMB_ClimateForcing  # synthetic/real forcing lives in the companion package
 
 # 1. Initialize model parameters
 params = initialize_parameters()
 
-# 2. Create or load climate forcing data
-forcing = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
+# 2. Create climate forcing (a DimStack) and convert to a ClimateForcing
+ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
+forcing = initialize_forcing(ds)
 
 # 3. Initialize the vertical profile
 profile = initialize_profile(params, forcing)
@@ -53,11 +55,16 @@ output = gemb(profile, forcing, params)
 T_surface = surface_timeseries(output.temperature)
 ```
 
+`simulate_climate_forcing` (and real-data loaders) live in the companion
+[GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl),
+which produces a `DimStack`. GEMB's core `initialize_forcing(::DimStack)` method
+converts it into the `ClimateForcing` the model consumes.
+
 ## Basic Workflow
 
 Using GEMB requires four basic steps:
 
-1. **Define Climate Forcing:** Use `initialize_forcing()` to create climate forcing from observed time series, or use `simulate_climate_forcing()` to create synthetic data for testing.
+1. **Define Climate Forcing:** Use `initialize_forcing()` to create a `ClimateForcing` — either from observed time-series vectors, or from a `DimStack` produced by the companion `GEMB_ClimateForcing.jl` (e.g. `simulate_climate_forcing()` for synthetic test data, or the ERA5-Land loader for real data).
 
 2. **Define Model Parameters:** Use `initialize_parameters()` to set model parameters such as which densification model is used, output frequency, and physics options.
 
@@ -76,7 +83,7 @@ The `examples/` directory contains working examples:
 
 ### Initialization
 - `initialize_parameters()` - Create model parameters with defaults or overrides
-- `initialize_forcing()` - Load/create climate forcing time series
+- `initialize_forcing()` - Create a `ClimateForcing`, either from time-series vectors or from a forcing `DimStack`
 - `initialize_profile()` - Set up initial vertical profile
 
 ### Main Model
@@ -87,21 +94,21 @@ The `examples/` directory contains working examples:
 ### Utilities
 - `gemb_profile()` - Extract vertical profiles at specific times
 - `gemb_interp()` - Interpolate profiles to specific depths
-- `forcing_climatology()` - Create climatology from time series
+- `forcing_climatology()` - Average a `ClimateForcing` into a one-year climatological cycle (for spinup)
 - `surface_timeseries()` - Extract surface values from output arrays
 - `dz2z()` - Convert grid spacing to center coordinates
 
-### Climate Data Utilities
-- `simulate_climate_forcing()` - Generate synthetic forcing data
-- `vapor_pressure_to_relative_humidity()` - Convert vapor pressure to RH
-- `relative_humidity_to_vapor_pressure()` - Convert RH to vapor pressure
-- `dewpoint_to_vapor_pressure()` - Convert dewpoint to vapor pressure
+### Climate Data (companion package)
 
-### Climate Fitting Functions
-- `fit_air_temperature()` - Fit temperature model to data
-- `fit_precipitation()` - Fit precipitation model to data
-- `fit_longwave_irradiance_delta()` - Fit longwave radiation delta
-- `fit_seasonal_daily_noise()` - Fit seasonal noise patterns
+Climate-forcing generation and loading live in the companion
+[GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl),
+which produces a `DimStack` for `initialize_forcing`. These are **not** exported
+by GEMB.jl:
+
+- `simulate_climate_forcing()` - Generate synthetic forcing data
+- `climate_forcing()` - Download ERA5-Land reanalysis data
+- `dewpoint_to_vapor_pressure()`, `vapor_pressure_to_relative_humidity()`, `relative_humidity_to_vapor_pressure()` - Humidity conversions
+- `fit_air_temperature()`, `fit_precipitation()`, `fit_longwave_irradiance_delta()`, `fit_seasonal_daily_noise()` - Climate fitting functions
 
 ## Documentation
 
@@ -181,7 +188,7 @@ GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Jul
 ## Prerequisites
 
 GEMB.jl requires:
-- Julia ≥ 1.9
+- Julia ≥ 1.11
 - DimensionalData.jl
 - Statistics (standard library)
 - Dates (standard library)

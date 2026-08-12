@@ -16,6 +16,7 @@ ClimateForcingStep
 
 ```@docs
 initialize_forcing
+forcing_climatology
 initialize_profile
 ```
 
@@ -34,9 +35,9 @@ gemb_interp
 surface_timeseries
 ```
 
-## GEMB_ClimateForcing Extension
+## GEMB_ClimateForcing Companion
 
-GEMB.jl includes a package extension that provides seamless integration with [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) for downloading ERA5, ERA5-Land, and MERRA-2 reanalysis data.
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface. The companion package [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) is one producer of a conforming DimStack — it downloads ERA5-Land reanalysis data and generates synthetic forcing.
 
 First, install GEMB_ClimateForcing.jl from GitHub (not yet in the General registry):
 
@@ -64,9 +65,8 @@ cf = GEMB.initialize_forcing(forcing_data)
 ds = simulate_climate_forcing("test_1", 3)   # returns DimStack
 cf = GEMB.initialize_forcing(ds)
 
-# Compute climatological average (DimStack → DimStack)
-ds_clim = forcing_climatology(ds)
-cf_clim = GEMB.initialize_forcing(ds_clim)
+# Compute climatological average (ClimateForcing → ClimateForcing)
+cf_clim = forcing_climatology(cf)
 ```
 
 `initialize_forcing(::DimStack)` validates the required fields and metadata, then

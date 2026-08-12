@@ -15,8 +15,7 @@ cf = GEMB.initialize_forcing(ds)
 mp = ModelParameters(output_frequency=:daily)
 
 # Create a climatological average time series:
-ds_climatology = forcing_climatology(ds)
-cf_climatology = GEMB.initialize_forcing(ds_climatology)
+cf_climatology = forcing_climatology(cf)
 
 # Initialize a column:
 profile = initialize_profile(mp, cf_climatology)
