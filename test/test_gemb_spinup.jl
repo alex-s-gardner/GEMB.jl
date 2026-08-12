@@ -218,8 +218,8 @@ using Dates
             cycles = maxit
             for c in 1:maxit
                 prof = gemb_profile(gemb(prof, cf, mp; verbose=false))
-                zc = -parent(prof[:z_center])
-                rho = Float64.(parent(prof[:density]))
+                zc = -GEMB.dz2z(prof[:dz])
+                rho = prof[:density]
                 idx = zc .<= depth
                 a = sum(rho[idx]) / count(idx)
                 if prev !== nothing && abs(a - prev) < thr
@@ -228,7 +228,7 @@ using Dates
                 end
                 prev = a
             end
-            zc = -parent(prof[:z_center]); rho = Float64.(parent(prof[:density]))
+            zc = -GEMB.dz2z(prof[:dz]); rho = prof[:density]
             idx = zc .<= depth
             return sum(rho[idx]) / count(idx), cycles
         end

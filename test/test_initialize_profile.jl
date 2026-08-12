@@ -80,8 +80,9 @@ end
         wind_observation_height=10.0)
 
     profile = GEMB.initialize_profile(mp, cf)
-    z_center = collect(profile[:z_center])
+    # z_center is no longer stored on the profile; recompute it from dz.
     dz = collect(profile[:dz])
+    z_center = GEMB.dz2z(dz)
 
     # First center should be at -dz[1]/2
     @test z_center[1] ≈ -dz[1] / 2 atol = 1e-12

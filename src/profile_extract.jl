@@ -53,8 +53,9 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         albedo_diffuse_col = fill(0.85, m)
     end
 
+    # `z_center` is intentionally omitted so the extracted profile matches the
+    # output layout (a slice of it); recompute via `dz2z(profile[:dz])` if needed.
     return DimStack((
-        z_center=DimArray(dz2z(parent(out[:dz])[valid, col_idx]), (zdim,)),
         dz=DimArray(parent(out[:dz])[valid, col_idx], (zdim,)),
         temperature=DimArray(parent(out[:temperature])[valid, col_idx], (zdim,)),
         density=DimArray(parent(out[:density])[valid, col_idx], (zdim,)),

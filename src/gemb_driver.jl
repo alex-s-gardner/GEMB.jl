@@ -110,6 +110,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         # Forcing summary outputs
         temperature_air=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         precipitation=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        rain=DimArray(fill(NaN, n_outputs), (ti_dim,)),
 
         # Profile outputs (2D: vertical × time)
         temperature=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
@@ -202,6 +203,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_thick = parent(output[:thickness_cumulative])
     out_ta = parent(output[:temperature_air])
     out_precip = parent(output[:precipitation])
+    out_rain = parent(output[:rain])
     out_vpl = parent(output[:valid_profile_length])
     out_temperature = parent(output[:temperature])
     out_dz = parent(output[:dz])
@@ -320,6 +322,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 # Forcing summary
                 out_ta[oi] = cum_temperature_air / cum_count
                 out_precip[oi] = cum_precipitation
+                out_rain[oi] = cum_rain
             end
 
             # Profile data (stored from bottom up, matching MATLAB convention)

@@ -150,6 +150,59 @@ function _provenance_str(md)
     return join(parts, ", ")
 end
 
+# Average-annual surface mass-budget summary for the metadata banner, e.g.
+# "↓ snow 420  ↓ rain 35  → runoff 180  ↺ refreeze 60  ↑ evap 12  [kg m⁻² yr⁻¹]".
+# The flux outputs are per-output-step mass accumulations (kg m⁻²); summing the
+# record and dividing by its length in years gives the annual mean. Leading
+# arrows mark direction: ↓ mass input (falls onto/into the column), ↑ mass loss
+# to the atmosphere (evaporation/sublimation), → runoff (liquid leaving laterally),
+# ↺ internal phase change (refreeze). Evaporation/condensation is signed, so
+# condensation reads as a ↓ input and evaporation/sublimation as a ↑ loss.
+function _mass_budget_str(output, times)
+    length(times) < 2 && return ""
+    years = Dates.value(last(times) - first(times)) / (365.25 * 86400 * 1000)
+    years <= 0 && return ""
+
+    present = keys(output)
+    total(v) = v in present ? sum(filter(isfinite, output[v])) : NaN
+    ann(v) = total(v) / years
+
+    parts = String[]
+    # Snowfall is the model's precipitation minus its liquid (rain) fraction.
+    if :precipitation in present && :rain in present
+        snow = ann(:precipitation) - ann(:rain)
+        isfinite(snow) && push!(parts, string("↓ snow ", round(Int, snow)))
+    elseif :precipitation in present
+        p = ann(:precipitation)
+        isfinite(p) && push!(parts, string("↓ precip ", round(Int, p)))
+    end
+    if :rain in present
+        r = ann(:rain)
+        isfinite(r) && push!(parts, string("↓ rain ", round(Int, r)))
+    end
+    if :runoff in present
+        ro = ann(:runoff)
+        isfinite(ro) && push!(parts, string("→ runoff ", round(Int, ro)))
+    end
+    if :refreeze in present
+        rf = ann(:refreeze)
+        isfinite(rf) && push!(parts, string("↺ refreeze ", round(Int, rf)))
+    end
+    if :evaporation_condensation in present
+        ec = ann(:evaporation_condensation)
+        if isfinite(ec)
+            # Positive = condensation/deposition (mass gain, ↓ input); negative =
+            # evaporation/sublimation (mass loss to atmosphere, ↑).
+            arrow = ec >= 0 ? "↓" : "↑"
+            label = ec >= 0 ? "cond" : "evap"
+            push!(parts, string(arrow, " ", label, " ", round(Int, abs(ec))))
+        end
+    end
+
+    isempty(parts) && return ""
+    return join(parts, "  ") * "  [kg m⁻² yr⁻¹]"
+end
+
 # Even index stride so a heatmap never exceeds `maxcols` columns — a raster
 # figure a few thousand px wide cannot resolve more, and full width would make
 # rendering (and memory) explode for multi-decade, sub-daily runs.
@@ -295,12 +348,14 @@ function _header!(pos, output, times, z_center, tcols, title)
     freq = _freq_word(dt_h)
     strided = length(tcols) < length(times)
     prov = _provenance_str(DimensionalData.metadata(output))
+    budget = _mass_budget_str(output, times)
 
     meta = string(
         "GEMB v$ver  │  ",
         prov == "" ? "" : prov * "  │  ",
         freq, " ",
         Dates.format(t0, "yyyy-mm-dd"), " → ", Dates.format(t1, "yyyy-mm-dd"),
+        budget == "" ? "" : "  │  " * budget,
         strided ? "  │  heatmaps strided to $(length(tcols)) cols" : "",
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
     )
