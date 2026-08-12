@@ -72,7 +72,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 2 <= mp.albedo_K <= 12
 
     # Output
-    @assert mp.output_frequency in (:all, :monthly, :daily, :last) "Invalid output_frequency"
+    @assert mp.output_frequency in (:all, :monthly, :weekly, :daily, :last) "Invalid output_frequency"
     @assert 0 <= mp.output_padding <= 10000
 
     # Grid geometry

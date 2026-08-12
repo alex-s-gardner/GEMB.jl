@@ -347,19 +347,21 @@ end
 Compute output times based on output frequency.
 Returns the last timestep of each day/month, all timesteps, or just the final one.
 
-For `:daily`/`:monthly`, a timestep is emitted when the next timestep falls in a
-different day/month. The final timestep is compared against a synthetic successor
-(`times[end] + dt`) rather than emitted unconditionally, so a trailing *partial*
-period (e.g. a lone midnight boundary step belonging to a new day) is not saved —
-only complete days/months are written. This matches MATLAB's `gemb.m` output
+For `:daily`/`:weekly`/`:monthly`, a timestep is emitted when the next timestep
+falls in a different day/week/month. The final timestep is compared against a
+synthetic successor (`times[end] + dt`) rather than emitted unconditionally, so a
+trailing *partial* period (e.g. a lone midnight boundary step belonging to a new
+day) is not saved — only complete days/weeks/months are written. Weeks are grouped
+by Monday-anchored calendar week (`floor(Date, Week)`). This matches MATLAB's `gemb.m` output
 indexing (which appends `dates(end) + (dates(end)-dates(end-1))` before diffing).
 """
 function _compute_output_times(times::Vector{DateTime}, frequency::Symbol)
     frequency == :all && return times
     frequency == :last && return [times[end]]
     groupfn = frequency == :daily ? Date :
+              frequency == :weekly ? (t -> floor(Date(t), Week)) :
               frequency == :monthly ? (t -> (year(t), month(t))) :
-              error("output_frequency must be one of: :all, :daily, :monthly, :last")
+              error("output_frequency must be one of: :all, :daily, :weekly, :monthly, :last")
     n = length(times)
     n == 1 && return copy(times)
     # Synthetic successor for the final step (uniform time axis assumed).

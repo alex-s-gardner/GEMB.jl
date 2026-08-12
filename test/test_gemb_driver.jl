@@ -188,4 +188,24 @@ using Dates
             end
         end
     end
+
+    @testset "_compute_output_times weekly" begin
+        # 21 days of hourly steps, starting Wed 2020-01-01.
+        # Monday-anchored weeks: partial week ending 2020-01-05 (Sun),
+        # full weeks 01-06..01-12, 01-13..01-19, and partial 01-20..01-21.
+        times = DateTime(2020, 1, 1) .+ Hour.(0:(24 * 21 - 1))
+        weekly = GEMB._compute_output_times(times, :weekly)
+
+        # One emission per completed week boundary (three transitions here).
+        expected = [t for i in eachindex(times)
+                    for t in (times[i],)
+                    if floor(Date(times[i]), Week) !=
+                       floor(Date(i < length(times) ? times[i+1] :
+                                  times[end] + (times[end] - times[end-1])), Week)]
+        @test weekly == expected
+        # Each emitted step is the last hour (23:00) before a week rollover.
+        @test all(hour.(weekly) .== 23)
+        # Boundaries land on Sundays (day before Monday-anchored week starts).
+        @test all(dayname.(weekly) .== "Sunday")
+    end
 end
