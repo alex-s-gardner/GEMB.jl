@@ -12,7 +12,7 @@ ds = simulate_climate_forcing("test_1", time_step_hours)
 cf = GEMB.initialize_forcing(ds)
 
 # Initialize model parameters:
-mp = ModelParameters(output_frequency=:daily)
+mp = initialize_parameters(output_frequency=:daily)
 
 # Create a climatological average time series:
 cf_climatology = forcing_climatology(cf)
@@ -21,7 +21,7 @@ cf_climatology = forcing_climatology(cf)
 profile = initialize_profile(mp, cf_climatology)
 
 # Spin up a profile for 75 years of average forcing:
-mp_spinup = ModelParameters(output_frequency=:last)
+mp_spinup = initialize_parameters(output_frequency=:last)
 profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 
 # Run GEMB with the spun-up profile:
