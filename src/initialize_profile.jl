@@ -41,7 +41,7 @@ the MATLAB `model_initialize_profile` initialization (pure ice, uniform
 mean-annual temperature).
 
 Returns a DimStack with Z dimension containing:
-- z_center, dz, temperature, density, water, grain_radius,
+- dz, temperature, density, water, grain_radius,
   grain_dendricity, grain_sphericity, albedo, albedo_diffuse
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
@@ -87,8 +87,10 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Create Z dimension
     zdim = Z(1:m)
 
+    # Note: `z_center` is intentionally not stored — it is a pure function of `dz`
+    # (via `dz2z`) and is recomputed on demand, so the profile stays a clean slice
+    # of the `gemb` output layout (which likewise carries `dz`, not `z_center`).
     return DimStack((
-        z_center=DimArray(z_center, (zdim,)),
         dz=DimArray(dz, (zdim,)),
         temperature=DimArray(fill(T_init, m), (zdim,)),
         density=DimArray(density, (zdim,)),

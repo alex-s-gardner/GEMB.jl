@@ -71,8 +71,8 @@ end
 # Compute depth-averaged density over [0, depth] using a cubic spline so the result
 # is independent of the Lagrangian grid spacing at each cycle.
 function _depth_avg_density(profile::DimStack, depth::Float64)
-    z_pos = -parent(profile[:z_center])  # negative depths → positive, shallowest first
-    rho   = Float64.(parent(profile[:density]))
+    z_pos = -dz2z(profile[:dz])  # negative depths → positive, shallowest first
+    rho   = profile[:density]
     # Constant left-extrapolation extends the surface layer density to z=0
     # (z_pos[1] = dz[1]/2, not 0.0, because z_center holds cell-center depths)
     itp = DataInterpolations.CubicSpline(rho, z_pos;
