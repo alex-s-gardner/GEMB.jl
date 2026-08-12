@@ -267,10 +267,11 @@ function GEMB.gemb_plot_output(output::DimStack;
     # ---- Link x-axes; strip redundant decorations -------------------------
     all_axes = vcat(prof_axes, scal_axes)
     !isempty(all_axes) && linkxaxes!(all_axes...)
-    if xlims !== nothing
-        for ax in all_axes
-            xlims!(ax, xlims...)
-        end
+    # Default to the exact data span (Makie otherwise auto-pads ~5% past the
+    # ends); an explicit `datelims` overrides.
+    xl = xlims === nothing ? (first(decyear), last(decyear)) : xlims
+    for ax in all_axes
+        xlims!(ax, xl...)
     end
     # Only the bottom axis of each column keeps its x ticks + label.
     _label_bottom_only!(prof_axes)
