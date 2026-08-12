@@ -79,6 +79,27 @@ function surface_timeseries(A::AbstractMatrix)
 end
 
 """
+    datetime2decyear(datetimes::AbstractVector{DateTime})
+
+Convert Julia `DateTime` objects to decimal year values.
+
+Automatically accounts for leap years. Inverse of the year-fraction convention
+used by [`decyear2datenum`](@ref).
+"""
+function datetime2decyear(datetimes::AbstractVector{DateTime})
+    dec_year = Vector{Float64}(undef, length(datetimes))
+    for i in eachindex(datetimes)
+        yr = year(datetimes[i])
+        start_of_year = DateTime(yr, 1, 1)
+        start_of_next_year = DateTime(yr + 1, 1, 1)
+        days_in_year = Dates.value(start_of_next_year - start_of_year) / (1000.0 * 86400.0)
+        day_offset = Dates.value(datetimes[i] - start_of_year) / (1000.0 * 86400.0)
+        dec_year[i] = yr + day_offset / days_in_year
+    end
+    return dec_year
+end
+
+"""
     decyear2datenum(decyear)
 
 Convert decimal year to MATLAB datenum format (days since 0000-01-01).
