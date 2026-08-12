@@ -18,7 +18,7 @@ include("utilities.jl")
 # Initialization
 include("initialize_parameters.jl")
 include("initialize_forcing.jl")
-include("climate_forcing_conversion.jl")
+include("forcing_climatology.jl")
 include("initialize_profile.jl")
 
 # Leaf physics
@@ -54,7 +54,7 @@ export DimArray, DimStack, Ti, Z
 
 # Exports
 export ModelParameters, ClimateForcing, ClimateForcingStep
-export initialize_parameters, initialize_forcing, initialize_profile
+export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
 export dz2z, surface_timeseries, fast_divisors, decyear2datenum

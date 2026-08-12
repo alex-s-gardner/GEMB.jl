@@ -42,8 +42,8 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                 time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                 token=ENV["CDS_API_KEY"])
 
-# Convert to GEMB ClimateForcing (automatic via package extension)
-cf = GEMB.ClimateForcing(forcing_data)
+# Convert the DimStack to a GEMB ClimateForcing (core initialize_forcing method)
+cf = GEMB.initialize_forcing(forcing_data)
 
 ## Run GEMB
 
@@ -51,8 +51,7 @@ cf = GEMB.ClimateForcing(forcing_data)
 mp = ModelParameters(output_frequency="daily")
 
 # Create climatological forcing for spinup
-ds_spinup = forcing_climatology(forcing_data)
-cf_spinup = GEMB.ClimateForcing(ds_spinup)
+cf_spinup = forcing_climatology(cf)
 
 # Initialize the firn column
 profile = initialize_profile(mp, cf_spinup)

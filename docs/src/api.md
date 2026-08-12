@@ -16,6 +16,7 @@ ClimateForcingStep
 
 ```@docs
 initialize_forcing
+forcing_climatology
 initialize_profile
 ```
 
@@ -34,9 +35,9 @@ gemb_interp
 surface_timeseries
 ```
 
-## GEMB_ClimateForcing Extension
+## GEMB_ClimateForcing Companion
 
-GEMB.jl includes a package extension that provides seamless integration with [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) for downloading ERA5, ERA5-Land, and MERRA-2 reanalysis data.
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface. The companion package [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) is one producer of a conforming DimStack — it downloads ERA5-Land reanalysis data and generates synthetic forcing.
 
 First, install GEMB_ClimateForcing.jl from GitHub (not yet in the General registry):
 
@@ -45,7 +46,8 @@ using Pkg
 Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 ```
 
-When both packages are loaded, a conversion method `ClimateForcing(::DimStack)` becomes available:
+GEMB_ClimateForcing produces a `DimStack`, which the core method
+`initialize_forcing(::DimStack)` converts to a `ClimateForcing`:
 
 ```julia
 using GEMB
@@ -56,19 +58,20 @@ forcing_data = climate_forcing(:era5land, lat, lon;
                                 time_range=..., 
                                 token=ENV["CDS_API_KEY"])
 
-# Convert to ClimateForcing (extension method)
-cf = GEMB.ClimateForcing(forcing_data)
+# Convert to ClimateForcing
+cf = GEMB.initialize_forcing(forcing_data)
 
 # Or generate synthetic forcing
 ds = simulate_climate_forcing("test_1", 3)   # returns DimStack
-cf = GEMB.ClimateForcing(ds)
+cf = GEMB.initialize_forcing(ds)
 
-# Compute climatological average (DimStack → DimStack)
-ds_clim = forcing_climatology(ds)
-cf_clim = GEMB.ClimateForcing(ds_clim)
+# Compute climatological average (ClimateForcing → ClimateForcing)
+cf_clim = forcing_climatology(cf)
 ```
 
-The extension automatically validates required fields and metadata, then calls `initialize_forcing` internally. See the extension source at `ext/GEMBClimateForcing.jl` for details.
+`initialize_forcing(::DimStack)` validates the required fields and metadata, then
+forwards to the vector method of `initialize_forcing`. It is a core method (always
+available); `GEMB_ClimateForcing` is one optional producer of a conforming DimStack.
 
 Humidity conversion utilities (`dewpoint_to_vapor_pressure`, `vapor_pressure_to_relative_humidity`,
 `relative_humidity_to_vapor_pressure`) and climate fitting functions (`fit_air_temperature`,

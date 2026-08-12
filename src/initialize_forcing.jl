@@ -119,3 +119,149 @@ function initialize_forcing(
         Float64(wind_observation_height)
     )
 end
+
+"""
+    initialize_forcing(stack::DimStack) -> ClimateForcing
+
+Create a `ClimateForcing` struct from a forcing `DimStack`.
+
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface: any source
+(e.g. the companion `GEMB_ClimateForcing.jl` package, or a hand-built stack) can
+supply forcing as long as it carries the required layers, a `DateTime`-indexed
+`Ti` dimension, and the required metadata. This method extracts the forcing
+vectors and metadata from `stack` and forwards them to the vector method of
+[`initialize_forcing`](@ref), which applies the same validation and normalization.
+
+# Required Variables in DimStack
+- `temperature_air`: Air temperature (K)
+- `pressure_air`: Surface pressure (Pa)
+- `vapor_pressure`: Vapor pressure (Pa)
+- `wind_speed`: Wind speed (m/s)
+- `precipitation`: Precipitation rate (kg/m²/timestep)
+- `shortwave_downward`: Downward shortwave radiation (W/m²)
+- `longwave_downward`: Downward longwave radiation (W/m²)
+
+# Required Metadata
+- `temperature_air_mean`: Mean air temperature (K)
+- `wind_speed_mean`: Mean wind speed (m/s)
+- `precipitation_mean`: Annual precipitation (kg/m²/year)
+- `temperature_observation_height`: Height of temperature observations (m)
+- `wind_observation_height`: Height of wind observations (m)
+
+# Optional Metadata (defaults used if not present)
+- `black_carbon_snow` (default: 0.0)
+- `black_carbon_ice` (default: 0.0)
+- `cloud_optical_thickness` (default: 0.0)
+- `solar_zenith_angle` (degrees, default: 0.0)
+- `shortwave_downward_diffuse` (W/m², default: 0.0)
+- `cloud_fraction` (default: 0.1)
+
+# Examples
+```julia
+using GEMB
+using GEMB_ClimateForcing  # one producer of a conforming DimStack
+
+ds = simulate_climate_forcing("test_1", 3)
+cf = initialize_forcing(ds)
+
+mp = initialize_parameters()
+profile = initialize_profile(mp, cf)
+output = gemb(profile, cf, mp)
+```
+"""
+function initialize_forcing(stack::DimStack)
+    # Validate required fields
+    required_fields = [
+        :temperature_air, :pressure_air, :vapor_pressure,
+        :wind_speed, :precipitation,
+        :shortwave_downward, :longwave_downward
+    ]
+
+    missing_fields = filter(f -> !haskey(stack, f), required_fields)
+    if !isempty(missing_fields)
+        throw(ArgumentError(
+            "DimStack missing required fields: $(join(missing_fields, ", ")). " *
+            "Required: $(join(required_fields, ", "))"
+        ))
+    end
+
+    # Validate time dimension
+    if !hasdim(stack, Ti)
+        throw(ArgumentError(
+            "DimStack must have a Ti (time) dimension. " *
+            "Found dimensions: $(join(dims(stack), ", "))"
+        ))
+    end
+
+    # Extract time coordinate
+    time_dim = dims(stack, Ti)
+    time = lookup(time_dim)
+
+    if !isa(time, AbstractVector{DateTime})
+        throw(ArgumentError(
+            "Ti dimension must be indexed by DateTime values, got $(typeof(time))"
+        ))
+    end
+
+    # Extract data vectors from DimStack
+    temperature_air = parent(stack[:temperature_air])
+    pressure_air = parent(stack[:pressure_air])
+    vapor_pressure = parent(stack[:vapor_pressure])
+    wind_speed = parent(stack[:wind_speed])
+    precipitation = parent(stack[:precipitation])
+    shortwave_downward = parent(stack[:shortwave_downward])
+    longwave_downward = parent(stack[:longwave_downward])
+
+    # Extract required metadata
+    meta = metadata(stack)
+
+    required_meta = [
+        "temperature_air_mean", "wind_speed_mean", "precipitation_mean",
+        "temperature_observation_height", "wind_observation_height"
+    ]
+
+    missing_meta = filter(m -> !haskey(meta, m), required_meta)
+    if !isempty(missing_meta)
+        throw(ArgumentError(
+            "DimStack metadata missing required fields: $(join(missing_meta, ", ")). " *
+            "Required: $(join(required_meta, ", "))"
+        ))
+    end
+
+    temperature_air_mean = Float64(meta["temperature_air_mean"])
+    wind_speed_mean = Float64(meta["wind_speed_mean"])
+    precipitation_mean = Float64(meta["precipitation_mean"])
+    temperature_observation_height = Float64(meta["temperature_observation_height"])
+    wind_observation_height = Float64(meta["wind_observation_height"])
+
+    # Optional variables with defaults
+    black_carbon_snow = get(meta, "black_carbon_snow", 0.0)
+    black_carbon_ice = get(meta, "black_carbon_ice", 0.0)
+    cloud_optical_thickness = get(meta, "cloud_optical_thickness", 0.0)
+    solar_zenith_angle = get(meta, "solar_zenith_angle", 0.0)
+    shortwave_downward_diffuse = get(meta, "shortwave_downward_diffuse", 0.0)
+    cloud_fraction = get(meta, "cloud_fraction", 0.1)
+
+    # Delegate to the vector method, which applies GEMB's validation logic
+    return initialize_forcing(
+        time,
+        temperature_air,
+        pressure_air,
+        precipitation,
+        wind_speed,
+        shortwave_downward,
+        longwave_downward,
+        vapor_pressure;
+        temperature_air_mean = temperature_air_mean,
+        wind_speed_mean = wind_speed_mean,
+        precipitation_mean = precipitation_mean,
+        temperature_observation_height = temperature_observation_height,
+        wind_observation_height = wind_observation_height,
+        black_carbon_snow = black_carbon_snow,
+        black_carbon_ice = black_carbon_ice,
+        cloud_optical_thickness = cloud_optical_thickness,
+        solar_zenith_angle = solar_zenith_angle,
+        shortwave_downward_diffuse = shortwave_downward_diffuse,
+        cloud_fraction = cloud_fraction
+    )
+end

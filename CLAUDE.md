@@ -26,9 +26,9 @@ using GEMB_ClimateForcing  # synthetic/real forcing lives in the companion packa
 # 1. Initialize model parameters
 params = initialize_parameters()
 
-# 2. Create climate forcing (DimStack) and convert to GEMB.ClimateForcing
+# 2. Create climate forcing (DimStack) and convert to a ClimateForcing
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
-forcing = GEMB.ClimateForcing(ds)
+forcing = GEMB.initialize_forcing(ds)
 
 # 3. Initialize the vertical profile
 profile = initialize_profile(params, forcing)
@@ -40,25 +40,27 @@ output = gemb(profile, forcing, params)
 T_surface = surface_timeseries(output.temperature)
 ```
 
-Note: `simulate_climate_forcing`, `forcing_climatology`, the `fit_*` climate
-functions, and the humidity conversions were moved out of GEMB.jl into the
-companion `GEMB_ClimateForcing.jl` (commit a669134). GEMB.jl keeps only the
-physics model; a `DimStack` is the neutral interface, and `GEMB.ClimateForcing(ds)`
-(a core method, always available) converts it.
+Note: `simulate_climate_forcing`, the `fit_*` climate functions, and the humidity
+conversions were moved out of GEMB.jl into the companion `GEMB_ClimateForcing.jl`
+(commit a669134). GEMB.jl keeps only the physics model; a `DimStack` is the neutral
+interface, and `initialize_forcing(ds)` (a core method, always available) converts it.
+`forcing_climatology` is a core GEMB.jl method that operates on a `ClimateForcing`
+(build one with `initialize_forcing` first).
 
 ## DimStack Forcing Interface and the GEMB_ClimateForcing Companion
 
 A `DimStack` is GEMB's neutral, producer-agnostic forcing interface. The
-conversion `GEMB.ClimateForcing(::DimStack)` is a **core** method
-(`src/climate_forcing_conversion.jl`, always available — no extension required):
-it validates the required layers, a `DateTime`-indexed `Ti` dimension, and the
-required metadata, then delegates to `initialize_forcing()`.
+conversion `initialize_forcing(::DimStack)` is a **core** method (a method of
+`initialize_forcing` in `src/initialize_forcing.jl`, always available — no
+extension required): it validates the required layers, a `DateTime`-indexed `Ti`
+dimension, and the required metadata, then forwards to the vector method of
+`initialize_forcing`.
 
 Any source can produce a conforming `DimStack`. The
 [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl)
-companion is one such producer, loading real climate data (ERA5, ERA5-Land,
-MERRA-2) from CDS/GES-DISC. It is an optional dependency — install it only when
-you need real/synthetic forcing (it is also a test dependency; see below).
+companion is one such producer, loading real climate data (ERA5-Land) from CDS.
+It is an optional dependency — install it only when you need real/synthetic
+forcing (it is also a test dependency; see below).
 
 Installation (GEMB_ClimateForcing is not yet in the General registry):
 ```julia
@@ -76,8 +78,8 @@ forcing_data = climate_forcing(:era5land, 67.0, -50.0;
                                 time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                 token=ENV["CDS_API_KEY"])
 
-# Convert DimStack → ClimateForcing (core method)
-cf = GEMB.ClimateForcing(forcing_data)
+# Convert DimStack → ClimateForcing (core initialize_forcing method)
+cf = GEMB.initialize_forcing(forcing_data)
 
 # Use with GEMB
 mp = initialize_parameters()
@@ -161,12 +163,14 @@ GEMB follows a modular physics-based architecture:
    - `gemb_profile()`, `gemb_interp()` in `profile_extract.jl`: Extract/interpolate profiles at specific times/depths
    - `surface_timeseries()`: Extract surface values from column arrays
    - `dz2z()`: Convert grid spacing to depth coordinates
+   - `forcing_climatology()` in `forcing_climatology.jl`: Averages complete years of a
+     `ClimateForcing` (dropping leap day 366 and partial years) into a one-year climatological
+     cycle, typically for `gemb_spinup`. Consumes and returns a `ClimateForcing`.
 
-   Climate-forcing generation (`simulate_climate_forcing()`, `forcing_climatology()`,
-   the `fit_*` fitting functions, and humidity conversions like
-   `dewpoint_to_vapor_pressure()`) now live in the companion `GEMB_ClimateForcing.jl`,
-   not in this package. They return/consume a `DimStack`; use `GEMB.ClimateForcing(ds)`
-   to convert into the `ClimateForcing` type GEMB consumes.
+   Climate-forcing generation (`simulate_climate_forcing()`, the `fit_*` fitting functions,
+   and humidity conversions like `dewpoint_to_vapor_pressure()`) now live in the companion
+   `GEMB_ClimateForcing.jl`, not in this package. They return/consume a `DimStack`; use
+   `GEMB.initialize_forcing(ds)` to convert into the `ClimateForcing` type GEMB consumes.
 
 ### Data Flow
 

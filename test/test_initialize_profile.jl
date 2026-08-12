@@ -101,7 +101,7 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     
     params = GEMB.initialize_parameters()
     ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
-    forcing = GEMB.ClimateForcing(ds)
+    forcing = GEMB.initialize_forcing(ds)
     profile = GEMB.initialize_profile(params, forcing)
     
     # Validate number of layers
