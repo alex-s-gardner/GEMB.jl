@@ -28,7 +28,7 @@ pkg> add GEMB
 Using GEMB requires four basic steps:
 
 1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5-Land data.
-2. **Define Model Parameters** -- Use [`ModelParameters`](@ref) to set model configuration (densification model, albedo method, grid geometry, etc.).
+2. **Define Model Parameters** -- Use [`initialize_parameters`](@ref) to set and validate model configuration (densification model, albedo method, grid geometry, etc.). It builds and checks a [`ModelParameters`](@ref).
 3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
 4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
 
@@ -37,7 +37,7 @@ using GEMB
 using GEMB_ClimateForcing
 
 # Initialize model parameters
-mp = ModelParameters(output_frequency="daily")
+mp = initialize_parameters(output_frequency=:daily)
 
 # Generate synthetic climate forcing (3-hour time step) — returns DimStack
 ds = simulate_climate_forcing("test_1", 3)
@@ -73,7 +73,7 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
 cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
-mp = ModelParameters(output_frequency="daily")
+mp = initialize_parameters(output_frequency=:daily)
 profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
@@ -89,7 +89,7 @@ using GEMB
 
 using GEMB_ClimateForcing
 
-mp = ModelParameters(output_frequency="last")
+mp = initialize_parameters(output_frequency=:last)
 
 # Generate synthetic climate forcing (returns DimStack)
 ds = simulate_climate_forcing("test_1", 3)
@@ -103,7 +103,7 @@ profile = initialize_profile(mp, cf)
 spun_up_profile = gemb_spinup(profile, cf_clim, mp, 5)
 
 # Now run with transient forcing
-mp_run = ModelParameters(output_frequency="daily")
+mp_run = initialize_parameters(output_frequency=:daily)
 output = gemb(spun_up_profile, cf, mp_run)
 ```
 

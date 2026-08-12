@@ -15,6 +15,7 @@ ClimateForcingStep
 ## Initialization
 
 ```@docs
+initialize_parameters
 initialize_forcing
 forcing_climatology
 initialize_profile
