@@ -57,7 +57,7 @@ export ModelParameters, ClimateForcing, ClimateForcingStep
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
-export dz2z, surface_timeseries, fast_divisors, decyear2datenum
+export dz2z, surface_timeseries, fast_divisors, decyear2datenum, datetime2decyear
 export herron_langway_steady_state, annual_pdd_melt, fresh_snow_density
 
 end
