@@ -251,7 +251,6 @@ function GEMB.gemb_plot_output(output::DimStack;
                 color=(:blue, 0.5))
             band!(ax, decyear, 0.0, max.(tc, 0.0);
                 color=(:red, 0.5))
-            lines!(ax, decyear, tc; color=:black, linewidth=0.4)
             continue
         end
         # With ~10⁵ sub-daily points, overplotted opaque lines saturate to a
