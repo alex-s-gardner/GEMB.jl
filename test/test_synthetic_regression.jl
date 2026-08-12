@@ -31,7 +31,7 @@ using GEMB_ClimateForcing
 @testset "Synthetic regression (Julia self-consistency pin)" begin
     # Generate 3-hourly synthetic climate forcing (returns DimStack)
     ds = simulate_climate_forcing("test_1", 3)
-    cf = GEMB.ClimateForcing(ds)
+    cf = GEMB.initialize_forcing(ds)
 
     # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)
@@ -42,7 +42,7 @@ using GEMB_ClimateForcing
 
     # Create climatological forcing and spin up
     ds_climatology = forcing_climatology(ds)
-    cf_climatology = GEMB.ClimateForcing(ds_climatology)
+    cf_climatology = GEMB.initialize_forcing(ds_climatology)
     mp_spinup = ModelParameters(output_frequency=:last)
     profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
 

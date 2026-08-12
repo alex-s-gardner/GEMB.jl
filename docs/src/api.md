@@ -45,7 +45,8 @@ using Pkg
 Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 ```
 
-When both packages are loaded, a conversion method `ClimateForcing(::DimStack)` becomes available:
+GEMB_ClimateForcing produces a `DimStack`, which the core method
+`initialize_forcing(::DimStack)` converts to a `ClimateForcing`:
 
 ```julia
 using GEMB
@@ -56,19 +57,21 @@ forcing_data = climate_forcing(:era5land, lat, lon;
                                 time_range=..., 
                                 token=ENV["CDS_API_KEY"])
 
-# Convert to ClimateForcing (extension method)
-cf = GEMB.ClimateForcing(forcing_data)
+# Convert to ClimateForcing
+cf = GEMB.initialize_forcing(forcing_data)
 
 # Or generate synthetic forcing
 ds = simulate_climate_forcing("test_1", 3)   # returns DimStack
-cf = GEMB.ClimateForcing(ds)
+cf = GEMB.initialize_forcing(ds)
 
 # Compute climatological average (DimStack → DimStack)
 ds_clim = forcing_climatology(ds)
-cf_clim = GEMB.ClimateForcing(ds_clim)
+cf_clim = GEMB.initialize_forcing(ds_clim)
 ```
 
-The extension automatically validates required fields and metadata, then calls `initialize_forcing` internally. See the extension source at `ext/GEMBClimateForcing.jl` for details.
+`initialize_forcing(::DimStack)` validates the required fields and metadata, then
+forwards to the vector method of `initialize_forcing`. It is a core method (always
+available); `GEMB_ClimateForcing` is one optional producer of a conforming DimStack.
 
 Humidity conversion utilities (`dewpoint_to_vapor_pressure`, `vapor_pressure_to_relative_humidity`,
 `relative_humidity_to_vapor_pressure`) and climate fitting functions (`fit_air_temperature`,

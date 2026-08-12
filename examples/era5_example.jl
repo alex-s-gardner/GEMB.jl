@@ -43,7 +43,7 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                 token=ENV["CDS_API_KEY"])
 
 # Convert to GEMB ClimateForcing (automatic via package extension)
-cf = GEMB.ClimateForcing(forcing_data)
+cf = GEMB.initialize_forcing(forcing_data)
 
 ## Run GEMB
 
@@ -52,7 +52,7 @@ mp = ModelParameters(output_frequency="daily")
 
 # Create climatological forcing for spinup
 ds_spinup = forcing_climatology(forcing_data)
-cf_spinup = GEMB.ClimateForcing(ds_spinup)
+cf_spinup = GEMB.initialize_forcing(ds_spinup)
 
 # Initialize the firn column
 profile = initialize_profile(mp, cf_spinup)

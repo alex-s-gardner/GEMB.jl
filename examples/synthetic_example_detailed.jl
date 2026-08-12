@@ -16,7 +16,7 @@ println("="^60)
 println("\n1. Generating synthetic climate forcing...")
 time_step_hours = 3
 ds = simulate_climate_forcing("test_1", time_step_hours)
-cf = GEMB.ClimateForcing(ds)
+cf = GEMB.initialize_forcing(ds)
 
 println("   Climate forcing generated:")
 println("     Time steps: $(length(cf.time))")
@@ -40,7 +40,7 @@ println("   Initial mean density: $(round(mean(profile.density), digits=1)) kg/m
 # Create a climatological average time series:
 println("\n4. Creating climatology...")
 ds_climatology = forcing_climatology(ds)
-cf_climatology = GEMB.ClimateForcing(ds_climatology)
+cf_climatology = GEMB.initialize_forcing(ds_climatology)
 println("   Climatology length: $(length(cf_climatology.time)) days")
 
 # Spin up a profile for 75 years of average forcing:

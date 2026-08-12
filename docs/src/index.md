@@ -41,7 +41,7 @@ mp = ModelParameters(output_frequency="daily")
 
 # Generate synthetic climate forcing (3-hour time step) — returns DimStack
 ds = simulate_climate_forcing("test_1", 3)
-cf = GEMB.ClimateForcing(ds)   # convert to ClimateForcing
+cf = GEMB.initialize_forcing(ds)   # convert to ClimateForcing
 
 # Initialize the firn column profile
 profile = initialize_profile(mp, cf)
@@ -69,8 +69,8 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                 time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                 token=ENV["CDS_API_KEY"])
 
-# Convert to GEMB ClimateForcing (automatic via package extension)
-cf = GEMB.ClimateForcing(forcing_data)
+# Convert to GEMB ClimateForcing (core initialize_forcing method)
+cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
 mp = ModelParameters(output_frequency="daily")
@@ -78,7 +78,7 @@ profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 
-GEMB.jl includes a package extension that automatically loads when both `GEMB` and `GEMB_ClimateForcing` are imported, providing seamless conversion from downloaded climate data to GEMB's `ClimateForcing` type.
+GEMB_ClimateForcing produces a `DimStack`, which the core `initialize_forcing(::DimStack)` method converts to GEMB's `ClimateForcing` type. `GEMB_ClimateForcing` is an optional companion package — one producer of a conforming DimStack.
 
 ## Spinup
 
@@ -93,11 +93,11 @@ mp = ModelParameters(output_frequency="last")
 
 # Generate synthetic climate forcing (returns DimStack)
 ds = simulate_climate_forcing("test_1", 3)
-cf = GEMB.ClimateForcing(ds)
+cf = GEMB.initialize_forcing(ds)
 
 # Create a single-year climatological average for spinup
 ds_clim = forcing_climatology(ds)
-cf_clim = GEMB.ClimateForcing(ds_clim)
+cf_clim = GEMB.initialize_forcing(ds_clim)
 
 # Initialize the column and spin up
 profile = initialize_profile(mp, cf)

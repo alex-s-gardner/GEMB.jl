@@ -9,14 +9,14 @@ using GEMB_ClimateForcing
 # Generate 3-hourly synthetic climate forcing data:
 time_step_hours = 3
 ds = simulate_climate_forcing("test_1", time_step_hours)
-cf = GEMB.ClimateForcing(ds)
+cf = GEMB.initialize_forcing(ds)
 
 # Initialize model parameters:
 mp = ModelParameters(output_frequency=:daily)
 
 # Create a climatological average time series:
 ds_climatology = forcing_climatology(ds)
-cf_climatology = GEMB.ClimateForcing(ds_climatology)
+cf_climatology = GEMB.initialize_forcing(ds_climatology)
 
 # Initialize a column:
 profile = initialize_profile(mp, cf_climatology)
