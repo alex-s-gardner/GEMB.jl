@@ -6,6 +6,15 @@ Matches MATLAB's `gemb.m`.
 
 Returns a DimStack containing time series of surface flux (monolevel)
 and vertical profiles at the specified output frequency.
+
+# Provenance
+The output metadata records where the forcing came from (`dataset`, `latitude`,
+`longitude`, `elevation_offset`) and how the initial column was prepared. If
+`profile` was produced by [`gemb_spinup`](@ref), its `spinup_*` / `climatology_*`
+provenance is copied onto the output and `spinup_performed => true` is set. If
+`profile` came straight from [`initialize_profile`](@ref) (no spinup), the output
+records `spinup_performed => false`, so the run is unambiguous about having
+started from an un-spun-up column.
 """
 function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters; verbose::Bool=false)
     # Get time information
@@ -124,12 +133,17 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         albedo_diffuse=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     );
         # Carry forcing provenance onto the output so downstream consumers
-        # (e.g. `gemb_plot_output`) can report where the forcing came from.
-        metadata=Dict{String,Any}(
-            "dataset" => climate_forcing.dataset,
-            "latitude" => climate_forcing.latitude,
-            "longitude" => climate_forcing.longitude,
-            "elevation_offset" => climate_forcing.elevation_offset,
+        # (e.g. `gemb_plot_output`) can report where the forcing came from, plus
+        # spinup/climatology provenance from the initial profile (or a flag noting
+        # the run started from an un-spun-up profile).
+        metadata=merge(
+            Dict{String,Any}(
+                "dataset" => climate_forcing.dataset,
+                "latitude" => climate_forcing.latitude,
+                "longitude" => climate_forcing.longitude,
+                "elevation_offset" => climate_forcing.elevation_offset,
+            ),
+            _profile_provenance(profile),
         ),
     )
 
@@ -162,6 +176,23 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
 
     # Return the DimStack (already populated during time loop)
     return output
+end
+
+# Extract spinup / climatology provenance from the initial `profile` for stamping
+# onto the `gemb` output. `gemb_spinup` attaches a NamedTuple of `spinup_*` /
+# `climatology_*` keys; a profile straight from `initialize_profile` (no spinup)
+# carries `NoMetadata`. In that case record `spinup_performed => false` so the
+# output is unambiguous about having started from an un-spun-up column.
+function _profile_provenance(profile::DimStack)
+    md = DD.metadata(profile)
+    if md isa DD.Dimensions.Lookups.NoMetadata || isempty(keys(md))
+        return Dict{String,Any}("spinup_performed" => false)
+    end
+    prov = Dict{String,Any}("spinup_performed" => true)
+    for k in keys(md)
+        prov[String(k)] = md[k]
+    end
+    return prov
 end
 
 """

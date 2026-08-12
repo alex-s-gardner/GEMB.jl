@@ -7,6 +7,17 @@ Run GEMB for multiple spinup cycles to reach quasi-steady state.
 Forces `output_frequency=:last` internally to minimize memory usage during spinup.
 Returns the spun-up profile DimStack.
 
+# Provenance
+The returned profile carries a metadata `NamedTuple` (accessible via
+`DimensionalData.metadata(profile)`) recording how the spinup ran and which
+climatology it used: `spinup_cycles`, `spinup_converged`,
+`spinup_final_delta_density`, the convergence parameters (`spinup_max_iterations`,
+`spinup_convergence_delta_density`, `spinup_convergence_depth`), and the
+climatology fields copied forward from `cf` (`climatology_window_start`,
+`climatology_window_stop`, `climatology_n_years`, `climatology_steps_per_year`).
+This provenance is propagated onto the [`gemb`](@ref) output when the spun-up
+profile is used to start a transient run.
+
 # Keyword arguments
 - `max_iterations`: maximum number of spinup cycles (default 100). The spinup always
   exits after this many cycles even if convergence has not been reached.
@@ -44,7 +55,13 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     prev_avg_density = nothing
     current_profile  = profile
 
+    # Convergence provenance, captured for the returned profile.
+    cycles_run          = 0
+    converged           = false
+    final_delta_density = NaN
+
     for cycle in 1:max_iterations
+        cycles_run = cycle
         out = gemb(current_profile, cf, mp_spinup)
         current_profile = gemb_profile(out)
 
@@ -55,17 +72,50 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
             end
 
             avg_rho = _depth_avg_density(current_profile, cdepth)
-            if prev_avg_density !== nothing &&
-               abs(avg_rho - prev_avg_density) < Float64(convergence_delta_density)
-                verbose && @info "gemb_spinup converged at cycle $cycle " *
-                                 "(Δρ = $(round(abs(avg_rho - prev_avg_density), digits=4)) kg/m³)"
-                break
+            if prev_avg_density !== nothing
+                final_delta_density = abs(avg_rho - prev_avg_density)
+                if final_delta_density < Float64(convergence_delta_density)
+                    verbose && @info "gemb_spinup converged at cycle $cycle " *
+                                     "(Δρ = $(round(final_delta_density, digits=4)) kg/m³)"
+                    converged = true
+                    break
+                end
             end
             prev_avg_density = avg_rho
         end
     end
 
-    return current_profile
+    @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run converged=converged final_delta_density=final_delta_density
+
+    return _attach_spinup_provenance(current_profile, cf;
+        cycles=cycles_run, converged=converged,
+        final_delta_density=final_delta_density,
+        max_iterations=max_iterations,
+        convergence_delta_density=convergence_delta_density,
+        convergence_depth=cdepth)
+end
+
+# Attach spinup + climatology provenance to the spun-up profile so it is a
+# self-describing artifact. Uses plain `DimStack` metadata (free-form NamedTuple);
+# climatology fields are copied forward from the forcing `cf` when present.
+function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
+        cycles, converged, final_delta_density,
+        max_iterations, convergence_delta_density, convergence_depth)
+    cf_meta = DD.metadata(cf)
+    _cf(key) = haskey(cf_meta, key) ? cf_meta[key] : nothing
+    prov = (
+        spinup_cycles = cycles,
+        spinup_converged = converged,
+        spinup_final_delta_density = final_delta_density,
+        spinup_max_iterations = max_iterations,
+        spinup_convergence_delta_density = convergence_delta_density,
+        spinup_convergence_depth = convergence_depth,
+        climatology_window_start = _cf(:climatology_window_start),
+        climatology_window_stop = _cf(:climatology_window_stop),
+        climatology_n_years = _cf(:climatology_n_years),
+        climatology_steps_per_year = _cf(:climatology_steps_per_year),
+    )
+    return rebuild(profile; metadata=prov)
 end
 
 # Compute depth-averaged density over [0, depth] using a cubic spline so the result

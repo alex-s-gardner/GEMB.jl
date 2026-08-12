@@ -26,7 +26,9 @@ Typically used to build a repeating forcing cycle for [`gemb_spinup`](@ref).
 Matches MATLAB's `forcing_climatology.m`.
 """
 function forcing_climatology(cf::ClimateForcing, datetime_range::Tuple{DateTime,DateTime})
-    return forcing_climatology(cf, datetime_range[1] .. datetime_range[2])
+    # Record the requested window as climatology provenance on the result.
+    return forcing_climatology(cf[Ti(datetime_range[1] .. datetime_range[2])];
+                               window=datetime_range)
 end
 
 # Idiomatic DimensionalData form: forward any `Ti` selector (interval, `At`, `Near`,
@@ -36,7 +38,10 @@ function forcing_climatology(cf::ClimateForcing, selector)
     return forcing_climatology(cf[Ti(selector)])
 end
 
-function forcing_climatology(cf::ClimateForcing)
+# `window` is the requested `(start, stop)` averaging window recorded as
+# provenance; when `nothing` (e.g. called on an already-subset stack) it falls
+# back to the extent of the complete years actually averaged.
+function forcing_climatology(cf::ClimateForcing; window=nothing)
     times = collect(lookup(dims(cf.temperature_air, Ti)))
 
     # Eliminate leap days (day 366 of the year)
@@ -67,6 +72,11 @@ function forcing_climatology(cf::ClimateForcing)
     tdim = Ti(times_complete[1:steps_per_year])
     _avg(a) = DimArray(reshape_avg(parent(a)), (tdim,))
 
+    # Climatology provenance: the requested window (or, when not given, the extent
+    # of the complete years actually averaged) plus the year / step counts.
+    window_start = window === nothing ? first(times_complete) : window[1]
+    window_stop  = window === nothing ? last(times_complete)  : window[2]
+
     return ClimateForcing(
         _avg(cf.temperature_air),
         _avg(cf.pressure_air),
@@ -91,5 +101,9 @@ function forcing_climatology(cf::ClimateForcing)
         latitude=cf.latitude,
         longitude=cf.longitude,
         elevation_offset=cf.elevation_offset,
+        climatology_window_start=window_start,
+        climatology_window_stop=window_stop,
+        climatology_n_years=n_complete_years,
+        climatology_steps_per_year=steps_per_year,
     )
 end

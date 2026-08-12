@@ -99,12 +99,21 @@ cf = GEMB.initialize_forcing(ds)
 cf_clim = forcing_climatology(cf)
 
 # Initialize the column and spin up
-profile = initialize_profile(mp, cf)
-spun_up_profile = gemb_spinup(profile, cf_clim, mp, 5)
+profile = initialize_profile(mp, cf_clim)
+spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=5,
+                              convergence_delta_density=0.01)
+
+# The spun-up profile carries provenance: which climatology years were averaged
+# and how the spinup converged (`metadata` is re-exported from DimensionalData).
+metadata(spun_up_profile)   # (spinup_cycles=…, spinup_converged=…, climatology_n_years=…, …)
 
 # Now run with transient forcing
 mp_run = initialize_parameters(output_frequency=:daily)
 output = gemb(spun_up_profile, cf, mp_run)
+
+# That provenance propagates onto the output. A profile run without spinup
+# instead records `spinup_performed => false`.
+metadata(output)
 ```
 
 ## Model Architecture

@@ -42,11 +42,15 @@ println("\n4. Creating climatology...")
 cf_climatology = forcing_climatology(cf)
 println("   Climatology length: $(length(cf_climatology.temperature_air)) steps")
 
-# Spin up a profile for 75 years of average forcing:
-println("\n5. Running spinup (75 years)...")
+# Spin up a profile for up to 75 years of average forcing (exits early on convergence):
+println("\n5. Running spinup (up to 75 years)...")
 mp_spinup = initialize_parameters(output_frequency=:last)
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
-println("   Spinup complete!")
+profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup;
+                             max_iterations=75, convergence_delta_density=0.01)
+# Provenance recorded on the spun-up profile (see DimensionalData.metadata):
+prov = metadata(profile_spunup)
+println("   Spinup complete! $(prov[:spinup_cycles]) cycles, converged=$(prov[:spinup_converged])")
+println("   Climatology years averaged: $(prov[:climatology_n_years])")
 println("   Post-spinup layers: $(length(profile_spunup.dz))")
 println("   Post-spinup column height: $(round(sum(profile_spunup.dz), digits=2)) m")
 println("   Post-spinup mean temperature: $(round(mean(profile_spunup.temperature), digits=2)) K")

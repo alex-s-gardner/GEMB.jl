@@ -49,8 +49,8 @@ include("interpolation.jl")
 include("plotting.jl")
 
 # Re-export DimensionalData essentials
-using DimensionalData: DimArray, DimStack, Ti, Z, dims
-export DimArray, DimStack, Ti, Z
+using DimensionalData: DimArray, DimStack, Ti, Z, dims, metadata
+export DimArray, DimStack, Ti, Z, metadata
 
 # Exports
 export ModelParameters, ClimateForcing, ClimateForcingStep

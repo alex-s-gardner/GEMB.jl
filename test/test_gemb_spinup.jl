@@ -242,6 +242,63 @@ using Dates
         @test c_ss < c_ice
     end
 
+    @testset "Climatology provenance" begin
+        # Multi-year forcing so forcing_climatology has complete years to average.
+        n = 365 * 3
+        time = DateTime(1950, 1, 1) .+ Day.(0:n-1)
+        cf = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+
+        window = (DateTime(1950, 1, 1), DateTime(1952, 12, 31))
+        clim = forcing_climatology(cf, window)
+        m = DimensionalData.metadata(clim)
+
+        # Requested window is recorded verbatim.
+        @test m[:climatology_window_start] == window[1]
+        @test m[:climatology_window_stop] == window[2]
+        # Three complete non-leap years averaged.
+        @test m[:climatology_n_years] == 3
+        @test m[:climatology_steps_per_year] == 365
+        # Accessible via the cf.<field> interface too.
+        @test clim.climatology_n_years == 3
+
+        # No-window form falls back to the extent of the averaged years.
+        clim2 = forcing_climatology(cf)
+        m2 = DimensionalData.metadata(clim2)
+        @test m2[:climatology_n_years] == 3
+        @test m2[:climatology_window_start] isa DateTime
+    end
+
+    @testset "Spinup provenance" begin
+        n = 365
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        params = initialize_parameters(output_frequency=:last)
+        profile = initialize_profile(params, forcing)
+
+        # No convergence check → runs the full max_iterations, converged=false.
+        prof_max = gemb_spinup(profile, forcing, params; max_iterations=3)
+        pm = DimensionalData.metadata(prof_max)
+        @test pm[:spinup_cycles] == 3
+        @test pm[:spinup_converged] == false
+        @test pm[:spinup_max_iterations] == 3
+        @test isnan(pm[:spinup_final_delta_density])
+
+        # Loose tolerance → converges early, before max_iterations.
+        prof_conv = gemb_spinup(profile, forcing, params;
+                                max_iterations=50, convergence_delta_density=1e3)
+        pc = DimensionalData.metadata(prof_conv)
+        @test pc[:spinup_converged] == true
+        @test pc[:spinup_cycles] < 50
+        @test pc[:spinup_convergence_delta_density] == 1e3
+        @test isfinite(pc[:spinup_final_delta_density])
+    end
+
     @testset "Spinup with zero accumulation" begin
         # Edge case: no precipitation
 
