@@ -39,7 +39,8 @@ Rain is added by increasing the mass and temperature of the top grid cell,
 with temperature adjusted to account for latent heat of fusion.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain)`.
-Arrays may grow (prepend) when snow depth > dzmin.
+Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the extra cell
+is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s count controller.
 """
 function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
@@ -48,7 +49,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     albedo_diffuse::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
-    # Note: arrays are modified in-place or extended via pushfirst! when new snow is added.
+    # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
+    # snow is deep enough to warrant its own layer.
 
     # Define tolerances
     T_tolerance = 1e-10
@@ -90,15 +92,20 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
             # if snow depth is greater than specified min dz, new cell created
             if z_snow > mp.column_dzmin + d_tolerance
-                temperature = vcat([cfs.temperature_air], temperature)
-                dz = vcat([z_snow], dz)
-                density = vcat([density_new_snow], density)
-                water = vcat([0.0], water)
-                albedo = vcat([mp.albedo_snow], albedo)
-                albedo_diffuse = vcat([mp.albedo_snow], albedo_diffuse)
-                grain_radius = vcat([refall], grain_radius)
-                grain_dendricity = vcat([dfall], grain_dendricity)
-                grain_sphericity = vcat([sfall], grain_sphericity)
+                cols = column_state(temperature, dz, density, water, grain_radius,
+                    grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+                open_slot!(cols, 1)
+                @inbounds begin
+                    temperature[1] = cfs.temperature_air
+                    dz[1] = z_snow
+                    density[1] = density_new_snow
+                    water[1] = 0.0
+                    albedo[1] = mp.albedo_snow
+                    albedo_diffuse[1] = mp.albedo_snow
+                    grain_radius[1] = refall
+                    grain_dendricity[1] = dfall
+                    grain_sphericity[1] = sfall
+                end
             else
                 # if snow depth is less than specified minimum dz
                 M_surface_new = M_surface + cfs.precipitation

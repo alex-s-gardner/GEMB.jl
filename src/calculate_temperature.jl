@@ -39,9 +39,13 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     TCs = density[1] * dz[1] * C_ICE
 
     # determine grid point 'center' vector size
+    # At least two cells are required: the tridiagonal solve below indexes
+    # `T_delta_sw[m-1]` and `temperature[2]`, so a single-cell column is not just
+    # degenerate but out of bounds.
     m = length(density)
-    if m == 0
-        error("column has no gridcells: length(density) = 0")
+    if m < 2
+        error("column must have at least 2 gridcells for the thermal solve: " *
+              "length(density) = $m")
     end
 
     # initialize cumulative quantities

@@ -29,53 +29,39 @@ end
     dz2z(dz::AbstractMatrix)
 
 Convert 2D layer thickness matrix to cell center heights.
-Each column is an independent profile. NaN values are preserved.
+Each column is an independent profile, surface first (row 1).
+
+GEMB profile output is top-justified with a fixed row count, so this is a plain cumulative
+sum with no padding to work around. Any NaN present in the input (e.g. an output array not
+yet fully written) propagates through its own column from that row down, as `cumsum`
+implies.
 
 Matches MATLAB's `dz2z.m` for matrix input.
 """
 function dz2z(dz::AbstractMatrix)
-    nrows, ncols = size(dz)
-    z_center = similar(dz)
-    isn = isnan.(dz)
-
-    # Replace NaN with 0 for cumsum, then restore
-    dz_clean = copy(dz)
-    dz_clean[isn] .= 0.0
-
-    # cumsum along columns (dim=1)
-    cs = cumsum(dz_clean, dims=1)
-
-    # Get top finite value for each column (surface_timeseries equivalent)
-    top_vals = surface_timeseries(dz)
-
-    for j in axes(dz, 2)
+    z_center = similar(dz, Float64)
+    @inbounds for j in axes(dz, 2)
+        half_top = dz[1, j] / 2
+        cs = 0.0
         for i in axes(dz, 1)
-            z_center[i, j] = -cs[i, j] + top_vals[j] / 2
+            cs += dz[i, j]
+            z_center[i, j] = -cs + half_top
         end
     end
-    z_center[isn] .= NaN
-
     return z_center
 end
 
 """
     surface_timeseries(A::AbstractMatrix)
 
-Return the uppermost finite value in each column of matrix `A`.
-Matches MATLAB's `surface_timeseries.m`.
+Return the surface (row 1) value in each column of matrix `A`.
+
+GEMB profile output is top-justified, so the surface cell is always row 1. Retained as a
+named function because it expresses intent at call sites and matches MATLAB's
+`surface_timeseries.m`.
 """
 function surface_timeseries(A::AbstractMatrix)
-    ncols = size(A, 2)
-    result = fill(NaN, ncols)
-    for j in axes(A, 2)
-        for i in axes(A, 1)
-            if isfinite(A[i, j])
-                result[j] = A[i, j]
-                break
-            end
-        end
-    end
-    return result
+    return Float64[A[1, j] for j in axes(A, 2)]
 end
 
 """

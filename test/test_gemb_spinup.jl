@@ -214,34 +214,45 @@ using Dates
         @test all(parent(prof_ice[:density]) .== mp.density_ice)
 
         # Both converge to the same depth-averaged density; steady-state faster.
-        function spin_cycles(prof0, thr, depth; maxit=120)
+        #
+        # Convergence is measured as distance to the common equilibrium, not as the first
+        # cycle where the change between consecutive cycles falls below a threshold. The
+        # consecutive-delta proxy is not a convergence measure here: with multi-year
+        # forcing the column settles into a small seasonal limit cycle, so once both
+        # starts are in the asymptotic tail their per-cycle deltas are indistinguishable
+        # regardless of how much sooner one of them arrived.
+        function spin_trajectory(prof0, depth; maxit=20)
             prof = prof0
-            prev = nothing
-            cycles = maxit
-            for c in 1:maxit
+            rho_avg = Float64[]
+            for _ in 1:maxit
                 prof = gemb_profile(gemb(prof, cf, mp; verbose=false))
                 zc = -GEMB.dz2z(prof[:dz])
                 rho = prof[:density]
                 idx = zc .<= depth
-                a = sum(rho[idx]) / count(idx)
-                if prev !== nothing && abs(a - prev) < thr
-                    cycles = c
-                    break
-                end
-                prev = a
+                push!(rho_avg, sum(rho[idx]) / count(idx))
             end
-            zc = -GEMB.dz2z(prof[:dz]); rho = prof[:density]
-            idx = zc .<= depth
-            return sum(rho[idx]) / count(idx), cycles
+            return rho_avg
         end
 
-        ρ_ss,  c_ss  = spin_cycles(prof_ss,  0.2, 40.0)
-        ρ_ice, c_ice = spin_cycles(prof_ice, 0.2, 40.0)
+        # 40 cycles, not 20: the all-ice start has to densify ~410 kg m-3 of gap away, and at
+        # cycle 20 it is still en route (gap 23 kg m-3, closing to 8.5 by cycle 30 and 1.7 by
+        # cycle 60). Sampling before the slower trajectory has arrived tests the *rate* of
+        # convergence, not the claim being made here, which is that both starts reach a
+        # common equilibrium.
+        traj_ss  = spin_trajectory(prof_ss,  40.0; maxit=40)
+        traj_ice = spin_trajectory(prof_ice, 40.0; maxit=40)
+        ρ_eq = traj_ss[end]
 
-        # Same equilibrium (loose tolerance: early-exit thresholds differ slightly).
-        @test isapprox(ρ_ss, ρ_ice; atol=20.0)
-        # Steady-state initialization converges in far fewer cycles.
-        @test c_ss < c_ice
+        # Same equilibrium from either start.
+        @test isapprox(traj_ss[end], traj_ice[end]; atol=20.0)
+
+        # Steady-state initialization starts far closer to equilibrium and reaches it in
+        # fewer cycles. (Observed: initial gap ~14 vs ~338 kg m-3; 1 cycle vs 4 to get
+        # within 20 kg m-3.)
+        @test abs(traj_ss[1] - ρ_eq) < abs(traj_ice[1] - ρ_eq)
+        cycles_within(traj, tol) = something(findfirst(a -> abs(a - ρ_eq) < tol, traj),
+                                             length(traj) + 1)
+        @test cycles_within(traj_ss, 20.0) < cycles_within(traj_ice, 20.0)
     end
 
     @testset "Climatology provenance" begin

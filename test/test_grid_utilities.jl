@@ -11,24 +11,17 @@ using GEMB
         surface = surface_timeseries(A)
         @test surface == [1.0, 2.0, 3.0]
 
-        # Test with NaN values at top
+        # Row 1 is returned verbatim: GEMB profile output is top-justified with a fixed
+        # row count, so the surface cell is always row 1. NaN is not padding and is not
+        # skipped — a NaN in row 1 is a NaN in the result.
         B = [NaN NaN 3.0;
              4.0 5.0 NaN;
              7.0 8.0 9.0]
 
         surface_b = surface_timeseries(B)
-        @test surface_b[1] ≈ 4.0
-        @test surface_b[2] ≈ 5.0
+        @test isnan(surface_b[1])
+        @test isnan(surface_b[2])
         @test surface_b[3] ≈ 3.0
-
-        # Test with all NaN column
-        C = [NaN 2.0;
-             NaN 5.0;
-             NaN 8.0]
-
-        surface_c = surface_timeseries(C)
-        @test isnan(surface_c[1])
-        @test surface_c[2] ≈ 2.0
 
         # Note: MATLAB version doesn't check matrix size, so Julia version doesn't either
 

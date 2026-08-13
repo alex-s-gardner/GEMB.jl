@@ -118,7 +118,7 @@ metadata(output)
 
 ## Model Architecture
 
-After climate forcing, model parameters, and the initial state of the column are defined, the `gemb` function calls `gemb_core` for each time step of the climate forcing. At each time step, `gemb_core` calls a series of physics functions that update the column grain size, albedo, shortwave radiation, temperature, accumulation, meltwater, and density. The `manage_layers` function adjusts the depth and number of vertical layers to ensure layer thicknesses remain within configured bounds.
+After climate forcing, model parameters, and the initial state of the column are defined, the `gemb` function calls `gemb_core` for each time step of the climate forcing. At each time step, `gemb_core` calls a series of physics functions that update the column grain size, albedo, shortwave radiation, temperature, accumulation, meltwater, and density. The `manage_layer_thickness` function merges and splits layers to keep thicknesses within their configured bounds and to hold the layer count fixed; total column depth is pinned separately at the end of each time step.
 
 ### Physics Modules
 
@@ -131,7 +131,7 @@ After climate forcing, model parameters, and the initial state of the column are
 | `calculate_accumulation` | Precipitation and deposition added to the column |
 | `calculate_melt` | Meltwater production, pore water content, grid adjustment |
 | `calculate_density` | Snow/firn densification |
-| `manage_layers` | Layer splitting and merging to maintain grid constraints |
+| `manage_layer_thickness` | Layer splitting and merging to maintain grid constraints |
 
 ## Output Variables
 

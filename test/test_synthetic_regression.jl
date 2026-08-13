@@ -56,9 +56,16 @@ using GEMB_ClimateForcing
 
     # Reference = deterministic Julia output on arm64 (macOS). Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
-    # spinup (~7.9M iterations): x86_64 CI vs arm64 differs by ~28-32 kg/m² for
-    # melt/runoff and ~6e-4 for albedo. atols are set ~2x that spread.
-    @test mean_albedo ≈ 0.822099 atol=2e-3      # ~0.24% relative
-    @test total_melt ≈ 11384.264341 atol=60.0   # ~0.53% relative
-    @test total_runoff ≈ 5024.274200 atol=60.0  # ~1.2% relative
+    # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt.
+    # atols are set ~2x that spread.
+    #
+    # The spread widened from ~30 to ~51 kg/m² with the fixed-length grid: merge and
+    # split are threshold comparisons against the per-cell bands, so a 1-ulp band
+    # difference can flip a single merge and slightly change the deep discretization.
+    # This is evaluation-order sensitivity in the regridding, not a conservation
+    # problem — the per-timestep mass/energy checks run under `verbose=true` and the
+    # whole-run budget closes to ~1e-11 kg m-2 on both platforms.
+    @test mean_albedo ≈ 0.821798 atol=3e-3       # ~0.37% relative
+    @test total_melt ≈ 11398.551015 atol=120.0  # ~1.1% relative
+    @test total_runoff ≈ 5017.057989 atol=120.0 # ~2.4% relative
 end

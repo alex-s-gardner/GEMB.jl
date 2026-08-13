@@ -94,7 +94,7 @@ using Dates
         end
 
         # NOTE: initialize_profile can build a column that slightly overshoots
-        # column_zmax; the first manage_layers call trims the bottom layer to
+        # column_depth; the first manage_layer_thickness call trims the bottom layer to
         # bring the column back within bounds. That one-time trim is mass leaving
         # through the bottom domain boundary (a legitimate grid operation), not a
         # physics conservation violation. Comparing the pre-trim initial mass to

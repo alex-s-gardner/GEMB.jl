@@ -54,15 +54,15 @@ Base.@kwdef struct ModelParameters
 
     # --- Output Controls ---
     output_frequency::Symbol = :all
-    output_padding::Int = 1000
 
     # --- Grid Geometry ---
     column_ztop::Float64 = 10.0
     column_dztop::Float64 = 0.05
     column_dzmin::Float64 = 0.025
     column_dzmax::Float64 = 0.075
-    column_zmax::Float64 = 250.0
-    column_zmin::Float64 = 130.0
+    # `column_depth` sets the depth of the constructed grid (`initialize_grid`) and hence the
+    # fixed total column depth held for the whole run.
+    column_depth::Float64 = 250.0
     column_zy::Float64 = 1.10
 
     # --- Thermal Time Stepping ---

@@ -40,14 +40,14 @@ using GEMB: DimArray, Ti
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
     @test all(dz[1:n_top] .≈ mp.column_dztop)
 
-    # Total depth should be at or slightly above column_zmax
+    # Total depth should be at or slightly above column_depth
     # (last cell extends past boundary in MATLAB implementation)
-    @test sum(dz) >= mp.column_zmax
-    @test sum(dz) < mp.column_zmax + dz[end] + 1e-10
+    @test sum(dz) >= mp.column_depth
+    @test sum(dz) < mp.column_depth + dz[end] + 1e-10
 end
 
 @testset "Grid stretching" begin
-    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_zmax=50.0, column_zy=1.10)
+    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_depth=50.0, column_zy=1.10)
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
     cf = GEMB.initialize_forcing(times,

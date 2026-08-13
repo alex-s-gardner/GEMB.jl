@@ -26,6 +26,10 @@ include("thermal_conductivity.jl")
 include("turbulent_heat_flux.jl")
 include("densification_lookup.jl")
 
+# Shared vertical-grid primitives (used by the accumulation / melt / layer-management
+# modules below, so it must be included before them)
+include("grid_ops.jl")
+
 # Core physics modules
 include("calculate_grain_size.jl")
 include("calculate_albedo.jl")
@@ -34,7 +38,7 @@ include("calculate_temperature.jl")
 include("calculate_accumulation.jl")
 include("calculate_melt.jl")
 include("calculate_density.jl")
-include("manage_layers.jl")
+include("manage_layer_thickness.jl")
 
 # Integration
 include("gemb_core.jl")

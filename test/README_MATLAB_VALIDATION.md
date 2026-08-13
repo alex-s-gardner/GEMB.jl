@@ -106,7 +106,7 @@ This ensures near-perfect numerical agreement between implementations.
 - 🔄 `test_calculate_accumulation.jl`
 - 🔄 `test_calculate_melt.jl`
 - 🔄 `test_calculate_grain_size.jl`
-- 🔄 `test_manage_layers.jl`
+- 🔄 `test_manage_layer_thickness.jl`
 
 Note: These functions can be validated once corresponding reference data is generated in MATLAB.
 

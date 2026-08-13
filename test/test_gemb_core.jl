@@ -27,7 +27,7 @@ function _make_core_cfs(; dt=3600.0, temperature_air=265.0, precipitation=0.0,
 end
 
 # Helper to create ModelParameters for gemb_core tests
-function _make_core_mp(; dt=3600.0, column_zmax=0.9)
+function _make_core_mp(; dt=3600.0, column_depth=0.9)
     return GEMB.ModelParameters(
         albedo_method=:GardnerSharp,
         albedo_ice=0.45,
@@ -45,8 +45,7 @@ function _make_core_mp(; dt=3600.0, column_zmax=0.9)
         thermal_conductivity_method=:Sturm,
         column_dzmin=0.05,
         column_dzmax=0.10,
-        column_zmax=column_zmax,
-        column_zmin=0.5,
+        column_depth=column_depth,
         column_ztop=2.0,
         column_zy=1.1,
         new_snow_method=Symbol("150kgm2"),
@@ -84,10 +83,11 @@ end
 
     new_state, flux = GEMB.gemb_core(state, cfs, mp, true)
 
-    # Initial 10 layers (0.8 m total). The column depth (0.8 m) sits above
-    # column_zmin (0.5 m), so manage_layers adds no bottom padding layer and
-    # no cell crosses the merge/split thresholds -> 10 layers unchanged.
+    # The column length is fixed: `gemb_core` defaults `n_target` to the incoming
+    # length, and the count controller restores it before returning.
     @test length(new_state.dz) == 10
+    # Total depth is likewise pinned to the incoming depth (0.8 m) by the basal trim.
+    @test sum(new_state.dz) ≈ 0.8 atol=1e-9
 
     # Output sizes should be consistent
     @test length(new_state.dz) == length(new_state.temperature)
@@ -107,13 +107,13 @@ end
 @testset "Accumulation event" begin
     state = _make_core_state()
     cfs = _make_core_cfs(precipitation=10.0, temperature_air=260.0)
-    mp = _make_core_mp(column_zmax=100.0)  # large zmax to force padding
+    mp = _make_core_mp(column_depth=100.0)
 
     new_state, flux = GEMB.gemb_core(state, cfs, mp, true)
 
-    # 10 (original) + 1 (snow accumulation) = 11. The 0.8 m column is above
-    # column_zmin (0.5 m), so no bottom padding layer is added.
-    @test length(new_state.dz) == 11
+    # Accumulation prepends a fresh-snow cell (10 -> 11), and the count controller
+    # reclaims the slot by merging a deep pair, so the length returns to 10.
+    @test length(new_state.dz) == 10
 
     # Top layer should be fresh snow density
     @test round(new_state.density[1]; digits=2) == 150.0

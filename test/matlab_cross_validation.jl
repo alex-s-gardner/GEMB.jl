@@ -222,7 +222,7 @@ else
 
             @testset "Manage layers" begin
                 # Reference test already exists
-                include("test_manage_layers.jl")
+                include("test_manage_layer_thickness.jl")
             end
         end
     end
