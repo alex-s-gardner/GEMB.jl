@@ -36,7 +36,7 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   `grain_dendricity`, and `grain_sphericity`, and the densification scalar group (a
   grid diagnostic, fields already represented by the surface-albedo/grain-radius
   panels, and a lower-priority group); pass any of them explicitly here to include them.
-- `title`: Optional figure title. Defaults to `"GEMB diagnostic output"`.
+- `title`: Optional figure title. Defaults to `"GEMB firn model output"`.
 
 # Returns
 A Makie `Figure`.
