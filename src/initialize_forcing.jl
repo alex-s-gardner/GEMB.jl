@@ -46,6 +46,7 @@ function initialize_forcing(
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
+    elevation::Real=NaN,
     elevation_offset::Real=0.0
 )
     # Validate input sizes
@@ -124,6 +125,7 @@ function initialize_forcing(
         dataset=dataset,
         latitude=latitude,
         longitude=longitude,
+        elevation=elevation,
         elevation_offset=elevation_offset,
     )
 end
@@ -250,13 +252,14 @@ function initialize_forcing(stack::DimStack)
     shortwave_downward_diffuse = get(meta, "shortwave_downward_diffuse", 0.0)
     cloud_fraction = get(meta, "cloud_fraction", 0.1)
 
-    # Provenance metadata (optional): source name, cell coordinates, and any
-    # elevation adjustment applied upstream. Absent for hand-built stacks, so
-    # default gracefully. `elevation_offset` supersedes the older `delta_elevation`
-    # key that `climate_adjust_for_elevation` used to write.
+    # Provenance metadata (optional): source name, cell coordinates, the absolute
+    # target `elevation` (m), and any elevation adjustment applied upstream. Absent for
+    # hand-built stacks, so default gracefully. `elevation_offset` supersedes the older
+    # `delta_elevation` key that `climate_adjust_for_elevation` used to write.
     dataset = get(meta, "dataset", "")
     latitude = get(meta, "latitude", NaN)
     longitude = get(meta, "longitude", NaN)
+    elevation = get(meta, "elevation", NaN)
     elevation_offset = get(meta, "elevation_offset", get(meta, "delta_elevation", 0.0))
 
     # Delegate to the vector method, which applies GEMB's validation logic
@@ -283,6 +286,7 @@ function initialize_forcing(stack::DimStack)
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,
+        elevation = elevation,
         elevation_offset = elevation_offset
     )
 end

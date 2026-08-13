@@ -141,6 +141,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
                 "dataset" => climate_forcing.dataset,
                 "latitude" => climate_forcing.latitude,
                 "longitude" => climate_forcing.longitude,
+                "elevation" => climate_forcing.elevation,
                 "elevation_offset" => climate_forcing.elevation_offset,
             ),
             _profile_provenance(profile),
