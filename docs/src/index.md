@@ -44,7 +44,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = GEMB.initialize_forcing(ds)   # convert to ClimateForcing
 
 # Initialize the firn column profile
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 
 # Run GEMB
 output = gemb(profile, cf, mp)
@@ -74,7 +74,7 @@ cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
 mp = initialize_parameters(output_frequency=:daily)
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 
@@ -99,7 +99,7 @@ cf = GEMB.initialize_forcing(ds)
 cf_clim = forcing_climatology(cf)
 
 # Initialize the column and spin up
-profile = initialize_profile(mp, cf_clim)
+profile, mp = initialize_profile(mp, cf_clim)
 spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=5,
                               convergence_delta_density=0.01)
 

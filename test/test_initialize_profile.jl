@@ -15,7 +15,8 @@ using GEMB: DimArray, Ti
         wind_observation_height=10.0)
 
     # steady_state=false → legacy pure-ice init, matching MATLAB fidelity here.
-    profile = GEMB.initialize_profile(mp, cf; steady_state=false)
+    # depth_autoadjust=false keeps the configured column limits for grid validation.
+    profile, _ = GEMB.initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false)
 
     # Check that profile has expected fields
     @test haskey(profile, :temperature)
@@ -56,7 +57,7 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile = GEMB.initialize_profile(mp, cf)
+    profile, _ = GEMB.initialize_profile(mp, cf; depth_autoadjust=false)
     dz = collect(profile[:dz])
 
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
@@ -79,7 +80,7 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile = GEMB.initialize_profile(mp, cf)
+    profile, _ = GEMB.initialize_profile(mp, cf; depth_autoadjust=false)
     # z_center is no longer stored on the profile; recompute it from dz.
     dz = collect(profile[:dz])
     z_center = GEMB.dz2z(dz)
@@ -103,8 +104,8 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     params = GEMB.initialize_parameters()
     ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
     forcing = GEMB.initialize_forcing(ds)
-    profile = GEMB.initialize_profile(params, forcing)
-    
+    profile, _ = GEMB.initialize_profile(params, forcing; depth_autoadjust=false)
+
     # Validate number of layers
     n_layers_julia = length(profile.dz)
     n_layers_matlab = Int(ref["n_layers_init"][1])

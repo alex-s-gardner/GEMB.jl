@@ -137,7 +137,7 @@ else
                 # Julia version
                 params_jl = initialize_parameters()
                 forcing_jl = simulate_climate_forcing("test_1", 3)
-                profile_jl = initialize_profile(params_jl, forcing_jl)
+                profile_jl, params_jl = initialize_profile(params_jl, forcing_jl; depth_autoadjust=false)
 
                 # Run for just a few timesteps
                 n_steps = 10

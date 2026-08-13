@@ -17,13 +17,17 @@ mp = initialize_parameters(output_frequency=:daily)
 # Create a climatological average time series:
 cf_climatology = forcing_climatology(cf)
 
-# Initialize a column:
-profile = initialize_profile(mp, cf_climatology)
+# Initialize a column. initialize_profile returns (profile, mp): with
+# depth_autoadjust=true (the default), if the column is inferred to be ice
+# (ablation zone) the returned mp carries shallower column limits. Rebind mp so
+# the spinup and gemb run honor the same limits.
+profile, mp = initialize_profile(mp, cf_climatology)
 
 # Spin up a profile for up to 75 years of average forcing, exiting early once the
-# depth-averaged density converges:
-mp_spinup = initialize_parameters(output_frequency=:last)
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup;
+# depth-averaged density converges. gemb_spinup internally forces
+# output_frequency=:last, so pass the mp returned by initialize_profile (with any
+# depth_autoadjust'd column limits) rather than a separate :last params object.
+profile_spunup = gemb_spinup(profile, cf_climatology, mp;
                              max_iterations=75, convergence_delta_density=0.01)
 
 # The spun-up profile carries provenance: which climatology years were averaged

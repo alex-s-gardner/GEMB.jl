@@ -45,8 +45,8 @@ params = initialize_parameters()
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
 forcing = initialize_forcing(ds)
 
-# 3. Initialize the vertical profile
-profile = initialize_profile(params, forcing)
+# 3. Initialize the vertical profile (returns possibly depth-adjusted params)
+profile, params = initialize_profile(params, forcing)
 
 # 4. Run the model
 output = gemb(profile, forcing, params)

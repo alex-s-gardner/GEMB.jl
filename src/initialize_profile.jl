@@ -1,8 +1,16 @@
 """
     initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-                       steady_state=true, ddf_snow=3.0, melt_accum_ratio=0.6)
+                       steady_state=true, depth_autoadjust=true,
+                       ddf_snow=3.0, melt_accum_ratio=0.6)
+        -> (profile::DimStack, mp::ModelParameters)
 
 Initialize a GEMB firn column profile as a DimStack.
+
+Returns a tuple `(profile, mp)`. The returned `mp` equals the input parameters
+unless `depth_autoadjust` shrinks the column limits (see below), in which case it
+is a modified copy — pass this returned `mp` to [`gemb`](@ref) / [`gemb_spinup`](@ref)
+so the adjusted `column_zmax`/`column_zmin` are honored at runtime by
+[`manage_layers`](@ref) as well as in the initial grid.
 
 By default the density profile is initialized to the **Herron–Langway steady
 state** ([`herron_langway_steady_state`](@ref)) derived from the mean annual
@@ -25,6 +33,12 @@ the melt point (`min(T_mean, 273.15)`).
 # Keyword arguments
 - `steady_state`: use the Herron–Langway steady-state density profile (default
   `true`); set `false` to force the legacy pure-ice initialization.
+- `depth_autoadjust`: when `true` (default) and the column is inferred to be ice
+  (the ablation-zone / pure-ice regime — same condition that fills the column with
+  `mp.density_ice`), shrink the column limits to `column_zmax = 25 m` and
+  `column_zmin = 20 m` (a deep firn grid is unnecessary for solid ice). The
+  adjusted values are returned in `mp`. Set `false` to keep the configured limits
+  (required for MATLAB-fidelity and fixed-baseline regression tests).
 - `constant_density`: when `true`, initialize the density profile to pure ice
   (`mp.density_ice`) everywhere, bypassing the steady-state/ablation regime
   logic (default `false`).
@@ -45,7 +59,7 @@ Returns a DimStack with Z dimension containing:
   grain_dendricity, grain_sphericity, albedo, albedo_diffuse
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-    steady_state::Bool=true, constant_density::Bool=false,
+    steady_state::Bool=true, depth_autoadjust::Bool=true, constant_density::Bool=false,
     constant_temperature::Bool=false, ddf_snow::Real=3.0, melt_accum_ratio::Real=0.6)
 
     T_mean = cf.temperature_air_mean
@@ -53,6 +67,22 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     @assert T_mean > 0 "temperature_air_mean must exceed 0 K."
     if T_mean < 100
         @warn "temperature_air_mean should be in kelvin, but is below 100, suggesting an error."
+    end
+
+    # Decide firn (steady-state density) vs. ablation/ice (pure ice) regime. This
+    # is computed before the grid is built so it can also drive depth_autoadjust.
+    accum = cf.precipitation_mean                        # [kg m-2 yr-1]
+    melt = annual_pdd_melt(cf; ddf_snow=ddf_snow)        # [kg m-2 yr-1]
+    is_ice = constant_density || !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
+
+    # For an ice column there is no deep firn to resolve, so shrink the column
+    # limits (column_zmax/column_zmin) to a shallow grid. The rebuilt mp is
+    # returned so gemb/manage_layers honor the same limits at runtime.
+    if depth_autoadjust && is_ice
+        mp = ModelParameters(;
+            (f => getfield(mp, f) for f in fieldnames(ModelParameters)
+                 if f ∉ (:column_zmax, :column_zmin))...,
+            column_zmax=25.0, column_zmin=20.0)
     end
 
     # Initialize grid
@@ -66,11 +96,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # everywhere (matches the MATLAB initialization).
     T_init = constant_temperature ? T_mean : min(T_mean, CtoK)
 
-    # Decide firn (steady-state density) vs. ablation/ice (pure ice) regime.
-    accum = cf.precipitation_mean                        # [kg m-2 yr-1]
-    melt = annual_pdd_melt(cf; ddf_snow=ddf_snow)        # [kg m-2 yr-1]
-
-    if constant_density || !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
+    if is_ice
         density = fill(mp.density_ice, m)
     else
         # Warn if outside the Arthern et al. (2010) dry-firn calibration envelope.
@@ -90,7 +116,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Note: `z_center` is intentionally not stored — it is a pure function of `dz`
     # (via `dz2z`) and is recomputed on demand, so the profile stays a clean slice
     # of the `gemb` output layout (which likewise carries `dz`, not `z_center`).
-    return DimStack((
+    profile = DimStack((
         dz=DimArray(dz, (zdim,)),
         temperature=DimArray(fill(T_init, m), (zdim,)),
         density=DimArray(density, (zdim,)),
@@ -101,6 +127,8 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         albedo=DimArray(fill(mp.albedo_snow, m), (zdim,)),
         albedo_diffuse=DimArray(fill(mp.albedo_snow, m), (zdim,)),
     ))
+
+    return profile, mp
 end
 
 """
