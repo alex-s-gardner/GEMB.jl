@@ -38,7 +38,8 @@ using GEMB_ClimateForcing
 
     # Initialize profile. steady_state=false uses the pure-ice initialization
     # that the reference values below were generated with.
-    profile = initialize_profile(mp, cf; steady_state=false)
+    # depth_autoadjust=false keeps the deep column the reference baseline used.
+    profile, _ = initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false)
 
     # Create climatological forcing and spin up
     cf_climatology = GEMB.forcing_climatology(cf)

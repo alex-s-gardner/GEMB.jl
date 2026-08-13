@@ -173,7 +173,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = initialize_forcing(ds)
 
 mp = initialize_parameters()
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 """

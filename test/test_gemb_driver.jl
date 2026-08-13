@@ -29,7 +29,7 @@ using Dates
         )
 
         # Initialize profile
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # Run model for 1 week
         output = gemb(profile, forcing, params)
@@ -82,7 +82,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         output = gemb(profile, forcing, params)
 
@@ -137,7 +137,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         initial_mass = sum(profile.density .* profile.dz)
 
         output = gemb(profile, forcing, params)
@@ -172,7 +172,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # Test different output frequencies
         for freq in [:all, :daily, :last]
@@ -217,7 +217,7 @@ using Dates
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
         params = initialize_parameters(output_frequency=:last)
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # No spinup: gemb runs directly on the freshly initialized profile.
         out_nospin = gemb(profile, forcing, params)

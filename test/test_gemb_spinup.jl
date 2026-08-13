@@ -33,7 +33,7 @@ using Dates
         )
 
         # Initialize profile
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # Run spinup with 3 cycles (fast test)
         output = gemb_spinup(profile, forcing, params; max_iterations=3, verbose=false)
@@ -74,7 +74,7 @@ using Dates
         )
 
         # Run with different numbers of cycles
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         output_3 = gemb_spinup(profile, forcing, params; max_iterations=3)
         output_5 = gemb_spinup(profile, forcing, params; max_iterations=5)
 
@@ -116,7 +116,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         spunup_profile = gemb_spinup(profile, forcing, params; max_iterations=3)
 
         # Check profile has required fields
@@ -182,7 +182,7 @@ using Dates
             fill(100.0, n), fill(200.0, n), fill(100.0, n);
             temperature_air_mean=278.15, wind_speed_mean=5.0, precipitation_mean=365.25)
         mp = initialize_parameters()
-        prof = initialize_profile(mp, cf)
+        prof, _ = initialize_profile(mp, cf)
 
         @test all(parent(prof[:density]) .== mp.density_ice)
         @test all(parent(prof[:temperature]) .<= 273.15 + 1e-9)
@@ -202,8 +202,10 @@ using Dates
         mp = initialize_parameters(densification_method=:HerronLangway,
                                    output_frequency=:last)
 
-        prof_ss  = initialize_profile(mp, cf)                     # steady-state (default)
-        prof_ice = initialize_profile(mp, cf; steady_state=false) # legacy all-ice
+        prof_ss, _  = initialize_profile(mp, cf)                     # steady-state (default)
+        # depth_autoadjust=false so the all-ice column keeps the same deep grid as
+        # the steady-state column for a fair same-depth convergence comparison.
+        prof_ice, _ = initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false) # legacy all-ice
 
         # Steady-state start is a graded firn column, not pure ice.
         d_ss = parent(prof_ss[:density])
@@ -279,7 +281,7 @@ using Dates
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
         params = initialize_parameters(output_frequency=:last)
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # No convergence check → runs the full max_iterations, converged=false.
         prof_max = gemb_spinup(profile, forcing, params; max_iterations=3)
@@ -324,7 +326,7 @@ using Dates
         )
 
         # Should still work, just won't grow
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         output = gemb_spinup(profile, forcing, params; max_iterations=2)
 
         @test output isa DimStack
