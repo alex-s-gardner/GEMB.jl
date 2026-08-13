@@ -1,3 +1,6 @@
+# Default `convergence_depth` for `gemb_spinup`, as a fraction of the (fixed) column depth.
+const SPINUP_CONVERGENCE_DEPTH_FRACTION = 0.5
+
 """
     gemb_spinup(profile, cf, mp; max_iterations=100, convergence_depth=nothing,
                 convergence_delta_density=nothing, verbose=false)
@@ -22,8 +25,9 @@ profile is used to start a transient run.
 - `max_iterations`: maximum number of spinup cycles (default 100). The spinup always
   exits after this many cycles even if convergence has not been reached.
 - `convergence_depth`: depth [m] over which to compute depth-averaged density for
-  convergence testing. Defaults to `mp.column_zmin`. If the column depth ever drops
-  below this value an error is thrown.
+  convergence testing. Defaults to half the initial column depth. If the column depth ever
+  drops below this value an error is thrown (unreachable on a fixed-depth column, where
+  [`trim_bottom!`](@ref) pins the depth exactly, but retained for explicit shallower targets).
 - `convergence_delta_density`: if provided, the spinup exits early when the absolute
   change in depth-averaged density between consecutive cycles is less than this
   value [kg/m³]. When `nothing` (default) no convergence check is performed and the
@@ -44,9 +48,10 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         output_frequency=:last
     )
 
-    # Resolve convergence_depth (default = mp.column_zmin)
+    # A fraction of the column depth, which is fixed for the whole run.
     initial_depth = sum(parent(profile[:dz]))
-    cdepth = convergence_depth === nothing ? Float64(mp.column_zmin) : Float64(convergence_depth)
+    cdepth = convergence_depth === nothing ? SPINUP_CONVERGENCE_DEPTH_FRACTION * initial_depth :
+             Float64(convergence_depth)
 
     if cdepth > initial_depth
         error("convergence_depth ($cdepth m) exceeds initial column depth ($initial_depth m)")

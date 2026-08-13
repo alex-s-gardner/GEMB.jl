@@ -10,16 +10,19 @@ const TIME_STEP_HOURS = 3
 function build_inputs()
     ds = simulate_climate_forcing("test_1", TIME_STEP_HOURS)  # DimStack
     cf = GEMB.initialize_forcing(ds)                          # convert to ClimateForcing
-    mp = ModelParameters(output_frequency=:daily)
-    profile = initialize_profile(mp, cf)
     cf_clim = forcing_climatology(cf)
-    mp_spinup = ModelParameters(output_frequency=:last)
-    return cf, mp, profile, cf_clim, mp_spinup
+    # `initialize_profile` returns (profile, mp); with depth_autoadjust=true (default)
+    # an inferred-ice column gets shallower limits in the returned mp, so rebind it and
+    # use it for both spinup and the transient run. `gemb_spinup` forces
+    # output_frequency=:last internally, so no separate spinup params object is needed.
+    mp = ModelParameters(output_frequency=:daily)
+    profile, mp = initialize_profile(mp, cf)
+    return cf, mp, profile, cf_clim
 end
 
 # Run the representative hot path: 1994-2025 3-hourly simulation with 75-year spinup.
-function run_hotpath(profile, cf_clim, mp_spinup, cf, mp)
-    profile_spunup = gemb_spinup(profile, cf_clim, mp_spinup; max_iterations=75)
+function run_hotpath(profile, cf_clim, cf, mp)
+    profile_spunup = gemb_spinup(profile, cf_clim, mp; max_iterations=75)
     output = gemb(profile_spunup, cf, mp)
     return output
 end
@@ -64,10 +67,10 @@ function compare_snapshots(a, b)
     return maxrel, worst
 end
 
-cf, mp, profile, cf_clim, mp_spinup = build_inputs()
+cf, mp, profile, cf_clim = build_inputs()
 
 println("Warmup...")
-out = run_hotpath(profile, cf_clim, mp_spinup, cf, mp)
+out = run_hotpath(profile, cf_clim, cf, mp)
 snap = snapshot(out)
 println("Numerical snapshot:")
 print_snapshot(snap)
@@ -94,7 +97,7 @@ elseif isfile(SNAP_FILE)
 end
 
 println("\nBenchmarking hot path (1994-2025 3-hourly simulation with 75-year spinup)...")
-b = @benchmark run_hotpath($profile, $cf_clim, $mp_spinup, $cf, $mp) samples=7 seconds=120 evals=1
+b = @benchmark run_hotpath($profile, $cf_clim, $cf, $mp) samples=7 seconds=120 evals=1
 @printf("  min    = %.3f s\n", minimum(b.times)/1e9)
 @printf("  median = %.3f s\n", median(b.times)/1e9)
 @printf("  allocs = %d\n", b.allocs)

@@ -1,13 +1,21 @@
 """
-    gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
+              n_target=length(state.dz), z_target=sum(state.dz))
 
 Perform a single time-step of the GEMB model.
 Matches MATLAB's `gemb_core.m`.
 
+The column is returned with exactly `n_target` cells summing to exactly `z_target` metres,
+so both are invariant across the whole run (see `grid_ops.jl` for the two controllers that
+enforce them). Cell count is restored by [`manage_layer_thickness`](@ref) at step 9; column depth is
+pinned at step 11, *after* [`calculate_density`](@ref), which is the last thing in the
+timestep to change `dz`.
+
 Returns `(state, flux)` where `state` is the updated column state and
 `flux` contains energy/mass budget terms for output accumulation.
 """
-function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
+    n_target::Int=length(state.dz), z_target::Float64=sum(state.dz))
     # Destructure state - arrays are mutated in-place by physics functions.
     # This is safe because gemb_driver rebinds state to new_state after each call.
     temperature = state.temperature
@@ -75,11 +83,13 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     densification_from_melt = densification_from_melt - sum(dz)
 
-    # 9. Manage the layering
+    # 9. Return cells to their thickness bands and restore the cell count to n_target
+    #    (exactly conservative)
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, albedo, albedo_diffuse, mass_added, E_added =
-        manage_layers(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, albedo, albedo_diffuse, mp, verbose)
+        grain_sphericity, albedo, albedo_diffuse, E_added =
+        manage_layer_thickness(temperature, dz, density, water, grain_radius,
+            grain_dendricity, grain_sphericity, albedo, albedo_diffuse, mp, verbose;
+            n_target=n_target)
 
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)
@@ -87,6 +97,16 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     dz, density = calculate_density(temperature, dz, density, grain_radius, cfs, mp)
 
     densification_from_compaction = densification_from_compaction - sum(dz)
+
+    # 11. Pin the total column depth to z_target. This runs last because
+    # `calculate_density` rebuilds `dz` from the conserved cell mass and is the final
+    # step to change column thickness. The adjustment is the model's only basal mass and
+    # energy flux, and is signed: negative `mass_added` under accumulation (material
+    # leaves through the base), positive under net ablation (basal accretion).
+    cols = column_state(temperature, dz, density, water, grain_radius,
+        grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+    mass_added, trim_energy = trim_bottom!(cols, z_target)
+    E_added += trim_energy
 
     if verbose
         dt = cfs.dt
@@ -121,6 +141,28 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         if abs(temperature[end] - T_bottom) > 1e-3
             error("temperature of bottom grid cell changed")
         end
+
+        for (name, a) in pairs(cols)
+            if length(a) != n_target
+                error("state field $(name) has length $(length(a)), expected $(n_target)")
+            end
+        end
+    end
+
+    # Grid invariants. Output arrays are sized exactly `n_target` rows on the strength of these
+    # two equalities, so a violation is a wrong-shaped write. Checked every timestep, not just
+    # on output steps: under `output_frequency=:last` (which `gemb_spinup` forces) the latter
+    # would hide a violation for an entire spinup cycle.
+    if length(dz) != n_target
+        error("gemb_core: column length not conserved: $(length(dz)) != $(n_target). " *
+              "The count controller (enforce_column_length!) did not restore the fixed " *
+              "cell count.")
+    end
+    z_err = sum(dz) - z_target
+    if abs(z_err) > 1e-9
+        error("gemb_core: column depth not conserved: Σdz - z_target = $(z_err) m " *
+              "(target $(z_target) m). The mass controller (trim_bottom!) did not pin the " *
+              "fixed column depth.")
     end
 
     new_state = (

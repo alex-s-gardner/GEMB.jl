@@ -128,6 +128,16 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. -e 'using Pkg; Pkg.add("PackageName")'
 ```
 
+### Benchmarking
+
+`bench/opt_bench.jl` is the canonical performance + numerical-fingerprint driver
+(used by the `julia_optimize` skill). It runs the representative hot path — a
+75-year climatological spinup (`gemb_spinup` on `forcing_climatology(cf)`)
+followed by a multi-decade 3-hourly transient run — and emits a numerical
+snapshot (per-field sum/min/max/count) so optimizations can be checked for
+bit-level equivalence against a baseline. It needs the `GEMB_ClimateForcing.jl`
+companion checked out as a sibling (same as the test target).
+
 ## Architecture
 
 ### Core Structure
@@ -152,13 +162,16 @@ GEMB follows a modular physics-based architecture:
    - `calculate_accumulation()`: Snow/rain addition
    - `calculate_melt()`: Melt, runoff, and refreezing
    - `calculate_density()`: Non-melt densification
-   - `manage_layers()`: Grid management (merging/splitting)
+   - `manage_layer_thickness()`: Merge/split cells into their thickness bands; restore the fixed cell count
 
 4. **Integration**:
    - `gemb_core(state, cfs, mp, verbose)`: Single timestep integration calling all physics modules. Accepts a `state` NamedTuple and returns `(state, flux)` where `state` carries forward and `flux` contains budget terms for output
    - `gemb(profile, climate_forcing, mp)` in `gemb_driver.jl`: Main driver function that loops over time, accumulates output
 
-5. **Utilities**:
+5. **Plotting (extension)**:
+   - `gemb_plot_output()` is exported but its methods live in `ext/GEMBMakieExt.jl`, a package extension weak-dep'd on `Makie` (triggered by `CairoMakie`/`GLMakie`/`WGLMakie`). Calling it without a Makie backend loaded errors with a load hint. `src/plotting.jl` holds the core (backend-agnostic) plotting stub/exports.
+
+6. **Utilities**:
    - `gemb_spinup()` in `spinup.jl`: Cycles forcing to reach equilibrium (for multi-millennial spinups). Returns the final equilibrated profile and all spinup output.
    - `gemb_profile()`, `gemb_interp()` in `profile_extract.jl`: Extract/interpolate profiles at specific times/depths
    - `surface_timeseries()`: Extract surface values from column arrays
@@ -191,7 +204,7 @@ Initialize Profile → Time Loop [
 - **ClimateForcing Indexing**: `ClimateForcing` is an `AbstractDimStack`, so `climate_forcing[Ti(a .. b)]` / `climate_forcing[Ti=At(t)]` slice it like any DimStack and return a `ClimateForcing`. `ClimateForcingStep` (the per-timestep scalar struct) is built separately in the `gemb` hot loop by integer-indexing the unwrapped forcing vectors. Time-varying model parameters (black carbon, cloud properties) are stored as `FillArrays.Fill`-backed DimArrays, ready to become truly time-varying
 - **Immutable Parameters**: `ModelParameters` is immutable; create new instance for modifications
 - **Energy/Mass Conservation**: When `verbose=true`, `gemb_core()` validates conservation laws each timestep
-- **Output Padding**: Profile outputs include padding (`output_padding` parameter) to accommodate column growth without reallocation
+- **Fixed-length column**: The column holds a constant cell count and a constant total depth (`column_depth`) for the whole run, enforced each timestep by the two controllers in `grid_ops.jl`. Profile outputs are sized exactly to the column and top-justified (surface at row 1), so there is no padding and no NaN scanning
 
 ### Test Structure
 

@@ -91,8 +91,13 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
                                           mp.output_frequency == :weekly ? "week" : "day"). " *
               "Returning empty output."
     end
-    column_length = length(state.dz)
-    profile_size = column_length + mp.output_padding
+    # The column now holds a fixed cell count and a fixed total depth for the whole run
+    # (enforced each timestep by the two controllers in `grid_ops.jl`), so the profile
+    # output is sized exactly to the column — no padding, no NaN rows, and no possibility
+    # of overflow.
+    profile_size = length(state.dz)
+    z_target = sum(state.dz)
+    _assert_grid_feasible(state.dz, z_target, mp)
 
     # Create output time coordinate and dimensions
     ti_dim = Ti(out_time)
@@ -155,7 +160,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     # barrier specializes on their real element/dimension types and the inner
     # loop becomes fully type-stable.
     _gemb_time_loop!(output, state, model_parameters, mp, verbose,
-        times, output_times, profile_size, Float64(dt_int),
+        times, output_times, profile_size, z_target, Float64(dt_int),
         parent(climate_forcing.temperature_air),
         parent(climate_forcing.pressure_air),
         parent(climate_forcing.precipitation),
@@ -179,6 +184,56 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     return output
 end
 
+"""
+    _assert_grid_feasible(dz, z_target, mp)
+
+Check at startup that the column the two grid controllers are being handed is one they can
+actually hold: at least two cells (the thermal solve indexes `temperature[2]`), all
+thicknesses positive and finite, a positive target depth, and — the substantive check —
+that `z_target` lies inside `[Σdzmin_i, Σdzmax_i]`, the depth range the `N` cells can span
+at their band limits.
+
+That last condition is what makes the two controllers compatible. The count controller
+holds the cell count at `N` while keeping cells inside their bands; the mass controller
+holds total depth at `z_target`. If `z_target` fell outside the band-limited range, no
+admissible `N`-cell grid would have the required depth and the two controllers would fight
+indefinitely — the count controller pushing cells toward their bands, the mass controller
+pulling total depth away from what those bands permit.
+
+Stable only because [`column_bands!`](@ref) references each cell's band to its **depth** (see
+there for why). The range then holds steady over a run — measured on the default grid, `Σdzmin`
+118–127 m and `Σdzmax` 355–382 m against a 254.6 m target — so the check can be trusted rather
+than rejecting legitimate configurations after the first cycle.
+"""
+function _assert_grid_feasible(dz::Vector{Float64}, z_target::Float64, mp::ModelParameters)
+    n = length(dz)
+    if n < 2
+        error("gemb: the column has $n cell(s); at least 2 are required (the thermal " *
+              "solve differences adjacent cells). Check column_depth / column_dztop.")
+    end
+    if !all(d -> isfinite(d) && d > 0.0, dz)
+        error("gemb: the initial column contains a non-positive or non-finite cell " *
+              "thickness. Every dz must be finite and > 0.")
+    end
+    if !(isfinite(z_target) && z_target > 0.0)
+        error("gemb: the fixed column depth must be finite and positive, got $z_target m.")
+    end
+
+    dzmin = Vector{Float64}(undef, n)
+    dzmax = Vector{Float64}(undef, n)
+    column_bands!(dzmin, dzmax, dz, mp)
+    z_lo = sum(dzmin)
+    z_hi = sum(dzmax)
+    if !(z_lo - D_TOLERANCE <= z_target <= z_hi + D_TOLERANCE)
+        error("gemb: the fixed column depth ($(z_target) m) is outside the range $n cells " *
+              "can span at their band limits ([$(z_lo), $(z_hi)] m), so no admissible " *
+              "grid has the required depth and the count and depth controllers cannot " *
+              "both be satisfied. Adjust column_depth / column_dzmin / column_dzmax / " *
+              "column_ztop / column_zy.")
+    end
+    return nothing
+end
+
 # Extract spinup / climatology provenance from the initial `profile` for stamping
 # onto the `gemb` output. `gemb_spinup` attaches a NamedTuple of `spinup_*` /
 # `climatology_*` keys; a profile straight from `initialize_profile` (no spinup)
@@ -198,16 +253,21 @@ end
 
 """
     _gemb_time_loop!(output, state, model_parameters, mp, verbose, times,
-                     output_times, profile_size, dt_f, <forcing arrays/scalars>)
+                     output_times, profile_size, z_target, dt_f, <forcing arrays/scalars>)
 
 Function-barrier inner loop for [`gemb`](@ref). Receives the forcing series as
 concrete arrays (already unwrapped with `parent`) so the compiler specializes on
 their true types, eliminating the per-timestep runtime dispatch that indexing
 the `::DimArray`-typed `ClimateForcing` fields would otherwise incur. Mutates
-`output` in place; numerically identical to the previous inline loop.
+`output` in place.
+
+`profile_size` doubles as the fixed cell count and the profile output row count;
+`z_target` is the fixed total column depth. Both are passed to every `gemb_core` call and
+hold at every timestep boundary.
 """
 function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
-    times::Vector{DateTime}, output_times, profile_size::Int, dt_f::Float64,
+    times::Vector{DateTime}, output_times, profile_size::Int, z_target::Float64,
+    dt_f::Float64,
     f_temperature_air::AbstractVector, f_pressure_air::AbstractVector,
     f_precipitation::AbstractVector, f_wind_speed::AbstractVector,
     f_shortwave_downward::AbstractVector, f_longwave_downward::AbstractVector,
@@ -270,6 +330,17 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_count = 0
     thickness_added_total = 0.0
 
+    # Whole-run mass budget (verbose only). `gemb_core` checks the budget every timestep,
+    # but only against that timestep's own terms — a bias far below the per-step tolerance
+    # would pass every step and still accumulate over a multi-decade run. These run-level
+    # accumulators are never reset by the output interval, so they close the budget across
+    # the entire run. Reported once at the end rather than per timestep.
+    run_mass_initial = verbose ? first(column_mass_energy(state)) : 0.0
+    run_precipitation = 0.0
+    run_runoff = 0.0
+    run_ec = 0.0
+    run_mass_added = 0.0
+
     # Output writes occur in chronological order, matching the sorted output
     # time axis, so a single advancing index tracks the output column.
     oi = 0
@@ -297,8 +368,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             f_shortwave_downward_diffuse[i],
             f_cloud_fraction[i])
 
-        # Run physics for single timestep
-        state, flux = gemb_core(state, forcing_step, model_parameters, verbose)
+        # Run physics for single timestep, holding the column at its fixed cell count
+        # and fixed total depth.
+        state, flux = gemb_core(state, forcing_step, model_parameters, verbose;
+            n_target=profile_size, z_target=z_target)
 
         # Sum total thickness
         thickness_added_total += flux.mass_added / density_ice
@@ -327,6 +400,13 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
         cum_count += 1
+
+        if verbose
+            run_precipitation += forcing_step.precipitation
+            run_runoff += flux.runoff
+            run_ec += state.evaporation_condensation
+            run_mass_added += flux.mass_added
+        end
 
         # Store output at designated intervals
         t = times[i]
@@ -357,26 +437,29 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_rain[oi] = cum_rain
             end
 
-            # Profile data (stored from bottom up, matching MATLAB convention)
+            # Profile data. The column is a fixed `profile_size` cells (guaranteed by the
+            # grid controllers), so rows map one-to-one onto cells with the surface at row
+            # 1 and no padding. Consumers can index rows directly instead of scanning for
+            # the first non-NaN row.
             m = length(state.dz)
             @inbounds out_vpl[oi] = m
 
-            if m > profile_size
-                error("Column length ($m) exceeds output array size ($profile_size). Increase output_padding.")
+            if m != profile_size
+                error("Column length ($m) does not match the fixed profile size " *
+                      "($profile_size). The grid controllers in manage_layer_thickness / " *
+                      "trim_bottom! should make this impossible.")
             end
 
-            offset = profile_size - m
             @inbounds for k in 1:m
-                r = offset + k
-                out_temperature[r, oi] = state.temperature[k]
-                out_dz[r, oi] = state.dz[k]
-                out_density[r, oi] = state.density[k]
-                out_water[r, oi] = state.water[k]
-                out_grain_radius[r, oi] = state.grain_radius[k]
-                out_grain_dendricity[r, oi] = state.grain_dendricity[k]
-                out_grain_sphericity[r, oi] = state.grain_sphericity[k]
-                out_albedo[r, oi] = state.albedo[k]
-                out_albedo_diffuse[r, oi] = state.albedo_diffuse[k]
+                out_temperature[k, oi] = state.temperature[k]
+                out_dz[k, oi] = state.dz[k]
+                out_density[k, oi] = state.density[k]
+                out_water[k, oi] = state.water[k]
+                out_grain_radius[k, oi] = state.grain_radius[k]
+                out_grain_dendricity[k, oi] = state.grain_dendricity[k]
+                out_grain_sphericity[k, oi] = state.grain_sphericity[k]
+                out_albedo[k, oi] = state.albedo[k]
+                out_albedo_diffuse[k, oi] = state.albedo_diffuse[k]
             end
 
             # Reset accumulators
@@ -399,6 +482,29 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_precipitation = 0.0
             cum_count = 0
         end
+    end
+
+    # Whole-run mass budget. Everything that entered the column (precipitation, basal flux,
+    # condensation) minus everything that left (runoff, evaporation) must equal the change
+    # in column mass. Tolerance scales with the total mass turned over: the per-step 1e-3
+    # absolute check in `gemb_core` is the strict one, and this looks for accumulated bias
+    # across a run of arbitrary length, where floating-point summation error grows with the
+    # number of steps.
+    if verbose
+        run_mass_final = first(column_mass_energy(state))
+        supplied = run_precipitation + run_ec + run_mass_added - run_runoff
+        residual = (run_mass_final - run_mass_initial) - supplied
+        turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +
+                   abs(run_mass_added) + abs(run_mass_initial)
+        tol = max(1e-6, 1e-9 * turnover)
+        if abs(residual) > tol
+            error("gemb: whole-run mass budget does not close: residual = $(residual) " *
+                  "kg m-2 (tolerance $(tol)). Column mass changed by " *
+                  "$(run_mass_final - run_mass_initial); sources supplied $(supplied) " *
+                  "(precipitation $(run_precipitation), basal $(run_mass_added), " *
+                  "evap/cond $(run_ec), runoff $(run_runoff)).")
+        end
+        @info "GEMB whole-run mass budget closed" residual basal_flux=run_mass_added
     end
 
     return output

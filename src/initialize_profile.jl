@@ -7,10 +7,9 @@
 Initialize a GEMB firn column profile as a DimStack.
 
 Returns a tuple `(profile, mp)`. The returned `mp` equals the input parameters
-unless `depth_autoadjust` shrinks the column limits (see below), in which case it
-is a modified copy — pass this returned `mp` to [`gemb`](@ref) / [`gemb_spinup`](@ref)
-so the adjusted `column_zmax`/`column_zmin` are honored at runtime by
-[`manage_layers`](@ref) as well as in the initial grid.
+unless `depth_autoadjust` shrinks the grid depth (see below), in which case it is a
+modified copy — pass this returned `mp` to [`gemb`](@ref) / [`gemb_spinup`](@ref) so the
+adjusted `column_depth` is honored at runtime as well as in the initial grid.
 
 By default the density profile is initialized to the **Herron–Langway steady
 state** ([`herron_langway_steady_state`](@ref)) derived from the mean annual
@@ -39,10 +38,9 @@ the melt point (`min(T_mean, 273.15)`).
   `true`); set `false` to force the legacy pure-ice initialization.
 - `depth_autoadjust`: when `true` (default) and the column is inferred to be ice
   (the ablation-zone / pure-ice regime — same condition that fills the column with
-  `mp.density_ice`), shrink the column limits to `column_zmax = 25 m` and
-  `column_zmin = 20 m` (a deep firn grid is unnecessary for solid ice). The
-  adjusted values are returned in `mp`. Set `false` to keep the configured limits
-  (required for MATLAB-fidelity and fixed-baseline regression tests).
+  `mp.density_ice`), shrink the grid to `column_depth = 25 m` (a deep firn grid is
+  unnecessary for solid ice). The adjusted value is returned in `mp`. Set `false` to
+  keep the configured depth (required for MATLAB-fidelity and regression tests).
 - `constant_density`: when `true`, initialize the density profile to pure ice
   (`mp.density_ice`) everywhere, bypassing the steady-state/ablation regime
   logic (default `false`).
@@ -79,14 +77,13 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     melt = annual_pdd_melt(cf; ddf_snow=ddf_snow)        # [kg m-2 yr-1]
     is_ice = constant_density || !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
 
-    # For an ice column there is no deep firn to resolve, so shrink the column
-    # limits (column_zmax/column_zmin) to a shallow grid. The rebuilt mp is
-    # returned so gemb/manage_layers honor the same limits at runtime.
+    # For an ice column there is no deep firn to resolve, so shrink the grid depth. The
+    # rebuilt mp is returned because column_depth fixes the run's column depth.
     if depth_autoadjust && is_ice
         mp = ModelParameters(;
             (f => getfield(mp, f) for f in fieldnames(ModelParameters)
-                 if f ∉ (:column_zmax, :column_zmin))...,
-            column_zmax=25.0, column_zmin=20.0)
+                 if f != :column_depth)...,
+            column_depth=25.0)
     end
 
     # Initialize grid
@@ -174,7 +171,7 @@ function initialize_grid(mp::ModelParameters)
     gp0 = mp.column_dztop
     z0 = mp.column_ztop
 
-    while mp.column_zmax > (z0 + D_TOLERANCE)
+    while mp.column_depth > (z0 + D_TOLERANCE)
         dz_new = gp0 * mp.column_zy
         push!(dzB, dz_new)
         gp0 = dz_new

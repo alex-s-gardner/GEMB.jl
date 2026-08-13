@@ -30,16 +30,16 @@ function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::Abst
     # Preallocate output
     A_regularized = fill(NaN, Z(z_target), ti_dim)
 
-    # Loop through each timestep
+    # Loop through each timestep. GEMB profile output is top-justified with a fixed row
+    # count, so every row is a real cell; the finite check only guards against genuinely
+    # missing data (e.g. an output array sliced before it was fully written).
     for k in 1:n_times
-        # Get finite mask for this column
-        isf = isfinite.(A[:, k])
+        isf = isfinite.(A[:, k]) .& isfinite.(view(z_center, :, k))
 
-        if sum(isf) < 2
+        if count(isf) < 2
             continue
         end
 
-        # Source data for this column (only finite values)
         z_src = z_center[isf, k]
         a_src = A[isf, k]
 
