@@ -125,7 +125,8 @@ function _freq_word(dt_h::Real)
 end
 
 # Human-readable forcing provenance from the output stack metadata, e.g.
-# "ERA5-Land @ 72.58°N, 38.46°W, 3316 m, +100 m". Every piece is optional: a stack with
+# "ERA5-Land @ 72.58°N 38.46°W 3216 m, +100 m" — the elevation is the forcing's own
+# surface and the trailing Δ is the offset applied to reach the target. Every piece is optional: a stack with
 # no provenance metadata yields "" and the banner renders as it did before.
 function _provenance_str(md)
     md === nothing && return ""
@@ -136,18 +137,26 @@ function _provenance_str(md)
     ds = getmd("dataset")
     ds isa AbstractString && !isempty(ds) && push!(parts, ds)
 
+    off = getmd("elevation_offset")
     lat, lon = getmd("latitude"), getmd("longitude")
     if lat isa Real && lon isa Real && isfinite(lat) && isfinite(lon)
         lats = string(round(abs(lat), digits=2), "°", lat >= 0 ? "N" : "S")
         lons = string(round(abs(lon), digits=2), "°", lon >= 0 ? "E" : "W")
-        coord = "$lats, $lons"
-        # Absolute (orthometric) target elevation, its own field right after longitude.
+        coord = "$lats $lons"
+        # Surface elevation the climate forcing itself represents — what the target was
+        # lapse-rate adjusted *from*. Taken from the source grid's own elevation when the
+        # stack recorded it, otherwise target elevation minus the cumulative offset. Sits
+        # with the dataset/coordinates; the Δ that follows gives the target.
         elev = getmd("elevation")
-        elev isa Real && isfinite(elev) && (coord *= ", " * string(round(Int, elev), " m"))
+        zc = getmd("elevation_reanalysis")
+        if !(zc isa Real && isfinite(zc)) && elev isa Real && isfinite(elev) &&
+           off isa Real && isfinite(off)
+            zc = elev - off
+        end
+        zc isa Real && isfinite(zc) && (coord *= " " * string(round(Int, zc), " m"))
         isempty(parts) ? push!(parts, coord) : (parts[end] *= " @ " * coord)
     end
 
-    off = getmd("elevation_offset")
     if off isa Real && isfinite(off) && abs(off) > 0
         push!(parts, string(off > 0 ? "+" : "", round(off, digits=1), " m"))
     end
@@ -401,7 +410,7 @@ function _header!(pos, output, times, z_center, tcols, title)
         strided ? "  │  heatmaps strided to $(length(tcols)) cols" : "",
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
     )
-    head = title == "" ? "GEMB diagnostic output" : title
+    head = title == "" ? "GEMB firn model output" : title
     Label(pos, rich(head * "\n", fontsize=20, font=:bold,
             rich(meta, fontsize=11, color=:gray40, font=:regular));
         justification=:left, halign=:left, padding=(4, 0, 6, 0))
