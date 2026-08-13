@@ -125,7 +125,7 @@ function _freq_word(dt_h::Real)
 end
 
 # Human-readable forcing provenance from the output stack metadata, e.g.
-# "ERA5-Land @ 72.58°N, 38.46°W, +100 m". Every piece is optional: a stack with
+# "ERA5-Land @ 72.58°N, 38.46°W, 3316 m, +100 m". Every piece is optional: a stack with
 # no provenance metadata yields "" and the banner renders as it did before.
 function _provenance_str(md)
     md === nothing && return ""
@@ -141,6 +141,9 @@ function _provenance_str(md)
         lats = string(round(abs(lat), digits=2), "°", lat >= 0 ? "N" : "S")
         lons = string(round(abs(lon), digits=2), "°", lon >= 0 ? "E" : "W")
         coord = "$lats, $lons"
+        # Absolute (orthometric) target elevation, its own field right after longitude.
+        elev = getmd("elevation")
+        elev isa Real && isfinite(elev) && (coord *= ", " * string(round(Int, elev), " m"))
         isempty(parts) ? push!(parts, coord) : (parts[end] *= " @ " * coord)
     end
 
