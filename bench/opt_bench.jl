@@ -1,5 +1,6 @@
 # Optimization benchmark + numerical snapshot driver (skill: julia_optimize)
 using GEMB
+using GEMB_ClimateForcing  # synthetic forcing lives in the companion package
 using BenchmarkTools
 using Statistics
 using Printf
@@ -7,7 +8,8 @@ using Printf
 const TIME_STEP_HOURS = 3
 
 function build_inputs()
-    cf = simulate_climate_forcing("test_1", TIME_STEP_HOURS)
+    ds = simulate_climate_forcing("test_1", TIME_STEP_HOURS)  # DimStack
+    cf = GEMB.initialize_forcing(ds)                          # convert to ClimateForcing
     mp = ModelParameters(output_frequency=:daily)
     profile = initialize_profile(mp, cf)
     cf_clim = forcing_climatology(cf)
