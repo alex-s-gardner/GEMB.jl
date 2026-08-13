@@ -23,6 +23,10 @@ Where melt is expected to dominate — annual potential melt (a positive-degree-
 estimate, [`annual_pdd_melt`](@ref)) reaches `melt_accum_ratio` of the annual
 accumulation — or accumulation is non-positive, no firn forms and the column is
 initialized to **pure ice** (`mp.density_ice`), matching the historical behavior.
+An ice column is also initialized with non-dendritic, faceted, large grains
+(`grain_dendricity = 0`, `grain_sphericity = 0`, `grain_radius = 2.5` mm) and ice
+albedo (`mp.albedo_ice`); the firn/snow regime keeps fresh-snow grains and
+`mp.albedo_snow`.
 The Herron–Langway / Arthern firn models are calibrated for the cold, dry-snow
 zone (mean-annual T ≈ 247–257 K, accumulation ≈ 130–1040 kg m-2 yr-1; Arthern et
 al. 2010) and are not valid under significant melt.
@@ -113,6 +117,17 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Create Z dimension
     zdim = Z(1:m)
 
+    # Grain and albedo initialization is regime-dependent. An ice column is
+    # non-dendritic (dendricity 0), faceted (sphericity 0), large-grained
+    # (grain_radius 2.5 mm = 5 mm diameter, the non-spherical cap in
+    # calculate_grain_size), and low-albedo (mp.albedo_ice). Firn/snow starts as
+    # fresh dendritic snow with snow albedo. grain_radius is 2.5 mm in both cases.
+    if is_ice
+        gdn0, gsp0, re0, alb0 = 0.0, 0.0, 2.5, mp.albedo_ice
+    else
+        gdn0, gsp0, re0, alb0 = 1.0, 0.5, 2.5, mp.albedo_snow
+    end
+
     # Note: `z_center` is intentionally not stored — it is a pure function of `dz`
     # (via `dz2z`) and is recomputed on demand, so the profile stays a clean slice
     # of the `gemb` output layout (which likewise carries `dz`, not `z_center`).
@@ -121,11 +136,11 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         temperature=DimArray(fill(T_init, m), (zdim,)),
         density=DimArray(density, (zdim,)),
         water=DimArray(zeros(m), (zdim,)),
-        grain_radius=DimArray(fill(2.5, m), (zdim,)),
-        grain_dendricity=DimArray(ones(m), (zdim,)),
-        grain_sphericity=DimArray(fill(0.5, m), (zdim,)),
-        albedo=DimArray(fill(mp.albedo_snow, m), (zdim,)),
-        albedo_diffuse=DimArray(fill(mp.albedo_snow, m), (zdim,)),
+        grain_radius=DimArray(fill(re0, m), (zdim,)),
+        grain_dendricity=DimArray(fill(gdn0, m), (zdim,)),
+        grain_sphericity=DimArray(fill(gsp0, m), (zdim,)),
+        albedo=DimArray(fill(alb0, m), (zdim,)),
+        albedo_diffuse=DimArray(fill(alb0, m), (zdim,)),
     ))
 
     return profile, mp
