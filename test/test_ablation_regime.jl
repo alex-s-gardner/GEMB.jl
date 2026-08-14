@@ -14,32 +14,53 @@
 # and the whole-run mass budget are enforced rather than merely exercised.
 
 @testset "Ablation regime" begin
-    # Warm, melt-dominated site with a diurnal-ish seasonal cycle: enough positive degree
-    # days that `initialize_profile` infers ice (and `depth_autoadjust` shrinks the column
-    # to the shallow ~25 m ice grid), with modest snowfall so accumulation cannot keep up.
+    # Warm, melt-dominated site with a seasonal cycle: enough melt that the net annual
+    # mass balance is negative, with modest snowfall so accumulation cannot keep up.
+    # `initialize_profile` therefore never buries anything and returns the exposed ice
+    # column on a grid sized to the thermal wave rather than to nonexistent firn.
     n = 365 * 3
     time = DateTime(2000, 1, 1) .+ Day.(0:n-1)
     doy = collect(1:n)
     temp = 276.15 .+ 8.0 .* cos.(2π .* doy ./ 365.0 .- π)
 
+    # Incoming longwave has to be realistic for a melting surface: at 260 W m-2 the
+    # surface energy balance never reaches the melt point (εσT⁴ ≈ 306 W m-2 there),
+    # so this site had *zero* melt despite 276 K air, and only registered as
+    # ablating through a since-corrected rainfall term in the balance.
     cf = initialize_forcing(
         time, temp, fill(85000.0, n), fill(0.3, n), fill(4.0, n),
-        fill(220.0, n), fill(260.0, n), fill(400.0, n);
+        fill(220.0, n), fill(310.0, n), fill(400.0, n);
         temperature_air_mean=276.15, wind_speed_mean=4.0,
         precipitation_mean=0.3 * 365.25)
 
-    mp = ModelParameters(output_frequency=:daily)
-    profile, mp = initialize_profile(mp, cf)
+    mp_config = ModelParameters(output_frequency=:daily)
+    profile, mp = initialize_profile(mp_config, cf)
 
-    # The regime was actually detected: pure ice on the autoadjusted shallow grid.
+    # The regime emerges as the degenerate limit of the marcher, not from a threshold:
+    # nothing is buried, so the column is ice throughout.
     @test all(parent(profile[:density]) .== mp.density_ice)
-    @test mp.column_depth == 25.0
+    @test all(parent(profile[:water]) .== 0.0)
+
+    # No firn to resolve, so the derived depth collapses to the annual-thermal-wave
+    # floor — far shallower than the configured default, but not degenerate.
+    @test mp.column_depth < 0.2 * mp_config.column_depth
+    @test mp.column_depth >= mp_config.column_ztop
+
+    # The escape hatch still yields the old exact pure-ice column on the *configured*
+    # grid, which is what the MATLAB-fidelity sites rely on.
+    prof_const, mp_const = initialize_profile(mp_config, cf;
+        constant_density=true, constant_temperature=true)
+    @test mp_const.column_depth == mp_config.column_depth
+    @test all(parent(prof_const[:density]) .== mp_config.density_ice)
+    @test all(parent(prof_const[:temperature]) .== cf.temperature_air_mean)
 
     N = length(profile[:dz])
     Z_fixed = sum(profile[:dz])
 
-    # Melt must genuinely exceed accumulation, or this is not an ablation test.
-    @test annual_pdd_melt(cf) > cf.precipitation_mean
+    # Net annual balance must genuinely be negative, or this is not an ablation test.
+    cs = GEMB.initialize_climate_summary(cf, mp)
+    @test cs.balance < 0.0
+    @test cs.melt > cs.accumulation
 
     out = gemb(profile, cf, mp; verbose=true)
 

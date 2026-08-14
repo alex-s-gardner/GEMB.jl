@@ -36,10 +36,10 @@ using GEMB_ClimateForcing
     # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)
 
-    # Initialize profile. steady_state=false uses the pure-ice initialization
+    # Initialize profile. Both escape-hatch flags give the pure-ice initialization
     # that the reference values below were generated with.
-    # depth_autoadjust=false keeps the deep column the reference baseline used.
-    profile, _ = initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false)
+    # and keep the deep column the MATLAB reference baseline used.
+    profile, _ = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
 
     # Create climatological forcing and spin up
     cf_climatology = GEMB.forcing_climatology(cf)

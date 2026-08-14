@@ -30,7 +30,7 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # constants
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
-    density_phc = 830.0                # Pore closeoff density
+    density_phc = DENSITY_PORE_CLOSEOFF  # Pore closeoff density
     albedo_ice_max = 0.58              # maximum ice albedo, from Lefebre, 2003
     albedo_ice_min = mp.albedo_ice     # minimum ice albedo
     albedo_snow_min = 0.65             # minimum snow albedo, from Alexander 2014
@@ -174,7 +174,8 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
         -(c1^0.55) / (0.16 + 0.6 * S1^0.5 + (1.8 * c1^0.6) * (S1^(-0.25))))
 
     # Two layer albedo parameterization
-    lice_first = something(findfirst(d -> d >= 830 - d_tolerance, density), length(density) + 1)
+    lice_first = something(findfirst(d -> d >= DENSITY_PORE_CLOSEOFF - d_tolerance, density),
+        length(density) + 1)
     z1 = 0.0
     @inbounds @simd for i in 1:(lice_first-1)
         z1 += dz[i] * density[i]

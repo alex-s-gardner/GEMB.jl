@@ -53,14 +53,13 @@ mp = initialize_parameters(output_frequency=:daily)
 # Create climatological forcing for spinup
 cf_spinup = forcing_climatology(cf)
 
-# Initialize the firn column. Returns (profile, mp); with depth_autoadjust=true
-# (default) an inferred-ice (ablation-zone) column gets shallower limits in the
-# returned mp, which we rebind so spinup and gemb honor them.
+# Initialize the firn column. Returns (profile, mp); the returned mp carries the
+# climate-derived column limits, which we rebind so spinup and gemb honor them.
 profile, mp = initialize_profile(mp, cf_spinup)
 
 # Spin up for 100 years to reach quasi-steady state. gemb_spinup internally forces
 # output_frequency=:last, so pass the mp returned by initialize_profile (with any
-# depth_autoadjust'd column limits) rather than a separate :last params object.
+# derived column limits) rather than a separate :last params object.
 profile_spunup = gemb_spinup(profile, cf_spinup, mp; max_iterations=100)
 
 # Run GEMB with transient forcing and the spun-up profile

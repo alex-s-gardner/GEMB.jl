@@ -1,143 +1,120 @@
 """
     initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-                       steady_state=true, depth_autoadjust=true,
-                       ddf_snow=3.0, melt_accum_ratio=0.6)
+                       constant_density=false, constant_temperature=false)
         -> (profile::DimStack, mp::ModelParameters)
 
-Initialize a GEMB firn column profile as a DimStack.
+Initialize a GEMB firn column profile as a DimStack, as a steady-state guess
+derived entirely from the climate forcing.
 
 Returns a tuple `(profile, mp)`. The returned `mp` equals the input parameters
-unless `depth_autoadjust` shrinks the grid depth (see below), in which case it is a
-modified copy — pass this returned `mp` to [`gemb`](@ref) / [`gemb_spinup`](@ref) so the
-adjusted `column_depth` is honored at runtime as well as in the initial grid.
+except for `column_depth`, which is sized to the depth this climate needs (see
+[`_adjust_column_depth`](@ref)) — pass the returned `mp` to [`gemb`](@ref) /
+[`gemb_spinup`](@ref) so the adjusted depth is honored at runtime as well as in
+the initial grid.
 
-By default the density profile is initialized to the **Herron–Langway steady
-state** ([`herron_langway_steady_state`](@ref)) derived from the mean annual
-temperature (`cf.temperature_air_mean`) and accumulation (`cf.precipitation_mean`)
-carried on the forcing. This starts a column close to equilibrium so
-[`gemb_spinup`](@ref) converges in far fewer cycles. The surface density is taken
-from [`fresh_snow_density`](@ref) for the configured `mp.new_snow_method`.
+# The scheme
 
-Where melt is expected to dominate — annual potential melt (a positive-degree-day
-estimate, [`annual_pdd_melt`](@ref)) reaches `melt_accum_ratio` of the annual
-accumulation — or accumulation is non-positive, no firn forms and the column is
-initialized to **pure ice** (`mp.density_ice`), matching the historical behavior.
-An ice column is also initialized with non-dendritic, faceted, large grains
-(`grain_dendricity = 0`, `grain_sphericity = 0`, `grain_radius = 2.5` mm) and ice
-albedo (`mp.albedo_ice`); the firn/snow regime keeps fresh-snow grains and
-`mp.albedo_snow`.
-The Herron–Langway / Arthern firn models are calibrated for the cold, dry-snow
-zone (mean-annual T ≈ 247–257 K, accumulation ≈ 130–1040 kg m-2 yr-1; Arthern et
-al. 2010) and are not valid under significant melt.
+[`initialize_climate_summary`](@ref) reduces the forcing to a handful of scalars
+in one pass: snowfall and rainfall (partitioned on
+`mp.rain_temperature_threshold`, so rain is not counted as accumulating mass), a
+surface-energy-balance melt estimate, the cold-content-capped refreeze, the fitted
+annual temperature harmonic, and the net annual mass balance
+`b = snowfall + refreeze − melt`.
 
-Temperature is initialized uniformly to the mean annual temperature, clamped to
-the melt point (`min(T_mean, 273.15)`).
+[`steady_state_profile`](@ref) then marches one parcel of snow forward in age with
+`b` as its burial rate, recording every state variable as it is buried: density
+(relaxing toward `mp.density_ice` under the run's own `mp.densification_method`),
+temperature (a damped annual wave about the latent-heat-warmed mean), grain size
+(evolved by [`calculate_grain_size`](@ref) itself) and irreducible water. Surface
+albedo comes from [`calculate_albedo`](@ref) applied to the resulting surface
+state.
+
+**There is no regime threshold.** The sign of `b` is the only discriminator, and
+it needs none: where `b ≤ 0` nothing is ever buried, the march terminates
+immediately, and the column is the ice it exposes. Sites near `b = 0` get
+intermediate profiles rather than a cliff between a deep firn column and a block
+of solid ice.
 
 # Keyword arguments
-- `steady_state`: use the Herron–Langway steady-state density profile (default
-  `true`); set `false` to force the legacy pure-ice initialization.
-- `depth_autoadjust`: when `true` (default) and the column is inferred to be ice
-  (the ablation-zone / pure-ice regime — same condition that fills the column with
-  `mp.density_ice`), shrink the grid to `column_depth = 25 m` (a deep firn grid is
-  unnecessary for solid ice). The adjusted value is returned in `mp`. Set `false` to
-  keep the configured depth (required for MATLAB-fidelity and regression tests).
-- `constant_density`: when `true`, initialize the density profile to pure ice
-  (`mp.density_ice`) everywhere, bypassing the steady-state/ablation regime
-  logic (default `false`).
-- `constant_temperature`: when `true`, initialize the temperature profile to the
-  mean annual air temperature (`cf.temperature_air_mean`) everywhere, without
-  clamping to the melt point (default `false`).
-- `ddf_snow`: snow degree-day factor [mm w.e. °C-1 d-1] for the melt estimate
-  (default 3.0).
-- `melt_accum_ratio`: initialize pure ice when `melt ≥ melt_accum_ratio × accum`
-  (default 0.6).
 
-Setting both `constant_density=true` and `constant_temperature=true` reproduces
-the MATLAB `model_initialize_profile` initialization (pure ice, uniform
-mean-annual temperature).
+Both flags exist **only to reproduce the MATLAB `model_initialize_profile`
+initialization** for the fidelity and regression tests. They are not physically
+meaningful choices for a real run — the climate-derived guess is strictly better —
+and both bypass the derived `column_depth`, keeping the configured value.
+
+- `constant_density`: fill density with `mp.density_ice`, with the matching
+  bare-ice grain state (`grain_dendricity = 0`, `grain_sphericity = 0`,
+  `grain_radius = 2.5` mm) and no pore water.
+- `constant_temperature`: fill temperature with `cf.temperature_air_mean`,
+  unclamped.
+
+Setting **both** takes a separate early-return path
+([`_uniform_ice_profile`](@ref)) that reproduces the MATLAB column exactly: pure
+ice, uniform mean-annual temperature, ice albedo, no march and no climate summary.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
   grain_dendricity, grain_sphericity, albedo, albedo_diffuse
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-    steady_state::Bool=true, depth_autoadjust::Bool=true, constant_density::Bool=false,
-    constant_temperature::Bool=false, ddf_snow::Real=3.0, melt_accum_ratio::Real=0.6)
+    constant_density::Bool=false, constant_temperature::Bool=false)
 
-    T_mean = cf.temperature_air_mean
+    T_mean = Float64(cf.temperature_air_mean)
 
     @assert T_mean > 0 "temperature_air_mean must exceed 0 K."
     if T_mean < 100
         @warn "temperature_air_mean should be in kelvin, but is below 100, suggesting an error."
     end
 
-    # Decide firn (steady-state density) vs. ablation/ice (pure ice) regime. This
-    # is computed before the grid is built so it can also drive depth_autoadjust.
-    accum = cf.precipitation_mean                        # [kg m-2 yr-1]
-    melt = annual_pdd_melt(cf; ddf_snow=ddf_snow)        # [kg m-2 yr-1]
-    is_ice = constant_density || !steady_state || accum <= 0.0 || melt >= melt_accum_ratio * accum
-
-    # For an ice column there is no deep firn to resolve, so shrink the grid depth. The
-    # rebuilt mp is returned because column_depth fixes the run's column depth.
-    if depth_autoadjust && is_ice
-        mp = ModelParameters(;
-            (f => getfield(mp, f) for f in fieldnames(ModelParameters)
-                 if f != :column_depth)...,
-            column_depth=25.0)
+    # MATLAB-fidelity path: nothing here is climate-derived, so short-circuit
+    # before the summary and the march so neither can perturb it.
+    if constant_density && constant_temperature
+        return _uniform_ice_profile(mp, T_mean), mp
     end
 
-    # Initialize grid
+    cs = initialize_climate_summary(cf, mp)
+
+    # Size the grid to the depth this climate needs, unless a fidelity flag pins
+    # it. `column_depth` fixes the run's column depth, so the rebuilt mp is
+    # returned to the caller.
+    if !(constant_density || constant_temperature)
+        mp = _adjust_column_depth(mp, cs)
+    end
+
     dz = initialize_grid(mp)
-    z_center = dz2z(dz)
     m = length(dz)
 
-    # Temperature: mean annual, clamped to the melt point (matters in the warm /
-    # ablation regime where T_mean approaches or exceeds 273.15 K). When
-    # constant_temperature=true, use the unclamped mean annual temperature
-    # everywhere (matches the MATLAB initialization).
-    T_init = constant_temperature ? T_mean : min(T_mean, CtoK)
+    ss = steady_state_profile(dz, cs, mp)
 
-    if is_ice
-        density = fill(mp.density_ice, m)
-    else
-        # Warn if outside the Arthern et al. (2010) dry-firn calibration envelope.
-        if T_mean > 258.0 || accum < 100.0 || accum > 1100.0
-            @warn "initialize_profile: mean T ($(round(T_mean, digits=1)) K) / accumulation " *
-                  "($(round(accum, digits=1)) kg m-2 yr-1) is outside the Herron–Langway / " *
-                  "Arthern (2010) dry-firn calibration envelope (T≈247–257 K, b≈130–1040); " *
-                  "steady-state density profile may be inaccurate."
-        end
-        ρ0 = fresh_snow_density(mp, T_mean, accum, cf.wind_speed_mean)
-        density = herron_langway_steady_state(z_center, T_init, accum, ρ0, mp.density_ice)
-    end
+    density = constant_density ? fill(mp.density_ice, m) : ss.density
+    temperature = constant_temperature ? fill(T_mean, m) : ss.temperature
+    water = constant_density ? zeros(m) : ss.water
+    grain_radius = constant_density ? fill(GRAIN_RADIUS_ICE, m) : ss.grain_radius
+    grain_dendricity = constant_density ? zeros(m) : ss.grain_dendricity
+    grain_sphericity = constant_density ? zeros(m) : ss.grain_sphericity
+
+    # Surface albedo from the initialized surface state rather than a binary
+    # snow/ice pick: `calculate_albedo` already transitions continuously with
+    # density and grain size, so a bare-ice column lands near `mp.albedo_ice` and a
+    # snow column near `mp.albedo_snow` without being told which it is.
+    albedo = _initial_albedo(temperature, dz, density, water, grain_radius, cs, mp)
 
     # Create Z dimension
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
-
-    # Grain and albedo initialization is regime-dependent. An ice column is
-    # non-dendritic (dendricity 0), faceted (sphericity 0), large-grained
-    # (grain_radius 2.5 mm = 5 mm diameter, the non-spherical cap in
-    # calculate_grain_size), and low-albedo (mp.albedo_ice). Firn/snow starts as
-    # fresh dendritic snow with snow albedo. grain_radius is 2.5 mm in both cases.
-    if is_ice
-        gdn0, gsp0, re0, alb0 = 0.0, 0.0, 2.5, mp.albedo_ice
-    else
-        gdn0, gsp0, re0, alb0 = 1.0, 0.5, 2.5, mp.albedo_snow
-    end
 
     # Note: `z_center` is intentionally not stored — it is a pure function of `dz`
     # (via `dz2z`) and is recomputed on demand, so the profile stays a clean slice
     # of the `gemb` output layout (which likewise carries `dz`, not `z_center`).
     layers = (
         dz=DimArray(dz, (zdim,)),
-        temperature=DimArray(fill(T_init, m), (zdim,)),
+        temperature=DimArray(temperature, (zdim,)),
         density=DimArray(density, (zdim,)),
-        water=DimArray(zeros(m), (zdim,)),
-        grain_radius=DimArray(fill(re0, m), (zdim,)),
-        grain_dendricity=DimArray(fill(gdn0, m), (zdim,)),
-        grain_sphericity=DimArray(fill(gsp0, m), (zdim,)),
-        albedo=DimArray(fill(alb0, m), (zdim,)),
-        albedo_diffuse=DimArray(fill(alb0, m), (zdim,)),
+        water=DimArray(water, (zdim,)),
+        grain_radius=DimArray(grain_radius, (zdim,)),
+        grain_dendricity=DimArray(grain_dendricity, (zdim,)),
+        grain_sphericity=DimArray(grain_sphericity, (zdim,)),
+        albedo=DimArray(fill(albedo, m), (zdim,)),
+        albedo_diffuse=DimArray(fill(albedo, m), (zdim,)),
     )
 
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
@@ -146,6 +123,146 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     profile = DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 
     return profile, mp
+end
+
+"""
+    _uniform_ice_profile(mp::ModelParameters, T_mean) -> DimStack
+
+The MATLAB `model_initialize_profile` column: pure ice at a uniform temperature,
+with non-dendritic faceted ice grains (`grain_radius = 2.5` mm, the non-spherical
+cap in [`calculate_grain_size`](@ref)), ice albedo and no pore water.
+
+Reached only when both fidelity flags of [`initialize_profile`](@ref) are set.
+Kept as a separate function taking no climate-derived input so no future change to
+the steady-state scheme can perturb it.
+"""
+function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
+    dz = initialize_grid(mp)
+    m = length(dz)
+    zdim = Z(1:m; metadata=cf_layer_index_attributes())
+    layers = (
+        dz=DimArray(dz, (zdim,)),
+        temperature=DimArray(fill(Float64(T_mean), m), (zdim,)),
+        density=DimArray(fill(mp.density_ice, m), (zdim,)),
+        water=DimArray(zeros(m), (zdim,)),
+        grain_radius=DimArray(fill(GRAIN_RADIUS_ICE, m), (zdim,)),
+        grain_dendricity=DimArray(zeros(m), (zdim,)),
+        grain_sphericity=DimArray(zeros(m), (zdim,)),
+        albedo=DimArray(fill(mp.albedo_ice, m), (zdim,)),
+        albedo_diffuse=DimArray(fill(mp.albedo_ice, m), (zdim,)),
+    )
+    return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
+end
+
+"""
+    _adjust_column_depth(mp::ModelParameters, cs::ClimateSummary;
+                         margin=1.2, thermal_depths=4)
+        -> ModelParameters
+
+Rebuild `mp` with `column_depth` sized to the depth this climate needs, replacing
+the old binary 250-vs-25 m switch with a continuous derivation.
+
+The configured `mp.column_depth` is treated as a **ceiling** rather than a target,
+so a shallow-firn or ablation site is not forced to carry hundreds of metres of
+solid ice, while a deep cold site is unaffected. Two requirements set the depth:
+
+1. **Resolve the firn.** Below the depth where the steady-state profile reaches
+   `mp.density_ice` the column carries no further firn information, so
+   `margin × ss.ice_depth` is deep enough — the margin leaves room for the real
+   column to densify more slowly than the guess.
+2. **Resolve the annual thermal wave.** Even a column of pure ice must be deep
+   enough that its lower boundary does not clamp the seasonal temperature cycle.
+   `thermal_depths` damping depths (`d = sqrt(2K/(ρ·c_p·ω))` at ice density, ≈3.3 m,
+   so ≈13 m) is the floor. This is what keeps an ablation site — where
+   `ice_depth = 0` because nothing is ever buried — from collapsing to a
+   physically useless grid, and it recovers the old 25 m intent from the thermal
+   physics rather than a constant.
+
+The result is `clamp(max(firn requirement, thermal floor), mp.column_ztop,
+mp.column_depth)`. Depths are found by marching on a coarse 1 m probe grid, which
+is all the resolution two scalars need and keeps this independent of the final grid
+it is used to build.
+"""
+function _adjust_column_depth(mp::ModelParameters, cs::ClimateSummary;
+    margin::Real=1.2, thermal_depths::Real=4)
+
+    ceiling = mp.column_depth
+
+    # Coarse uniform probe grid spanning the ceiling.
+    probe_dz = fill(1.0, max(ceil(Int, ceiling), 1))
+    ss = steady_state_profile(probe_dz, cs, mp)
+
+    # Annual thermal-wave damping depth at ice density.
+    d_thermal = thermal_damping_depth(cs.temperature_air_mean, mp.density_ice, mp)
+
+    depth = max(margin * ss.ice_depth, thermal_depths * d_thermal)
+    depth = clamp(depth, mp.column_ztop, ceiling)
+    depth == ceiling && return mp
+
+    return ModelParameters(;
+        (f => getfield(mp, f) for f in fieldnames(ModelParameters)
+             if f != :column_depth)...,
+        column_depth=Float64(depth))
+end
+
+"""
+    _initial_albedo(temperature, dz, density, water, grain_radius, cs, mp) -> α
+
+Surface albedo of the initialized column, from [`calculate_albedo`](@ref) applied
+to the initialized surface state.
+
+This replaces a binary `mp.albedo_snow` / `mp.albedo_ice` pick with the same
+function the model uses at runtime, so the first timestep does not begin from an
+albedo the physics immediately contradicts.
+
+The seed is [`_snow_cover_albedo`](@ref) — the same continuous snow/ice blend the
+melt estimate was solved against, so it is consistent with the climate summary and
+carries no threshold. This matters for the methods that *decay from* the seed
+rather than recomputing it (`:Bougamont2005`): a seed picked on a density
+threshold would jump by `albedo_snow − albedo_ice` as a site crossed pore
+close-off, which is exactly the cliff this scheme removes. For `:GardnerSharp`
+(the default) `calculate_albedo` overwrites element `[1]` outright, so the seed is
+immaterial there.
+"""
+function _initial_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
+    density::Vector{Float64}, water::Vector{Float64}, grain_radius::Vector{Float64},
+    cs::ClimateSummary, mp::ModelParameters)
+
+    seed = _snow_cover_albedo(cs.accumulation_effective, cs.melt, mp)
+    albedo = fill(seed, length(density))
+    albedo_diffuse = fill(seed, length(density))
+
+    cfs = _albedo_forcing_step(cs, mp)
+    albedo, _ = calculate_albedo(temperature, dz, density, water, grain_radius,
+        albedo, albedo_diffuse, 0.0, 0.0, cfs, mp)
+
+    return albedo[1]
+end
+
+"""
+    _albedo_forcing_step(cs::ClimateSummary, mp::ModelParameters) -> ClimateForcingStep
+
+Minimal [`ClimateForcingStep`](@ref) for the initial [`calculate_albedo`](@ref)
+call. The optical properties come from the `mp` defaults (the same values the
+forcing's `Fill`-backed layers carry when the forcing does not supply them), and
+`precipitation` is zero: there is no fresh snow event at initialization.
+"""
+function _albedo_forcing_step(cs::ClimateSummary, mp::ModelParameters)
+    return ClimateForcingStep(; dt=SECONDS_PER_YEAR,
+        temperature_air=cs.temperature_air_mean,
+        pressure_air=cs.pressure_air_mean,
+        wind_speed=cs.wind_speed_mean,
+        temperature_air_mean=cs.temperature_air_mean,
+        wind_speed_mean=cs.wind_speed_mean,
+        precipitation_mean=cs.accumulation_effective,
+        temperature_observation_height=cs.temperature_observation_height,
+        wind_observation_height=cs.wind_observation_height,
+        black_carbon_snow=mp.black_carbon_snow,
+        black_carbon_ice=mp.black_carbon_ice,
+        cloud_optical_thickness=mp.cloud_optical_thickness,
+        solar_zenith_angle=mp.solar_zenith_angle,
+        shortwave_downward_diffuse=mp.shortwave_downward_diffuse,
+        cloud_fraction=mp.cloud_fraction)
 end
 
 """

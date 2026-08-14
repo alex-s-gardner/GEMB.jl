@@ -33,7 +33,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     ds = density[1]      # density of top grid cell
 
     # calculated air density [kg/m3]
-    density_air = 0.029 * cfs.pressure_air / (R_GAS * cfs.temperature_air)
+    density_air = air_density(cfs.pressure_air, cfs.temperature_air)
 
     # thermal capacity of top grid cell [J/k]
     TCs = density[1] * dz[1] * C_ICE
@@ -61,11 +61,11 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     ## SURFACE ROUGHNESS (Bougamont, 2005)
     if (ds < (mp.density_ice - d_tolerance)) && (water_surface < W_tolerance)
-        z0 = 0.00012       # 0.12 mm for dry snow
+        z0 = Z0_SNOW_DRY   # 0.12 mm for dry snow
     elseif ds >= (mp.density_ice - d_tolerance)
-        z0 = 0.0032        # 3.2 mm for ice
+        z0 = Z0_ICE        # 3.2 mm for ice
     else
-        z0 = 0.0013        # 1.3 mm for wet snow
+        z0 = Z0_SNOW_WET   # 1.3 mm for wet snow
     end
 
     # determine emissivity

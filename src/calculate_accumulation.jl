@@ -57,10 +57,11 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     d_tolerance = 1e-11
     gdn_tolerance = 1e-10
 
-    # Specify constants
-    re_new_snow = 0.05       # new snow grain size [mm]
-    gdn_new_snow = 1.0       # new snow dendricity
-    gsp_new_snow = 0.5       # new snow sphericity
+    # Specify constants (shared with the steady-state initial guess, so a freshly
+    # initialized column and freshly fallen snow agree by construction)
+    re_new_snow = RE_NEW_SNOW    # new snow grain size [mm]
+    gdn_new_snow = GDN_NEW_SNOW  # new snow dendricity
+    gsp_new_snow = GSP_NEW_SNOW  # new snow sphericity
     rain = 0.0               # rainfall [mm w.e. or kg m^-2]
 
     if verbose

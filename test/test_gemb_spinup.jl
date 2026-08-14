@@ -131,16 +131,17 @@ using Dates
         @test length(spunup_profile[:temperature]) == n_layers
     end
 
-    @testset "Herron-Langway steady-state profile" begin
+    @testset "steady_state_density: Herron-Langway" begin
+        mp_hl = initialize_parameters(densification_method=:HerronLangway)
         zc = -collect(0.05:0.1:60.0)   # cell-center depths, negative below surface
         ρ0, ρi = 350.0, 910.0
-        d = herron_langway_steady_state(zc, 253.0, 300.0, ρ0, ρi)
+        d = steady_state_density(zc, 253.0, 300.0, ρ0, ρi, mp_hl)
 
         # Surface ≈ ρ0, deep asymptote → ρ_ice, monotonic non-decreasing.
         @test isapprox(d[1], ρ0; atol=2.0)
         @test all(diff(d) .>= -1e-9)
         @test all(d .<= ρi + 1e-9)
-        d_deep = herron_langway_steady_state(-collect(0.5:1.0:250.0), 253.0, 300.0, ρ0, ρi)
+        d_deep = steady_state_density(-collect(0.5:1.0:250.0), 253.0, 300.0, ρ0, ρi, mp_hl)
         @test d_deep[end] > 900.0
 
         # 550 kg/m³ crossover at a physically sensible depth (a few m to tens of m).
@@ -149,43 +150,40 @@ using Dates
         @test 2.0 < crossover_depth < 40.0
 
         # Negligible accumulation → no firn forms → pure ice.
-        d_ice = herron_langway_steady_state(zc, 253.0, 0.0, ρ0, ρi)
+        d_ice = steady_state_density(zc, 253.0, 0.0, ρ0, ρi, mp_hl)
         @test all(d_ice .== ρi)
+
+        # The densification method is genuinely plumbed through: Arthern (2010) is a
+        # different law and must give a different profile at identical forcing.
+        mp_ar = initialize_parameters(densification_method=:Arthern)
+        d_ar = steady_state_density(zc, 253.0, 300.0, ρ0, ρi, mp_ar)
+        @test !isapprox(d_ar, d; rtol=1e-3)
+        @test all(diff(d_ar) .>= -1e-9)
+        @test all(d_ar .<= ρi + 1e-9)
     end
 
-    @testset "annual_pdd_melt" begin
+    @testset "Ablation regime → ice column + clamped temperature" begin
         n = 365
         time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
-        # Constant +5 °C above the melt point.
-        cf = initialize_forcing(
-            time, fill(278.15, n), fill(85000.0, n), fill(1.0, n), fill(5.0, n),
-            fill(100.0, n), fill(200.0, n), fill(100.0, n);
-            temperature_air_mean=278.15, wind_speed_mean=5.0, precipitation_mean=365.25)
-        melt = annual_pdd_melt(cf; ddf_snow=3.0)
-        expected = 3.0 * (5.0 * n) * (365.25 / n)   # DDF * PDD, annualized
-        @test isapprox(melt, expected; rtol=1e-9)
-
-        # All sub-freezing → zero melt.
-        cf_cold = initialize_forcing(
-            time, fill(253.0, n), fill(85000.0, n), fill(1.0, n), fill(5.0, n),
-            fill(100.0, n), fill(200.0, n), fill(100.0, n);
-            temperature_air_mean=253.0, wind_speed_mean=5.0, precipitation_mean=365.25)
-        @test annual_pdd_melt(cf_cold) == 0.0
-    end
-
-    @testset "Ablation regime → pure ice + clamped temperature" begin
-        n = 365
-        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
-        # Warm, melt-dominated site.
+        # Warm, melt-dominated site: net annual balance is negative, so nothing is
+        # ever buried and the column is the ice it exposes.
         cf = initialize_forcing(
             time, fill(278.15, n), fill(85000.0, n), fill(1.0, n), fill(5.0, n),
             fill(100.0, n), fill(200.0, n), fill(100.0, n);
             temperature_air_mean=278.15, wind_speed_mean=5.0, precipitation_mean=365.25)
         mp = initialize_parameters()
-        prof, _ = initialize_profile(mp, cf)
 
+        cs = GEMB.initialize_climate_summary(cf, mp)
+        @test cs.balance <= 0.0
+
+        prof, mp_out = initialize_profile(mp, cf)
         @test all(parent(prof[:density]) .== mp.density_ice)
         @test all(parent(prof[:temperature]) .<= 273.15 + 1e-9)
+
+        # No firn to resolve, so the derived column collapses to the thermal floor:
+        # deep enough for the annual wave, far shallower than the 250 m default.
+        @test mp_out.column_depth < 0.2 * mp.column_depth
+        @test mp_out.column_depth >= mp.column_ztop
     end
 
     @testset "Steady-state init: firn profile + faster convergence" begin
@@ -202,10 +200,13 @@ using Dates
         mp = initialize_parameters(densification_method=:HerronLangway,
                                    output_frequency=:last)
 
-        prof_ss, _  = initialize_profile(mp, cf)                     # steady-state (default)
-        # depth_autoadjust=false so the all-ice column keeps the same deep grid as
-        # the steady-state column for a fair same-depth convergence comparison.
-        prof_ice, _ = initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false) # legacy all-ice
+        prof_ss, mp = initialize_profile(mp, cf)   # steady-state (default); rebind the
+                                                   # derived column depth
+        # Both escape-hatch flags give the legacy all-ice column. Built from the
+        # *rebound* mp so the two starts share a grid — the convergence claim below is
+        # about the initial state, not the geometry.
+        prof_ice, _ = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+        @test length(prof_ice[:dz]) == length(prof_ss[:dz])
 
         # Steady-state start is a graded firn column, not pure ice.
         d_ss = parent(prof_ss[:density])
@@ -253,6 +254,79 @@ using Dates
         cycles_within(traj, tol) = something(findfirst(a -> abs(a - ρ_eq) < tol, traj),
                                              length(traj) + 1)
         @test cycles_within(traj_ss, 20.0) < cycles_within(traj_ice, 20.0)
+    end
+
+    @testset "Steady-state init converges at three contrasting sites" begin
+        # The testset above establishes the payoff at one dry-cold site. The claim is
+        # that it holds across regimes, so repeat it at a dry-snow site, a
+        # percolation site with substantial melt, and an ablation site — and in
+        # particular that all three reach the *same* fixed point as an ice-block
+        # start. A better guess must be a shortcut to the same answer, not a
+        # different answer.
+        function make_site(; T_mean, T_amp, precip, sw, lw, vapor)
+            n = 365
+            time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+            temp = T_mean .+ T_amp .* cos.(2π .* collect(1:n) ./ 365.0 .- π)
+            return initialize_forcing(
+                time, temp, fill(85000.0, n), fill(precip, n), fill(4.0, n),
+                fill(sw, n), fill(lw, n), fill(vapor, n);
+                temperature_air_mean=T_mean, wind_speed_mean=4.0,
+                precipitation_mean=precip * 365.25)
+        end
+
+        sites = (
+            # name, forcing, expected sign of the net annual balance
+            ("dry-cold",    make_site(T_mean=250.0, T_amp=10.0, precip=0.8,
+                                      sw=80.0,  lw=190.0, vapor=60.0),  :positive),
+            ("percolation", make_site(T_mean=262.0, T_amp=8.0,  precip=1.5,
+                                      sw=140.0, lw=270.0, vapor=200.0), :positive),
+            ("ablation",    make_site(T_mean=276.0, T_amp=8.0,  precip=0.3,
+                                      sw=220.0, lw=310.0, vapor=400.0), :negative),
+        )
+
+        mp_base = initialize_parameters(output_frequency=:last)
+
+        for (name, cf, sign) in sites
+            cs = GEMB.initialize_climate_summary(cf, mp_base)
+            if sign === :positive
+                @test cs.balance > 0.0
+            else
+                @test cs.balance < 0.0
+            end
+
+            prof_ss, mp = initialize_profile(mp_base, cf)
+            # Ice-block start on the *same* grid, so this compares initial states.
+            prof_ice, _ = initialize_profile(mp, cf;
+                constant_density=true, constant_temperature=true)
+
+            function traj(prof0; maxit=25, depth=20.0)
+                prof = prof0
+                out = Float64[]
+                for _ in 1:maxit
+                    prof = gemb_profile(gemb(prof, cf, mp; verbose=false))
+                    zc = -GEMB.dz2z(prof[:dz])
+                    idx = zc .<= depth
+                    push!(out, sum(prof[:density][idx]) / count(idx))
+                end
+                return out
+            end
+
+            t_ss = traj(prof_ss)
+            t_ice = traj(prof_ice)
+            ρ_eq = t_ss[end]
+
+            # Same fixed point from either start.
+            @test isapprox(t_ss[end], t_ice[end]; atol=20.0)
+
+            # The steady-state guess starts no further from it, and converges no
+            # slower. Measured initial gaps (ss vs ice): dry-cold 5 vs 391,
+            # percolation 61 vs 253, ablation 0.6 vs 0.6 — the ablation column *is*
+            # the ice block, so the two coincide there rather than one winning.
+            @test abs(t_ss[1] - ρ_eq) <= abs(t_ice[1] - ρ_eq) + 1e-9
+            within(t, tol) = something(findfirst(a -> abs(a - ρ_eq) < tol, t),
+                                       length(t) + 1)
+            @test within(t_ss, 20.0) <= within(t_ice, 20.0)
+        end
     end
 
     @testset "Climatology provenance" begin
