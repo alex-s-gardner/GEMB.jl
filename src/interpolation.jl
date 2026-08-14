@@ -27,8 +27,13 @@ function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::Abst
     # Extract time coordinates if A carries them
     ti_dim = A isa DimArray ? dims(A, Ti) : Ti(1:n_times)
 
-    # Preallocate output
-    A_regularized = fill(NaN, Z(z_target), ti_dim)
+    # Preallocate output. Unlike the `Z` of `gemb` output — a bare cell index — `z_target`
+    # is a genuine vertical coordinate, so it gets real CF coordinate attributes. The
+    # regridded values are the same quantity as the input, so carry the input's own
+    # attributes across; a plain matrix input simply has none to carry.
+    zdim = Z(z_target; metadata=cf_height_attributes())
+    A_regularized = DimArray(fill(NaN, length(z_target), n_times), (zdim, ti_dim);
+        metadata=A isa DimArray ? DD.metadata(A) : DD.NoMetadata())
 
     # Loop through each timestep. GEMB profile output is top-justified with a fixed row
     # count, so every row is a real cell; the finite check only guards against genuinely
