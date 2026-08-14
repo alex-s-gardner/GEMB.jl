@@ -40,6 +40,7 @@ const _LABELS = Dict{Symbol,String}(
     :thickness_cumulative => "cumulative Δ thickness",
     :densification_from_compaction => "compaction",
     :densification_from_melt => "melt",
+    :strain_thinning => "horizontal strain",
     :valid_profile_length => "valid layers",
     # 2-D (profile) variables
     :temperature => "temperature",
@@ -138,6 +139,7 @@ const _SCALAR_GROUPS = [
     ("Broadband albedo", [:albedo_broadband]),
     ("Firn air content", [:firn_air_content]),
     ("Densification", [:densification_from_compaction, :densification_from_melt]),
+    ("Strain thinning", [:strain_thinning]),
 ]
 
 # Panel title for a scalar group: the theme name plus the members' shared display
@@ -348,10 +350,13 @@ function GEMB.gemb_plot_output(output::DimStack;
     end
     scalar_groups = [(t, [v for v in g if v in wanted]) for (t, g) in _SCALAR_GROUPS]
     scalar_groups = [(t, g) for (t, g) in scalar_groups if !isempty(g)]
-    # Densification is dropped from the default panel set (kept available when the
-    # caller lists its variables explicitly via `variables`).
+    # Densification and strain thinning are dropped from the default panel set (kept
+    # available when the caller lists their variables explicitly via `variables`). Strain
+    # thinning is identically zero unless `horizontal_strain_rate` is set, so it would
+    # otherwise render an empty panel for every run.
     if variables === nothing
-        scalar_groups = [(t, g) for (t, g) in scalar_groups if t != "Densification"]
+        default_drop_groups = ("Densification", "Strain thinning")
+        scalar_groups = [(t, g) for (t, g) in scalar_groups if t ∉ default_drop_groups]
     end
 
     # ---- Shared time axis (decimal year) ----------------------------------

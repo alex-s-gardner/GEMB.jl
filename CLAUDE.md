@@ -163,6 +163,7 @@ GEMB follows a modular physics-based architecture:
    - `calculate_melt()`: Melt, runoff, and refreezing
    - `calculate_density()`: Non-melt densification
    - `manage_layer_thickness()`: Merge/split cells into their thickness bands; restore the fixed cell count
+   - `apply_horizontal_strain!()` (in `grid_ops.jl`): Ice-dynamic layer thinning at constant density, `dz *= exp(-strain_rate*dt)`. Runs after `calculate_density` and before `trim_bottom!`; a no-op at the `horizontal_strain_rate = 0.0` default
 
 4. **Integration**:
    - `gemb_core(state, cfs, mp, verbose)`: Single timestep integration calling all physics modules. Accepts a `state` NamedTuple and returns `(state, flux)` where `state` carries forward and `flux` contains budget terms for output

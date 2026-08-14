@@ -96,13 +96,21 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     densification_from_compaction = densification_from_compaction - sum(dz)
 
-    # 11. Pin the total column depth to z_target. This runs last because
-    # `calculate_density` rebuilds `dz` from the conserved cell mass and is the final
-    # step to change column thickness. The adjustment is the model's only basal mass and
-    # energy flux, and is signed: negative `mass_added` under accumulation (material
-    # leaves through the base), positive under net ablation (basal accretion).
+    # 11. Thin the column by the horizontal (ice-dynamic) strain rate, at constant density.
+    # After `calculate_density`, which rebuilds `dz` from the conserved cell mass and would
+    # overwrite this; before `trim_bottom!`, which restores the fixed column depth. The mass
+    # this exports leaves laterally, not through the base, and is reported separately.
+    # A no-op when `horizontal_strain_rate == 0` (the default).
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity)
+    mass_lateral, strain_energy = apply_horizontal_strain!(cols, cfs.dt, mp)
+    E_added += strain_energy
+
+    # 12. Pin the total column depth to z_target. This runs last because
+    # `calculate_density` rebuilds `dz` from the conserved cell mass and, with step 11, is
+    # the final step to change column thickness. The adjustment is the model's only basal
+    # mass and energy flux, and is signed: negative `mass_added` under accumulation (material
+    # leaves through the base), positive under net ablation (basal accretion).
     mass_added, trim_energy = trim_bottom!(cols, z_target, mp)
     E_added += trim_energy
 
@@ -110,7 +118,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         dt = cfs.dt
         M = dz .* density
         M_total_final = sum(M) + sum(water)
-        M_delta = M_total_final - M_total_initial + runoff - cfs.precipitation - evaporation_condensation - mass_added
+        M_delta = M_total_final - M_total_initial + runoff - cfs.precipitation -
+                  evaporation_condensation - mass_added - mass_lateral
 
         if abs(M_delta) > 1e-3
             error("total system mass not conserved: M_delta = $(M_delta)")
@@ -186,6 +195,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         runoff=runoff,
         refreeze=refreeze,
         mass_added=mass_added,
+        mass_lateral=mass_lateral,
         E_added=E_added,
         densification_from_compaction=densification_from_compaction,
         densification_from_melt=densification_from_melt,

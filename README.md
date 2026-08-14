@@ -360,6 +360,12 @@ What this changes for consumers of the output:
   thickness change — the column is an Eulerian window on the firn, not a prognostic
   ice-thickness model. For thickness change, use the surface terms
   (`precipitation - runoff + evaporation_condensation`).
+- **Added `horizontal_strain_rate`** [yr⁻¹, default `0.0`], the trace of the horizontal
+  strain-rate tensor `ε̇_xx + ε̇_yy`. By incompressibility it thins (positive, divergence) or
+  thickens (negative, convergence) every cell at constant density by `exp(-D·dt)`; the mass
+  it exports leaves laterally and is reported as the new `strain_thinning` output and in the
+  mass budget, separately from the basal flux. MATLAB has no ice-dynamic term; at the default
+  the two agree exactly.
 
 ## Prerequisites
 

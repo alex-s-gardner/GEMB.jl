@@ -71,6 +71,10 @@ include("test_utils.jl")
         include("test_grid_utilities.jl")
     end
 
+    @testset "Horizontal Strain" begin
+        include("test_horizontal_strain.jl")
+    end
+
     @testset "Synthetic Regression" begin
         # Full model validation with relaxed tolerances for cross-platform reproducibility
         include("test_synthetic_regression.jl")

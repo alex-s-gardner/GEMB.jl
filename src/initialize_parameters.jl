@@ -96,4 +96,9 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.column_dzmax <= 0.2
     @assert 0 <= mp.column_depth_max <= 1000
     @assert 1 <= mp.column_zy <= 2
+
+    # Ice dynamics. The bound is orders of magnitude above any real ice-sheet strain rate
+    # (fast shear margins reach ~1e-2 yr-1) and exists to catch a units mistake — an s-1
+    # value, or a percent — rather than to constrain the physics.
+    @assert -1 <= mp.horizontal_strain_rate <= 1 "horizontal_strain_rate must be in [-1, 1] yr-1"
 end

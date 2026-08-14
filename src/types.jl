@@ -78,6 +78,13 @@ Base.@kwdef struct ModelParameters
     column_depth_max::Float64 = 250.0
     column_zy::Float64 = 1.10
 
+    # --- Ice Dynamics ---
+    # Trace of the horizontal strain-rate tensor, ε̇_xx + ε̇_yy [yr-1]. Positive is
+    # horizontal divergence, which thins every layer at constant density; negative is
+    # convergence, which thickens. 0.0 (the default) disables the term entirely and leaves
+    # output bit-identical to a run without it. See `apply_horizontal_strain!`.
+    horizontal_strain_rate::Float64 = 0.0
+
     # --- Thermal Time Stepping ---
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver
 end

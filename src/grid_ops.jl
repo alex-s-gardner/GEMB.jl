@@ -376,7 +376,8 @@ end
 
 Controller 2 (mass). Pin the total column depth to `z_target` by adjusting the bottom
 cell's thickness, and return the mass [kg m-2] and energy [J m-2] added to the column as a
-result. This is the model's **only** basal mass/energy flux.
+result. This is the model's **only** basal mass/energy flux (horizontal strain, see
+[`apply_horizontal_strain!`](@ref), is the only lateral one).
 
 The adjustment is signed and continuous:
 
@@ -436,6 +437,58 @@ function trim_bottom!(cols::NamedTuple, z_target::Float64, mp::ModelParameters)
     end
 
     return mass_added, E_added
+end
+
+"""
+    apply_horizontal_strain!(cols, dt_seconds, mp) -> (mass_lateral, E_lateral)
+
+Thin (or thicken) every cell by the horizontal strain rate `mp.horizontal_strain_rate`
+[yr-1] over `dt_seconds`, at constant density.
+
+Incompressibility ties vertical thinning to horizontal stretching: for a parcel of
+thickness `h` under a horizontal velocity-gradient trace `D = ε̇_xx + ε̇_yy`, `dh/dt = -h D`
+at fixed density, whose exact integral over a step of constant `D` is `h *= exp(-D dt)`.
+The exponential form keeps `dz` positive for any `D dt`, where forward Euler would not —
+the same reason the `:Crocus` branch of [`calculate_density`](@ref) integrates its viscous
+law in closed form.
+
+`density` and `temperature` are untouched; grain properties are intensive and unchanged.
+Pore `water` [kg m-2] is a per-unit-area quantity, so it scales by the same factor as the
+lateral area.
+
+GEMB's column is per unit area, so the mass this removes leaves **laterally**, not through
+the base. It is returned signed — negative under divergence (mass leaves), positive under
+convergence — and is reported to the mass budget separately from [`trim_bottom!`](@ref)'s
+basal flux. Folding the two together would make a thinning column read as spurious basal
+accretion, because `trim_bottom!` refills the column to `z_target` immediately afterwards.
+
+Returns `(0.0, 0.0)` and touches nothing when `horizontal_strain_rate == 0`, which is what
+keeps the default bit-identical to a run without the term.
+"""
+function apply_horizontal_strain!(cols::NamedTuple, dt_seconds::Float64,
+    mp::ModelParameters)
+    strain_rate = mp.horizontal_strain_rate
+    strain_rate == 0.0 && return 0.0, 0.0
+
+    # yr-1 -> per-step factor. `SECONDS_PER_YEAR` (Julian, 365.25 d) rather than
+    # `DAYS_PER_YEAR_DENSIFICATION`: this is an observed ice-flow strain rate, not a
+    # densification coefficient fitted against a 365-day year.
+    shrink = expm1(-strain_rate * dt_seconds / SECONDS_PER_YEAR)   # < 0 under divergence
+
+    mass_lateral = 0.0
+    E_lateral = 0.0
+    enthalpy_water = specific_enthalpy_water(mp)
+    @inbounds for i in eachindex(cols.dz)
+        dz_delta = cols.dz[i] * shrink
+        water_delta = cols.water[i] * shrink
+        mass_ice = dz_delta * cols.density[i]
+        mass_lateral += mass_ice + water_delta
+        E_lateral += mass_ice * specific_enthalpy(mp, cols.temperature[i]) +
+                     water_delta * enthalpy_water
+        cols.dz[i] += dz_delta
+        cols.water[i] += water_delta
+    end
+    return mass_lateral, E_lateral
 end
 
 """
