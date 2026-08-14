@@ -64,7 +64,7 @@ include("test_utils.jl")
         cf = GEMB.initialize_forcing(ds)
         @test cf isa GEMB.ClimateForcing
         mp = GEMB.ModelParameters()
-        profile, mp = GEMB.initialize_profile(mp, cf)
+        profile = GEMB.initialize_profile(mp, cf)
         @test length(profile.dz) > 0
     end
     @testset "Grid Utilities" begin

@@ -39,7 +39,7 @@ using GEMB_ClimateForcing
     # Initialize profile. Both escape-hatch flags give the pure-ice initialization
     # that the reference values below were generated with.
     # and keep the deep column the MATLAB reference baseline used.
-    profile, _ = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+    profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
 
     # Create climatological forcing and spin up
     cf_climatology = GEMB.forcing_climatology(cf)

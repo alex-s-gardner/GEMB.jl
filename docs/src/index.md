@@ -44,7 +44,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = GEMB.initialize_forcing(ds)   # convert to ClimateForcing
 
 # Initialize the firn column profile
-profile, mp = initialize_profile(mp, cf)
+profile = initialize_profile(mp, cf)
 
 # Run GEMB
 output = gemb(profile, cf, mp)
@@ -74,7 +74,7 @@ cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
 mp = initialize_parameters(output_frequency=:daily)
-profile, mp = initialize_profile(mp, cf)
+profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 
@@ -99,9 +99,20 @@ cf = GEMB.initialize_forcing(ds)
 cf_clim = forcing_climatology(cf)
 
 # Initialize the column and spin up
-profile, mp = initialize_profile(mp, cf_clim)
+profile = initialize_profile(mp, cf_clim)
 spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=5,
                               convergence_delta_density=0.01)
+
+# Convergence is judged on the column-mean density. Two tests are available, and
+# when both are given both must hold: `convergence_delta_density` bounds the change
+# between consecutive cycles, while `convergence_drift_density` bounds the trend —
+# the least-squares slope of column-mean density against cycle over the trailing
+# `drift_window` cycles [kg m⁻³ per cycle]. The trend test is the stricter claim: a
+# column creeping steadily at just under the delta tolerance passes the step test
+# while still densifying.
+spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=200,
+                              convergence_delta_density=0.01,
+                              convergence_drift_density=0.005)
 
 # The spun-up profile carries provenance: which climatology years were averaged
 # and how the spinup converged (`metadata` is re-exported from DimensionalData).

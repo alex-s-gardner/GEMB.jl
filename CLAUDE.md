@@ -30,8 +30,8 @@ params = initialize_parameters()
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
 forcing = GEMB.initialize_forcing(ds)
 
-# 3. Initialize the vertical profile (returns possibly depth-adjusted params)
-profile, params = initialize_profile(params, forcing)
+# 3. Initialize the vertical profile (its grid is sized to the forcing climate)
+profile = initialize_profile(params, forcing)
 
 # 4. Run the model
 output = gemb(profile, forcing, params)
@@ -83,7 +83,7 @@ cf = GEMB.initialize_forcing(forcing_data)
 
 # Use with GEMB
 mp = initialize_parameters()
-profile, mp = initialize_profile(mp, cf)
+profile = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 
@@ -204,7 +204,7 @@ Initialize Profile → Time Loop [
 - **ClimateForcing Indexing**: `ClimateForcing` is an `AbstractDimStack`, so `climate_forcing[Ti(a .. b)]` / `climate_forcing[Ti=At(t)]` slice it like any DimStack and return a `ClimateForcing`. `ClimateForcingStep` (the per-timestep scalar struct) is built separately in the `gemb` hot loop by integer-indexing the unwrapped forcing vectors. Time-varying model parameters (black carbon, cloud properties) are stored as `FillArrays.Fill`-backed DimArrays, ready to become truly time-varying
 - **Immutable Parameters**: `ModelParameters` is immutable; create new instance for modifications
 - **Energy/Mass Conservation**: When `verbose=true`, `gemb_core()` validates conservation laws each timestep
-- **Fixed-length column**: The column holds a constant cell count and a constant total depth (`column_depth`) for the whole run, enforced each timestep by the two controllers in `grid_ops.jl`. Profile outputs are sized exactly to the column and top-justified (surface at row 1), so there is no padding and no NaN scanning
+- **Fixed-length column**: The column holds a constant cell count and a constant total depth (`sum(profile[:dz])`, chosen at initialization within the `column_depth_max` ceiling) for the whole run, enforced each timestep by the two controllers in `grid_ops.jl`. Profile outputs are sized exactly to the column and top-justified (surface at row 1), so there is no padding and no NaN scanning
 
 ### Test Structure
 

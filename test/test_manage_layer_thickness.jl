@@ -23,12 +23,12 @@ function _make_layer_inputs(; n=10)
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse
 end
 
-function _layer_mp(; column_dzmin=0.05, column_dzmax=0.10, column_depth=1.0,
+function _layer_mp(; column_dzmin=0.05, column_dzmax=0.10, column_depth_max=1.0,
                      column_ztop=2.0, column_zy=1.1)
     return GEMB.ModelParameters(
         column_dzmin=column_dzmin,
         column_dzmax=column_dzmax,
-        column_depth=column_depth,
+        column_depth_max=column_depth_max,
         column_ztop=column_ztop,
         column_zy=column_zy,
     )

@@ -232,7 +232,7 @@ function _assert_grid_feasible(dz::Vector{Float64}, z_target::Float64, mp::Model
     n = length(dz)
     if n < 2
         error("gemb: the column has $n cell(s); at least 2 are required (the thermal " *
-              "solve differences adjacent cells). Check column_depth / column_dztop.")
+              "solve differences adjacent cells). Check column_depth_max / column_dztop.")
     end
     if !all(d -> isfinite(d) && d > 0.0, dz)
         error("gemb: the initial column contains a non-positive or non-finite cell " *
@@ -251,7 +251,7 @@ function _assert_grid_feasible(dz::Vector{Float64}, z_target::Float64, mp::Model
         error("gemb: the fixed column depth ($(z_target) m) is outside the range $n cells " *
               "can span at their band limits ([$(z_lo), $(z_hi)] m), so no admissible " *
               "grid has the required depth and the count and depth controllers cannot " *
-              "both be satisfied. Adjust column_depth / column_dzmin / column_dzmax / " *
+              "both be satisfied. Adjust column_depth_max / column_dzmin / column_dzmax / " *
               "column_ztop / column_zy.")
     end
     return nothing

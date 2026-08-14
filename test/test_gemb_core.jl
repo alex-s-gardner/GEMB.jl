@@ -27,7 +27,7 @@ function _make_core_cfs(; dt=3600.0, temperature_air=265.0, precipitation=0.0,
 end
 
 # Helper to create ModelParameters for gemb_core tests
-function _make_core_mp(; dt=3600.0, column_depth=0.9)
+function _make_core_mp(; dt=3600.0, column_depth_max=0.9)
     return GEMB.ModelParameters(
         albedo_method=:GardnerSharp,
         albedo_ice=0.45,
@@ -45,7 +45,7 @@ function _make_core_mp(; dt=3600.0, column_depth=0.9)
         thermal_conductivity_method=:Sturm,
         column_dzmin=0.05,
         column_dzmax=0.10,
-        column_depth=column_depth,
+        column_depth_max=column_depth_max,
         column_ztop=2.0,
         column_zy=1.1,
         new_snow_method=Symbol("150kgm2"),
@@ -107,7 +107,7 @@ end
 @testset "Accumulation event" begin
     state = _make_core_state()
     cfs = _make_core_cfs(precipitation=10.0, temperature_air=260.0)
-    mp = _make_core_mp(column_depth=100.0)
+    mp = _make_core_mp(column_depth_max=100.0)
 
     new_state, flux = GEMB.gemb_core(state, cfs, mp, true)
 

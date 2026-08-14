@@ -99,6 +99,6 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.column_dztop <= 0.2
     @assert 0 <= mp.column_dzmin <= 0.2
     @assert 0 <= mp.column_dzmax <= 0.2
-    @assert 0 <= mp.column_depth <= 1000
+    @assert 0 <= mp.column_depth_max <= 1000
     @assert 1 <= mp.column_zy <= 2
 end

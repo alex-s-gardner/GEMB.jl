@@ -33,7 +33,7 @@ using Dates
         )
 
         # Initialize profile
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         # Run spinup with 3 cycles (fast test)
         output = gemb_spinup(profile, forcing, params; max_iterations=3, verbose=false)
@@ -74,7 +74,7 @@ using Dates
         )
 
         # Run with different numbers of cycles
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
         output_3 = gemb_spinup(profile, forcing, params; max_iterations=3)
         output_5 = gemb_spinup(profile, forcing, params; max_iterations=5)
 
@@ -116,7 +116,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
         spunup_profile = gemb_spinup(profile, forcing, params; max_iterations=3)
 
         # Check profile has required fields
@@ -176,14 +176,15 @@ using Dates
         cs = GEMB.initialize_climate_summary(cf, mp)
         @test cs.balance <= 0.0
 
-        prof, mp_out = initialize_profile(mp, cf)
+        prof = initialize_profile(mp, cf)
         @test all(parent(prof[:density]) .== mp.density_ice)
         @test all(parent(prof[:temperature]) .<= 273.15 + 1e-9)
 
         # No firn to resolve, so the derived column collapses to the thermal floor:
-        # deep enough for the annual wave, far shallower than the 250 m default.
-        @test mp_out.column_depth < 0.2 * mp.column_depth
-        @test mp_out.column_depth >= mp.column_ztop
+        # deep enough for the annual wave, far shallower than the 250 m default. The
+        # derived depth is read off the grid, which is where it lives.
+        @test sum(prof[:dz]) < 0.2 * mp.column_depth_max
+        @test sum(prof[:dz]) >= mp.column_ztop
     end
 
     @testset "Steady-state init: firn profile + faster convergence" begin
@@ -200,12 +201,18 @@ using Dates
         mp = initialize_parameters(densification_method=:HerronLangway,
                                    output_frequency=:last)
 
-        prof_ss, mp = initialize_profile(mp, cf)   # steady-state (default); rebind the
-                                                   # derived column depth
-        # Both escape-hatch flags give the legacy all-ice column. Built from the
-        # *rebound* mp so the two starts share a grid — the convergence claim below is
-        # about the initial state, not the geometry.
-        prof_ice, _ = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+        prof_ss = initialize_profile(mp, cf)       # steady-state (default)
+
+        # Both escape-hatch flags give the legacy all-ice column, built on the
+        # *configured* column_depth_max. Pin that to the depth the steady-state column
+        # derived so the two starts share a grid — the convergence claim below is
+        # about the initial state, not the geometry. (Asking for exactly `sum(dz)`
+        # reproduces the grid cell for cell: `initialize_grid` stops at the first
+        # depth at or past its target, and that depth is already `sum(dz)`.)
+        mp_ice = initialize_parameters(densification_method=:HerronLangway,
+                                       output_frequency=:last,
+                                       column_depth_max=sum(prof_ss[:dz]))
+        prof_ice = initialize_profile(mp_ice, cf; constant_density=true, constant_temperature=true)
         @test length(prof_ice[:dz]) == length(prof_ss[:dz])
 
         # Steady-state start is a graded firn column, not pure ice.
@@ -294,16 +301,21 @@ using Dates
                 @test cs.balance < 0.0
             end
 
-            prof_ss, mp = initialize_profile(mp_base, cf)
-            # Ice-block start on the *same* grid, so this compares initial states.
-            prof_ice, _ = initialize_profile(mp, cf;
+            prof_ss = initialize_profile(mp_base, cf)
+            # Ice-block start on the *same* grid, so this compares initial states. The
+            # escape hatch builds on the configured column_depth_max, so pin it to the
+            # depth the steady-state column derived.
+            mp_ice = initialize_parameters(output_frequency=:last,
+                                           column_depth_max=sum(prof_ss[:dz]))
+            prof_ice = initialize_profile(mp_ice, cf;
                 constant_density=true, constant_temperature=true)
+            @test length(prof_ice[:dz]) == length(prof_ss[:dz])
 
             function traj(prof0; maxit=25, depth=20.0)
                 prof = prof0
                 out = Float64[]
                 for _ in 1:maxit
-                    prof = gemb_profile(gemb(prof, cf, mp; verbose=false))
+                    prof = gemb_profile(gemb(prof, cf, mp_base; verbose=false))
                     zc = -GEMB.dz2z(prof[:dz])
                     idx = zc .<= depth
                     push!(out, sum(prof[:density][idx]) / count(idx))
@@ -366,7 +378,7 @@ using Dates
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
         params = initialize_parameters(output_frequency=:last)
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         # No convergence check → runs the full max_iterations, converged=false.
         prof_max = gemb_spinup(profile, forcing, params; max_iterations=3)
@@ -375,6 +387,7 @@ using Dates
         @test pm[:spinup_converged] == false
         @test pm[:spinup_max_iterations] == 3
         @test isnan(pm[:spinup_final_delta_density])
+        @test isnan(pm[:spinup_final_drift_density])
 
         # Loose tolerance → converges early, before max_iterations.
         prof_conv = gemb_spinup(profile, forcing, params;
@@ -384,6 +397,100 @@ using Dates
         @test pc[:spinup_cycles] < 50
         @test pc[:spinup_convergence_delta_density] == 1e3
         @test isfinite(pc[:spinup_final_delta_density])
+        # Drift was not requested, so it is recorded as unset rather than as passed.
+        @test pc[:spinup_convergence_drift_density] === nothing
+        @test isnan(pc[:spinup_final_drift_density])
+        @test pc[:spinup_drift_window] == GEMB.SPINUP_DRIFT_WINDOW
+    end
+
+    @testset "Column-mean density is mass-weighted and grid-independent" begin
+        mk(dz, rho) = DimStack((dz=DimArray(dz, (Z(1:length(dz)),)),
+                                density=DimArray(rho, (Z(1:length(dz)),))))
+
+        # Mass-weighted, not cell-count-weighted: one thick dense cell must dominate
+        # three thin light ones. Arithmetic mean would be 550.
+        s = mk([0.1, 0.1, 0.1, 9.7], [400.0, 400.0, 400.0, 900.0])
+        @test GEMB._column_mean_density(s) ≈ (3 * 0.1 * 400.0 + 9.7 * 900.0) / 10.0
+        @test GEMB._column_mean_density(s) > 850.0
+
+        # Splitting a cell in two without moving mass leaves the mean untouched — this
+        # is the grid-independence the removed spline used to buy over a partial depth.
+        coarse = mk([1.0, 1.0], [500.0, 700.0])
+        fine   = mk([0.5, 0.5, 0.25, 0.75], [500.0, 500.0, 700.0, 700.0])
+        @test GEMB._column_mean_density(coarse) ≈ GEMB._column_mean_density(fine)
+        @test GEMB._column_mean_density(coarse) ≈ 600.0
+    end
+
+    @testset "Density drift: least-squares slope" begin
+        drift = GEMB._density_drift
+
+        # Exact recovery of a known slope, and sign follows the trend direction.
+        rising = [100.0 + 3.0 * k for k in 0:9]
+        @test drift(rising, 10) ≈ 3.0
+        @test drift(reverse(rising), 10) ≈ -3.0
+
+        # A settled column oscillating about a fixed mean has ~zero slope even though
+        # its consecutive deltas are large — the case the step test cannot detect.
+        osc = [500.0 + (isodd(k) ? 5.0 : -5.0) for k in 1:10]
+        @test abs(drift(osc, 10)) < 1.5
+        @test maximum(abs.(diff(osc))) ≈ 10.0
+
+        # Window truncates to the trailing cycles: the early transient is excluded.
+        history = vcat([100.0, 200.0, 300.0], [500.0 + 0.1 * k for k in 0:9])
+        @test drift(history, 10) ≈ 0.1 atol = 1e-9
+        # Fewer points than the window is allowed (fits what is there); fewer than 2 is not.
+        @test drift(rising, 100) ≈ 3.0
+        @test isnan(drift([1.0], 10))
+    end
+
+    @testset "Drift convergence criterion" begin
+        n = 365
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        params = initialize_parameters(output_frequency=:last)
+        profile = initialize_profile(params, forcing)
+
+        # Drift alone, loose tolerance. It cannot fire before the window is full, so the
+        # earliest possible exit is at cycle == drift_window.
+        prof_d = gemb_spinup(profile, forcing, params;
+                             max_iterations=12, convergence_drift_density=1e3,
+                             drift_window=3)
+        pd = DimensionalData.metadata(prof_d)
+        @test pd[:spinup_converged] == true
+        @test pd[:spinup_cycles] == 3
+        @test pd[:spinup_drift_window] == 3
+        @test pd[:spinup_convergence_drift_density] == 1e3
+        @test isfinite(pd[:spinup_final_drift_density])
+        @test pd[:spinup_final_drift_density] >= 0.0   # magnitude, not signed slope
+
+        # An unreachable drift tolerance cannot converge, however loose the delta is.
+        prof_and = gemb_spinup(profile, forcing, params;
+                               max_iterations=4, convergence_delta_density=1e3,
+                               convergence_drift_density=0.0, drift_window=2)
+        pa = DimensionalData.metadata(prof_and)
+        @test pa[:spinup_converged] == false
+        @test pa[:spinup_cycles] == 4
+        # ...and the delta criterion did pass on its own, so AND is what blocked it.
+        @test pa[:spinup_final_delta_density] < 1e3
+
+        # Symmetrically: a loose drift cannot rescue an unreachable delta.
+        prof_and2 = gemb_spinup(profile, forcing, params;
+                                max_iterations=4, convergence_delta_density=0.0,
+                                convergence_drift_density=1e3, drift_window=2)
+        @test DimensionalData.metadata(prof_and2)[:spinup_converged] == false
+
+        # Both loose → converges as soon as both are computable (cycle 2 here).
+        prof_both = gemb_spinup(profile, forcing, params;
+                                max_iterations=12, convergence_delta_density=1e3,
+                                convergence_drift_density=1e3, drift_window=2)
+        @test DimensionalData.metadata(prof_both)[:spinup_cycles] == 2
+
+        # A window too short to fit a slope is rejected up front, not silently ignored.
+        @test_throws ErrorException gemb_spinup(profile, forcing, params;
+            max_iterations=1, convergence_drift_density=1.0, drift_window=1)
     end
 
     @testset "Spinup with zero accumulation" begin
@@ -411,7 +518,7 @@ using Dates
         )
 
         # Should still work, just won't grow
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
         output = gemb_spinup(profile, forcing, params; max_iterations=2)
 
         @test output isa DimStack

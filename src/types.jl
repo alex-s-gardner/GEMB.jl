@@ -73,9 +73,12 @@ Base.@kwdef struct ModelParameters
     column_dztop::Float64 = 0.05
     column_dzmin::Float64 = 0.025
     column_dzmax::Float64 = 0.075
-    # `column_depth` sets the depth of the constructed grid (`initialize_grid`) and hence the
-    # fixed total column depth held for the whole run.
-    column_depth::Float64 = 250.0
+    # A *ceiling* on the depth of the constructed grid, not the depth itself:
+    # `initialize_profile` sizes the column to the depth the forcing climate needs
+    # (`_derive_column_depth`) and clamps it here, so an ablation site is not made to carry
+    # hundreds of metres of solid ice. The depth actually chosen is `sum(profile[:dz])`,
+    # which is what stays fixed for the run — nothing downstream reads this field.
+    column_depth_max::Float64 = 250.0
     column_zy::Float64 = 1.10
 
     # --- Thermal Time Stepping ---

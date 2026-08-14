@@ -29,10 +29,9 @@ mp = initialize_parameters(output_frequency=:daily)
 println("   Output frequency: $(mp.output_frequency)")
 println("   Densification model: $(mp.densification_model)")
 
-# Initialize a column. Returns (profile, mp); the returned mp carries the
-# climate-derived column limits — rebind it.
+# Initialize a column. Its grid is sized to the depth this climate needs.
 println("\n3. Initializing profile...")
-profile, mp = initialize_profile(mp, cf)
+profile = initialize_profile(mp, cf)
 println("   Initial layers: $(length(profile.dz))")
 println("   Initial column height: $(sum(profile.dz)) m")
 println("   Initial mean temperature: $(round(mean(profile.temperature), digits=2)) K")
@@ -44,9 +43,8 @@ cf_climatology = forcing_climatology(cf)
 println("   Climatology length: $(length(cf_climatology.temperature_air)) steps")
 
 # Spin up a profile for up to 75 years of average forcing (exits early on convergence).
-# gemb_spinup internally forces output_frequency=:last, so pass the mp returned by
-# initialize_profile (with its derived column limits) rather than a separate
-# :last params object.
+# gemb_spinup internally forces output_frequency=:last, so no separate :last params
+# object is needed.
 println("\n5. Running spinup (up to 75 years)...")
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
                              max_iterations=75, convergence_delta_density=0.01)
