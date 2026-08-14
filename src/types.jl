@@ -34,6 +34,10 @@ Base.@kwdef struct ModelParameters
 
     # --- Melt & Water ---
     water_irreducible_saturation::Float64 = 0.07
+    # `:constant` holds `water_irreducible_saturation` at every density (Colbeck, 1974, as
+    # in MATLAB). `:ColeouLesaffre` makes it density-dependent and ignores
+    # `water_irreducible_saturation` — see `irreducible_saturation`.
+    water_irreducible_method::Symbol = :constant
 
     # --- Albedo & Radiation ---
     albedo_method::Symbol = :GardnerSharp

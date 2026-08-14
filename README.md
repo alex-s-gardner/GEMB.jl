@@ -230,6 +230,16 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   Model's, against which the implementation is cross-checked to the 0.102% `g` offset. As for
   `:GSFC2020`, the accumulation units are load-bearing (`γ ∝ A^−1/2`): `precipitation_mean` is
   kg m⁻² yr⁻¹.
+- **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
+  `0.07` that overrides the documented parameter at every percolation retention site; only
+  the pre-percolation squeeze read the parameter. Changes output wherever
+  `water_irreducible_saturation != 0.07` (upstream
+  [#199](https://github.com/alex-s-gardner/GEMB/issues/199)).
+- **Added `water_irreducible_method = :ColeouLesaffre`** — density-dependent irreducible
+  saturation, `S_wi = wmi/(1−wmi)·ρᵢρ/(ρ_w(ρᵢ−ρ))` with `wmi = 0.057(ρᵢ−ρ)/ρ + 0.017`
+  (Coléou and Lesaffre 1998 eq. 3 via Langen et al. 2017 eq. 4), matching the Community Firn
+  Model. Retention is zero at and above `DENSITY_PORE_CLOSEOFF`, as in CFM. Default
+  `:constant` is unchanged and bit-identical.
 
 ### Fixed-length vertical grid
 

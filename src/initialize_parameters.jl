@@ -47,6 +47,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.thermal_conductivity_method in (:Sturm, :Calonne) "thermal_conductivity_method must be Sturm or Calonne"
 
     # Water
+    @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
 
     # Albedo method

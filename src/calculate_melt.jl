@@ -1,4 +1,41 @@
 """
+    irreducible_saturation(mp::ModelParameters, density) -> S_wi [-]
+
+Irreducible (capillary-held) water saturation of the pore space, per
+`mp.water_irreducible_method`. The retention of a cell is `(ρᵢ − ρ) · S_wi · dz`
+[kg m-2] at every site that uses it, so only `S_wi` varies between methods.
+
+- `:constant` — `mp.water_irreducible_saturation` at every density (Colbeck, 1974).
+  This is the MATLAB behaviour and the default.
+- `:ColeouLesaffre` — Coléou and Lesaffre (1998) eq. 3 via Langen et al. (2017) eq. 4,
+  where irreducible water mass per unit total mass is
+  `wmi = 0.057(ρᵢ − ρ)/ρ + 0.017` and
+
+      S_wi = wmi/(1 − wmi) · ρᵢ·ρ / (ρ_w(ρᵢ − ρ))
+
+  `mp.water_irreducible_saturation` is ignored. Retention rises with density —
+  ~0.069 at ρ = 300 against ~0.163 at ρ = 800 (ρᵢ = 917) — which is where the constant
+  value under-retains most, in the percolation zone.
+
+Both methods are gated at `DENSITY_PORE_CLOSEOFF`, where there is no connected pore
+space left to hold water: `:ColeouLesaffre` returns zero there, as the Community Firn
+Model and [`_irreducible_water`](@ref) do. `:constant` is deliberately *not* gated, so
+the default path stays bit-identical to MATLAB. The gate also removes the `ρ → ρᵢ`
+singularity in `S_wi`; the retention product `(ρᵢ − ρ)·S_wi` is finite in that limit,
+but the saturation alone is not.
+"""
+@inline function irreducible_saturation(mp::ModelParameters, density::Float64)
+    if mp.water_irreducible_method === :constant
+        return mp.water_irreducible_saturation
+    end
+    # :ColeouLesaffre
+    density >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return 0.0
+    ρi = mp.density_ice
+    wmi = 0.057 * (ρi - density) / density + 0.017
+    return wmi / (1 - wmi) * ρi * density / (DENSITY_WATER * (ρi - density))
+end
+
+"""
     calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
@@ -53,9 +90,6 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     # the caller's temperature vector) to preserve the previous behavior.
     temperature = min.(temperature, CtoK)
 
-    # specify irreducible water content saturation [fraction]
-    water_irreducible_saturation = 0.07
-
     ## REFREEZE PORE WATER
 
     if sum(water) > water_tolerance
@@ -96,7 +130,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     # the water_irreducible temporary)
     water_excess = Vector{Float64}(undef, m)
     @inbounds for i in 1:m
-        water_irreducible = (mp.density_ice - density[i]) * mp.water_irreducible_saturation * (M[i] / density[i])
+        water_irreducible = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
         water_excess[i] = max(0.0, water[i] - water_irreducible)
     end
 
@@ -198,7 +232,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                    ((density[i] >= d_phc - d_tolerance) && (ice_depth > ice_layer_dzmin + d_tolerance))
 
                 M[i] = M[i] - melt[i]
-                water_irr = (mp.density_ice - density[i]) * water_irreducible_saturation * (M[i] / density[i])
+                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
                 water_delta[i] = max(min(melt_input, water_irr - water[i]), -water[i])
                 runoff[i] = max(0.0, melt_input - water_delta[i])
 
@@ -206,7 +240,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             elseif abs(freeze_max[i]) < d_tolerance
 
                 M[i] = M[i] - melt[i]
-                water_irr = (mp.density_ice - density[i]) * water_irreducible_saturation * (M[i] / density[i])
+                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
                 water_delta[i] = max(min(melt_input, water_irr - water[i]), -1 * water[i])
                 flux_dn[i+1] = max(0.0, melt_input - water_delta[i])
                 runoff[i] = 0.0
@@ -220,8 +254,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                 M[i] = M[i] + freeze1
                 density[i] = M[i] / dz_0
 
-                # pore water
-                water_irr = (mp.density_ice - density[i]) * water_irreducible_saturation * dz_0
+                # pore water. `density[i]` is the post-refreeze value, so the saturation
+                # is evaluated on it too under `:ColeouLesaffre`.
+                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * dz_0
                 water_delta[i] = max(min(melt_input - freeze1, water_irr - water[i]), -1 * water[i])
                 freeze2 = 0.0
 
