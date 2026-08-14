@@ -47,6 +47,7 @@ function initialize_forcing(
     latitude::Real=NaN,
     longitude::Real=NaN,
     elevation::Real=NaN,
+    elevation_native::Real=NaN,
     elevation_offset::Real=0.0
 )
     # Validate input sizes
@@ -126,6 +127,7 @@ function initialize_forcing(
         latitude=latitude,
         longitude=longitude,
         elevation=elevation,
+        elevation_native=elevation_native,
         elevation_offset=elevation_offset,
     )
 end
@@ -253,14 +255,18 @@ function initialize_forcing(stack::DimStack)
     cloud_fraction = get(meta, "cloud_fraction", 0.1)
 
     # Provenance metadata (optional): source name, cell coordinates, the absolute
-    # target `elevation` (m), and any elevation adjustment applied upstream. Absent for
-    # hand-built stacks, so default gracefully. `elevation_offset` supersedes the older
-    # `delta_elevation` key that `climate_adjust_for_elevation` used to write.
+    # target `elevation` (m), the source dataset's own `elevation_native` (m, written as
+    # `elevation_reanalysis` by `climate_adjust_for_elevation`), and any elevation
+    # adjustment applied upstream. Absent for hand-built stacks, so default gracefully.
+    # `elevation_offset` supersedes the older `delta_elevation` key that
+    # `climate_adjust_for_elevation` used to write.
     dataset = get(meta, "dataset", "")
     latitude = get(meta, "latitude", NaN)
     longitude = get(meta, "longitude", NaN)
     elevation = get(meta, "elevation", NaN)
     elevation_offset = get(meta, "elevation_offset", get(meta, "delta_elevation", 0.0))
+    # An unadjusted stack's `elevation` IS its native elevation (no offset applied yet).
+    elevation_native = get(meta, "elevation_reanalysis", elevation)
 
     # Delegate to the vector method, which applies GEMB's validation logic
     return initialize_forcing(
@@ -287,6 +293,7 @@ function initialize_forcing(stack::DimStack)
         latitude = latitude,
         longitude = longitude,
         elevation = elevation,
+        elevation_native = elevation_native,
         elevation_offset = elevation_offset
     )
 end

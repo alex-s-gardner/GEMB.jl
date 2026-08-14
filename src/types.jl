@@ -138,7 +138,7 @@ const CLIMATE_FORCING_LAYER_KEYS = (
 const CLIMATE_FORCING_META_KEYS = (
     :time_step, :temperature_air_mean, :wind_speed_mean, :precipitation_mean,
     :temperature_observation_height, :wind_observation_height,
-    :dataset, :latitude, :longitude, :elevation, :elevation_offset,
+    :dataset, :latitude, :longitude, :elevation, :elevation_native, :elevation_offset,
     :climatology_window_start, :climatology_window_stop,
     :climatology_n_years, :climatology_steps_per_year,
 )
@@ -158,9 +158,14 @@ the stack `metadata` as a `NamedTuple` (keeping their concrete types).
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
-forcing represents after any elevation adjustment), and `elevation_offset` (m the forcing
-was elevation-adjusted by) — are stored alongside the physics scalars and default to
-`""`/`NaN`/`NaN`/`0.0`.
+forcing represents after any elevation adjustment), `elevation_native` (the source
+dataset's own surface elevation, m, before any adjustment), and `elevation_offset`
+(m the forcing was elevation-adjusted by) — are stored alongside the physics scalars
+and default to `""`/`NaN`/`NaN`/`NaN`/`NaN`/`0.0`.
+
+`elevation_offset` is forced to `0.0` when `elevation` is not finite: with no known
+target elevation there is nothing an offset could be measured against, and carrying a
+bare offset invites downstream code to derive a native elevation from `NaN - offset`.
 
 Climatology provenance keywords — `climatology_window_start`,
 `climatology_window_stop` (the requested averaging window, `DateTime` or
@@ -176,7 +181,7 @@ function ClimateForcing(
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
-    elevation::Real=NaN, elevation_offset::Real=0.0,
+    elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
     climatology_window_start=nothing, climatology_window_stop=nothing,
     climatology_n_years::Integer=0, climatology_steps_per_year::Integer=0,
 )
@@ -189,7 +194,10 @@ function ClimateForcing(
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
         temperature_observation_height, wind_observation_height,
-        String(dataset), Float64(latitude), Float64(longitude), Float64(elevation), Float64(elevation_offset),
+        String(dataset), Float64(latitude), Float64(longitude),
+        Float64(elevation), Float64(elevation_native),
+        # No target elevation ⇒ no meaningful offset (see docstring).
+        isfinite(elevation) ? Float64(elevation_offset) : 0.0,
         climatology_window_start, climatology_window_stop,
         Int(climatology_n_years), Int(climatology_steps_per_year),
     ))
