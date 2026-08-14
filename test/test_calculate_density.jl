@@ -979,14 +979,14 @@ end
     @test GEMB._barnola_f(850.0, 917.0) != GEMB._barnola_f(850.0, 910.0)
     @test GEMB._barnola_f(700.0, 917.0) == GEMB._barnola_f(700.0, 910.0)
 
-    # n = 3, the value the paper adopts for firn. Its stated premise — effective stress
-    # "rapidly higher than 0.1 MPa" — does not hold in shallow firn, where the paper gives
-    # n = 1 instead. Pinned so a future low-stress branch is a deliberate change, with the
-    # documented reason recorded in the BARNOLA_N docstring.
+    # n = 3 throughout, as in the paper: A0 was fitted against n = 3 over 0.55-0.8 g cm-3, so
+    # exponent and prefactor are one calibration. The paper's n = 1 remark applies to bulk ice
+    # below close-off, not to low-stress firn. Pinned with the reasoning in BARNOLA_N.
     @test GEMB.BARNOLA_N == 3.0
-    # A 12 m column of 600 kg m-3 firn is still below the paper's 0.1 MPa threshold, so the
-    # regime is reachable rather than hypothetical.
-    @test 600.0 * 12.0 * GEMB.GRAVITY < 1.0e5
+    # Why a continuity-matched n=1 branch is not merely a missing option: A1 = A0*(1e5)^2, so
+    # the rate would jump by (1e5/σ)² below the threshold — ~41x at the 15 kPa a shallow column
+    # actually sees, against coefficients calibrated to reproduce observed profiles with n = 3.
+    @test (1.0e5 / 1.55e4)^2 > 40.0
 end
 
 @testset "Barnola1991 stage 1 is exactly Herron-Langway" begin

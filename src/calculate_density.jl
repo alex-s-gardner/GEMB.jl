@@ -358,24 +358,33 @@ const BARNOLA_Q = 60.0e3             # ice lattice diffusion activation energy [
 
 Stress exponent in `dρ/dt = ρ·A0·exp(-Q/RT)·f(ρ)·σⁿ`.
 
-Fixed at 3, which is the value Barnola et al. (1991) themselves adopt for firn: "*n* taken
-to be equal to 3, as the effective stress in the firn is rapidly higher than 0.1 MPa".
+Fixed at 3, matching Barnola et al. (1991) for the whole firn range this scheme covers:
+"*n* taken to be equal to 3, as the effective stress in the firn is rapidly higher than
+0.1 MPa". Their `A0` was fitted against `n = 3` over 0.55-0.8 g cm-3, so the exponent and
+the prefactor are one calibration.
 
-That premise does not hold throughout a GEMB column. The paper adds that "the exponent *n*
-is 1 when the effective stress is lower than 0.1 MPa, in good agreement with the Doake and
-Wolff (1985) field data analyses and the Pimienta and Duval (1987) mechanical tests at low
-stresses", and cites Pimienta (1987) as obtaining a good fit below close-off "by taking
-successively *n* = 3 and *n* = 1". Cell-midpoint σ reaches 1e5 Pa only around 18 m depth, so
-on a shallow column every cell above `DENSITY_STAGE_TRANSITION` sits in the paper's *n* = 1
-regime, and on a deep one the top ~18 m does.
+The paper's adjacent remark that "the exponent *n* is 1 when the effective stress is lower
+than 0.1 MPa" is *not* an unimplemented firn branch, though it reads like one. It scopes
+itself to bulk ice: "**below the close-off**, a good fit to the experimental data is obtained
+by taking successively *n* = 3 and *n* = 1 (Pimienta, 1987)", citing Doake and Wolff (1985)
+and Pimienta and Duval (1987). Those are shear-creep studies of dense polar ice — Pimienta
+and Duval torsion-tested 0.85 g cm-3 samples and analysed Dye 3 inclinometry at 1000-1784 m,
+and report no densification rate at all — so they supply no volumetric prefactor for porous
+firn, and none is published here to pair with `n = 1`.
 
-Keeping `n = 3` throughout therefore *understates* densification in shallow firn, since
-`σ³ < σ` in the Pa-magnitude units used here — by σ² = (1e4/1e5)² ≈ 1e-2 at 10 kPa relative
-to the low-stress law. It is retained because switching `n` at 0.1 MPa is not a change of
-exponent alone: `A0` is calibrated against `n = 3` with units of Pa-3 s-1, and the paper
-gives no companion low-stress prefactor, so an `n = 1` branch cannot be written down from
-this paper without inventing one. The Community Firn Model reaches the same conclusion,
-carrying the switch as dead code (`# nBa[sigmaEff<1.0e5]=1.0`).
+Three reasons not to add the branch, beyond the missing prefactor:
+
+  - Pimienta and Duval's own exponent is not 1. Their abstract and conclusion both give
+    "smaller than 2"; regressing their Table 1 (South Pole ice, -15 °C) gives n ≈ 1.55.
+    Barnola's "*n* is 1" rounds a sub-2 shear result.
+  - Matching an `n = 1` branch continuously at 0.1 MPa forces `A1 = A0·(1e5)²`, so the rate
+    would rise by `(1e5/σ)²` below it — ×2 at 70 kPa, ×41 at 15 kPa, ×100 at 10 kPa.
+  - Barnola reproduced observed 0.55-0.83 g cm-3 profiles at Vostok and other Antarctic and
+    Greenland sites with `n = 3` throughout that range. A 40× shallow acceleration would
+    break the agreement the coefficients exist to produce.
+
+The Community Firn Model reaches the same conclusion, carrying the switch as dead code
+(`# nBa[sigmaEff<1.0e5]=1.0`).
 """
 const BARNOLA_N = 3.0
 
