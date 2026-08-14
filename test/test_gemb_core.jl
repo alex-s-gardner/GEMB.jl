@@ -97,6 +97,11 @@ end
     # Compaction variables should be scalar
     @test isa(flux.densification_from_compaction, Float64)
     @test isa(flux.densification_from_melt, Float64)
+
+    # Non-local mass exchanges: basal (trim_bottom!) and lateral (horizontal strain).
+    @test isa(flux.mass_added, Float64)
+    @test isa(flux.mass_lateral, Float64)
+    @test flux.mass_lateral == 0.0   # horizontal_strain_rate defaults to 0
 end
 
 @testset "Accumulation event" begin

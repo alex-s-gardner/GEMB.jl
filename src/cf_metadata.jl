@@ -73,6 +73,11 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "column thickness change from dry compaction", "time: sum"),
     :densification_from_melt => CFAttrs("m",
         "column thickness change from melt and wet compaction", "time: sum"),
+    :strain_thinning => CFAttrs("m",
+        "column thickness change from horizontal ice-dynamic strain", "time: sum";
+        comment="Positive = thinning under horizontal divergence. Zero unless " *
+                "horizontal_strain_rate is set. No CF standard name exists for " *
+                "this quantity."),
 
     # ---- monolevel, interval means ------------------------------------------
     :shortwave_net => CFAttrs("W m-2", "net shortwave radiation at the surface",

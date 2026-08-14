@@ -171,6 +171,7 @@ The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes wit
 | `albedo_broadband` | 1 | `time: mean` | Broadband surface albedo |
 | `densification_from_compaction` | m | `time: sum` | Thickness lost to dry compaction |
 | `densification_from_melt` | m | `time: sum` | Thickness lost to melt and wet compaction |
+| `strain_thinning` | m | `time: sum` | Thickness lost to horizontal ice-dynamic strain (positive = thinning); zero unless `horizontal_strain_rate` is set |
 | `thickness_cumulative` | m | `time: mean` | Cumulative thickness change since the start of the run |
 | `firn_air_content` | m | `time: mean` | Total air height in the firn column |
 | `valid_profile_length` | 1 | `time: point` | Number of active vertical levels |

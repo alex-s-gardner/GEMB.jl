@@ -129,6 +129,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         thickness_cumulative=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         valid_profile_length=DimArray(fill(0, n_outputs), (ti_dim,)),
@@ -305,6 +306,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_ec = parent(output[:evaporation_condensation])
     out_dcomp = parent(output[:densification_from_compaction])
     out_dmelt = parent(output[:densification_from_melt])
+    out_strain = parent(output[:strain_thinning])
     out_swnet = parent(output[:shortwave_net])
     out_lwnet = parent(output[:longwave_net])
     out_shf = parent(output[:heat_flux_sensible])
@@ -340,6 +342,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_albedo_broadband = 0.0
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
+    cum_strain_thinning = 0.0
     cum_firn_air_content = 0.0
     cum_thickness = 0.0
     cum_temperature_air = 0.0
@@ -357,6 +360,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     run_runoff = 0.0
     run_ec = 0.0
     run_mass_added = 0.0
+    run_mass_lateral = 0.0
 
     # Output writes occur in chronological order, matching the sorted output
     # time axis, so a single advancing index tracks the output column.
@@ -407,6 +411,9 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_albedo_broadband += flux.albedo_broadband
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
+        # Metres of thinning, sign-flipped so a divergent column reports a positive number.
+        # `flux.mass_lateral` is negative when mass leaves laterally.
+        cum_strain_thinning -= flux.mass_lateral / density_ice
         # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice), computed without a temporary
         # array. Normalizing by `density_ice` (not 1000) is what makes this metres of air
         # rather than metres of water equivalent — see upstream GEMB issue #198.
@@ -425,6 +432,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             run_runoff += flux.runoff
             run_ec += state.evaporation_condensation
             run_mass_added += flux.mass_added
+            run_mass_lateral += flux.mass_lateral
         end
 
         # Store output at designated intervals
@@ -440,6 +448,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_ec[oi] = cum_ec
                 out_dcomp[oi] = cum_densification_compaction
                 out_dmelt[oi] = cum_densification_melt
+                out_strain[oi] = cum_strain_thinning
 
                 # Averaged variables (division preserved for bit-identical results)
                 out_swnet[oi] = cum_shortwave_net / cum_count
@@ -493,6 +502,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_albedo_broadband = 0.0
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0
+            cum_strain_thinning = 0.0
             cum_firn_air_content = 0.0
             cum_thickness = 0.0
             cum_temperature_air = 0.0
@@ -509,17 +519,18 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # number of steps.
     if verbose
         run_mass_final = column_mass(state)
-        supplied = run_precipitation + run_ec + run_mass_added - run_runoff
+        supplied = run_precipitation + run_ec + run_mass_added + run_mass_lateral - run_runoff
         residual = (run_mass_final - run_mass_initial) - supplied
         turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +
-                   abs(run_mass_added) + abs(run_mass_initial)
+                   abs(run_mass_added) + abs(run_mass_lateral) + abs(run_mass_initial)
         tol = max(1e-6, 1e-9 * turnover)
         if abs(residual) > tol
             error("gemb: whole-run mass budget does not close: residual = $(residual) " *
                   "kg m-2 (tolerance $(tol)). Column mass changed by " *
                   "$(run_mass_final - run_mass_initial); sources supplied $(supplied) " *
                   "(precipitation $(run_precipitation), basal $(run_mass_added), " *
-                  "evap/cond $(run_ec), runoff $(run_runoff)).")
+                  "evap/cond $(run_ec), runoff $(run_runoff), " *
+                  "horizontal strain $(run_mass_lateral)).")
         end
         @info "GEMB whole-run mass budget closed" residual basal_flux=run_mass_added
     end
