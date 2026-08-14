@@ -241,9 +241,12 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   `c(ρᵢ−ρ)` relaxation the other schemes share. Cross-checked against the Community Firn
   Model's `Crocus`, which differs in hardcoding `f2 = 4` and adopting van Kampenhout et al.
   (2017)'s retuned `cη = 358`; the paper's `f2` and `cη = 250` are used. Two departures from
-  the published law: `f2` is floored at 1 (eq. 9 is unbounded below and would soften GEMB's
-  fresh snow 7×, a regime the law is not defined on — Crocus applies eq. 9 only to
-  non-dendritic snow with `gs ≥ 0.3 mm`), and `:Crocus` hands cells at or above 450 kg m⁻³
+  the published law: `f2` is floored at 1 (eq. 9 is bounded above but not below, so it
+  *softens* fine-grained snow — 0.368, a 2.7× speedup, at GEMB's 0.05 mm fresh-snow radius.
+  Crocus never reaches that regime because eq. 9 applies only to non-dendritic snow, whose
+  `gs` the paper puts at 0.3–0.4 mm where eq. 9 gives 2.7–4; GEMB carries one grain radius
+  for both regimes, so the floor keeps `f2` a stiffening correction across the domain eq. 9
+  actually covers and inert below it), and `:Crocus` hands cells at or above 450 kg m⁻³
   to `:GSFC2020`. That handover exists because eq. 7 is fitted to a 1–2 m alpine snowpack and
   `exp(bη·ρ)` saturates in firn: the unblended law gives 0.7–0.8× `:Arthern`'s compaction
   rate in the top few metres but only 0.02–0.09× below 20 m. 450 kg m⁻³ is the threshold the

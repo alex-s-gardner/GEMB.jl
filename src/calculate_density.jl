@@ -339,14 +339,33 @@ factors of eqs. 8 and 9:
 `W_liq` is cell water [kg m-2], `D` cell thickness [m], `grain_radius` [mm]; `gs` in eq. 9
 is a grain size, taken here as the grain diameter `2·grain_radius` in metres.
 
-`f2` is floored at 1. Eq. 9 is unbounded below — `gs < g2 = 0.2 mm` makes the exponential
-less than 1, reaching 0.14 at GEMB's fresh-snow radius (`RE_NEW_SNOW`, gs = 0.1 mm), i.e. a
-7× *softening* of new snow. In Crocus that branch is unreachable: eq. 9 applies only to
-non-dendritic snow, whose `gs` the paper bounds at 0.3-0.4 mm (Sect. 3.3), where the
-expression is already at or above its ceiling. GEMB carries a single grain radius for
-dendritic and non-dendritic snow alike and starts it at 0.05 mm, so the floor is what keeps
-the factor a stiffening correction as eq. 9 intends rather than a large softening of exactly
-the cells where the law is not defined.
+`f2` is floored at 1, which the published eq. 9 does not do. Two facts force the choice:
+
+ 1. Eq. 9 is bounded above (`min(4.0, ...)`) but not below. It crosses 1 at `gs = g2 =
+    0.2 mm` and decays as `exp((gs − g2)/g3)` beneath that, so a *fine*-grained cell gets
+    `f2 < 1` — a softening, from a factor the paper introduces to "account for [...] the
+    increase of viscosity with angular grains". At GEMB's fresh-snow radius
+    (`RE_NEW_SNOW = 0.05 mm`, so gs = 0.1 mm) it is `exp(-1) = 0.368`, i.e. new snow
+    compacts 2.7× faster than the unmodified eq. 7 rate.
+ 2. In Crocus that regime is unreachable, so the paper never has to bound it. Eq. 9 is a
+    *non-dendritic* relation, and Crocus tracks dendricity explicitly: fresh snow is
+    dendritic (Sect. 3.3) and is described by `d` and `s`, not by `gs`. A layer only
+    acquires a `gs` once `d` reaches 0, and the paper puts non-dendritic `gs` in the
+    0.3-0.4 mm range — where eq. 9 gives 2.7 to 4 (its cap binds at gs = 0.339 mm). Every
+    `gs` the paper's own model can present to eq. 9 therefore yields `f2 >= 2.7`.
+
+GEMB has no such gate: it carries one `grain_radius` for dendritic and non-dendritic snow
+alike, and initializes it at 0.05 mm — squarely inside the interval eq. 9 leaves undefined.
+Passing that radius through unfloored would apply a 1.6-2.7× softening to the fresh snow at
+the top of the column, inverting the factor's intent for the cells it was never meant to
+score. Flooring at 1 makes `f2` a pure stiffening correction, which is what eq. 9 does
+across its whole valid domain, and leaves it inert (`f2 = 1`) below it rather than
+extrapolating a relation off its domain.
+
+`grain_dendricity` is available in the column state, so a closer port could gate eq. 9 on
+`d == 0` as Crocus does. That would need a defensible `f2` for dendritic snow — the paper
+supplies none, since the question does not arise there — so the floor is the conservative
+reading, not the only one.
 
 Deviates from the Community Firn Model's `Crocus`, which was used to cross-check eq. 7 and
 the `dρ/dt = ρσ/η` form: CFM hardcodes `f2 = 4.0` (eq. 9's ceiling, so it stiffens every

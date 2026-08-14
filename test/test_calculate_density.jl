@@ -670,11 +670,20 @@ end
     @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 0.12) ≈ exp(0.4) * η_dry rtol = 1e-14
     @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 2.5) ≈ 4.0 * η_dry rtol = 1e-14
 
-    # Below gs = 0.2 mm eq. 9 would fall under 1 and soften the snow (0.14× at GEMB's
-    # fresh-snow radius). The floor keeps it a stiffening correction — see
-    # `_crocus_viscosity`. Without the floor this returns η_dry/7.
+    # Below gs = 0.2 mm eq. 9 falls under 1 and would *soften* the snow. The floor keeps it
+    # a stiffening correction across eq. 9's valid domain and inert below it — see
+    # `_crocus_viscosity` for why the paper never has to bound this.
     @test GEMB._crocus_viscosity(ρ, T, 0.0, D, GEMB.RE_NEW_SNOW) ≈ η_dry rtol = 1e-14
     @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 0.01) ≈ η_dry rtol = 1e-14
+    # Pin what the floor is suppressing: at the fresh-snow radius the raw eq. 9 is exp(-1),
+    # a 2.7× softening. If the floor is ever removed this is the factor that appears.
+    f2_raw(gs) = exp(min(GEMB.CROCUS_G1, gs - GEMB.CROCUS_G2) / GEMB.CROCUS_G3)
+    @test f2_raw(2 * GEMB.RE_NEW_SNOW / 1000) ≈ exp(-1.0) rtol = 1e-14
+    @test f2_raw(2 * GEMB.RE_NEW_SNOW / 1000) ≈ 0.3679 atol = 1e-4
+    # And that the paper's own non-dendritic range never enters that regime: eq. 9 is
+    # 2.7 at gs = 0.3 mm and at its cap of 4 by 0.339 mm.
+    @test f2_raw(3.0e-4) ≈ exp(1.0) rtol = 1e-14
+    @test f2_raw(3.39e-4) > GEMB.CROCUS_F2_MAX
 
     # Monotone non-decreasing in grain size across the whole GEMB range.
     η_gs = [GEMB._crocus_viscosity(ρ, T, 0.0, D, r) for r in 0.01:0.01:GEMB.GRAIN_RADIUS_ICE]
