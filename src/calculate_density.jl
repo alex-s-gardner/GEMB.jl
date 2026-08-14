@@ -45,10 +45,9 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     method = mp.densification_method
 
     if method == :HerronLangway
+        # Rate coefficients `_hl_c0`/`_hl_c1` are shared with `steady_state_density`.
         @inbounds for i in 1:m
             T = temperature[i]
-            # Herron & Langway (1980) two-stage rate coefficient [yr-1]; see
-            # `_hl_c0`/`_hl_c1` (shared with `herron_langway_steady_state`).
             c = density[i] <= 550.0 + d_tolerance ? _hl_c0(T, pm) : _hl_c1(T, pm)
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
         end
@@ -56,9 +55,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     elseif method == :Arthern
         precip_force = pm * 9.81
         @inbounds for i in 1:m
-            T = temperature[i]
-            H = exp((-60000.0 / (T * R)) + (42400.0 / (tam * R))) * precip_force
-            c = (density[i] <= 550.0 + d_tolerance ? 0.07 : 0.03) * H
+            c = _arthern_c(density[i], temperature[i], tam, precip_force)
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
         end
 
@@ -96,24 +93,11 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         end
 
     elseif method == :Ligtenberg
-        precip_force = pm * 9.81
-        M01 = densification_lookup_M01(mp.densification_coeffs_M01)
-        if length(M01) == 4
-            M0 = max(M01[1] - (M01[2] * log(pm)), 0.25)
-            M1 = max(M01[3] - (M01[4] * log(pm)), 0.25)
-        else
-            if abs(density_ice - 820.0) < d_tolerance
-                M0 = max(M01[1, 1] - (M01[1, 2] * log(pm)), 0.25)
-                M1 = max(M01[1, 3] - (M01[1, 4] * log(pm)), 0.25)
-            else
-                M0 = max(M01[2, 1] - (M01[2, 2] * log(pm)), 0.25)
-                M1 = max(M01[2, 3] - (M01[2, 4] * log(pm)), 0.25)
-            end
-        end
+        # M0/M1 depend only on the climatological accumulation, so hoist them via
+        # DensificationCoeffs (shared with `steady_state_density`).
+        p = DensificationCoeffs(mp, pm, tam)
         @inbounds for i in 1:m
-            T = temperature[i]
-            H = exp((-60000.0 / (T * R)) + (42400.0 / (tam * R))) * precip_force
-            c = density[i] <= 550.0 + d_tolerance ? M0 * (0.07 * H) : M1 * (0.03 * H)
+            c = _ligtenberg_c(density[i], temperature[i], tam, p.precip_force, p.M0, p.M1)
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
         end
 
@@ -146,13 +130,97 @@ mass-conserving new grid-cell length to `dz_out[i]`.
     end
 end
 
-# Herron & Langway (1980) two-stage densification rate coefficients [yr-1],
-# equivalent to Arthern et al. (2010) eq. (2). `T` is layer temperature [K] and
-# `pm` is mean annual accumulation [kg m-2 yr-1]. These are the single source of
-# truth shared by the transient `:HerronLangway` branch above and the steady-state
-# profile below, so the two can never drift. `R_GAS = 8.314 J mol-1 K-1`.
+# ---------------------------------------------------------------------------
+# Densification rate coefficients `c` [yr-1]
+#
+# These are the single source of truth for the three methods `validate_parameters`
+# permits: they are called both by the transient branches of `calculate_density`
+# above and by the steady-state marcher (`steady_state_density`), so the two can
+# never drift. Each is a plain `@inline` function of the layer state, and the
+# loop-invariant terms are hoisted by the caller into `DensificationCoeffs`, so
+# routing the hot loop through them costs nothing relative to the inline form.
+#
+# `T` is layer temperature [K], `ρ` layer density [kg m-3], `pm` mean annual
+# accumulation [kg m-2 yr-1], `tam` mean annual air temperature [K].
+# `R_GAS = 8.314 J mol-1 K-1`.
+# ---------------------------------------------------------------------------
+
+# Herron & Langway (1980) two-stage coefficients, equivalent to Arthern et al.
+# (2010) eq. (2).
 @inline _hl_c0(T::Float64, pm::Float64) = (11.0 * exp(-10160.0 / (T * R_GAS))) * (pm / 1000.0)          # ρ <= 550
 @inline _hl_c1(T::Float64, pm::Float64) = (575.0 * exp(-21400.0 / (T * R_GAS))) * sqrt(pm / 1000.0)     # ρ > 550
+
+# Arthern et al. (2010) semi-empirical. `precip_force = pm * 9.81`, hoisted.
+@inline function _arthern_c(ρ::Float64, T::Float64, tam::Float64, precip_force::Float64)
+    H = exp((-60000.0 / (T * R_GAS)) + (42400.0 / (tam * R_GAS))) * precip_force
+    return (ρ <= 550.0 + D_TOLERANCE ? 0.07 : 0.03) * H
+end
+
+# Ligtenberg et al. (2011): Arthern scaled by the accumulation-dependent M0/M1.
+@inline function _ligtenberg_c(ρ::Float64, T::Float64, tam::Float64,
+    precip_force::Float64, M0::Float64, M1::Float64)
+    H = exp((-60000.0 / (T * R_GAS)) + (42400.0 / (tam * R_GAS))) * precip_force
+    return ρ <= 550.0 + D_TOLERANCE ? M0 * (0.07 * H) : M1 * (0.03 * H)
+end
+
+"""
+    DensificationCoeffs(mp::ModelParameters, pm, tam)
+
+Loop-invariant densification terms for `mp.densification_method`, hoisted out of
+the per-cell / per-age-step loop: the accumulation forcing `pm * 9.81` and the
+Ligtenberg `M0`/`M1` scalings. Shared by [`calculate_density`](@ref) and
+[`steady_state_density`](@ref) so both derive `c` from identical inputs.
+
+`pm` is mean annual accumulation [kg m-2 yr-1] and `tam` mean annual air
+temperature [K].
+"""
+struct DensificationCoeffs
+    method::Symbol
+    pm::Float64
+    tam::Float64
+    precip_force::Float64
+    M0::Float64
+    M1::Float64
+end
+
+function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
+    pm = Float64(pm)
+    tam = Float64(tam)
+    M0 = M1 = NaN
+    if mp.densification_method == :Ligtenberg
+        M01 = densification_lookup_M01(mp.densification_coeffs_M01)
+        if length(M01) == 4
+            M0 = max(M01[1] - (M01[2] * log(pm)), 0.25)
+            M1 = max(M01[3] - (M01[4] * log(pm)), 0.25)
+        elseif abs(mp.density_ice - 820.0) < D_TOLERANCE
+            M0 = max(M01[1, 1] - (M01[1, 2] * log(pm)), 0.25)
+            M1 = max(M01[1, 3] - (M01[1, 4] * log(pm)), 0.25)
+        else
+            M0 = max(M01[2, 1] - (M01[2, 2] * log(pm)), 0.25)
+            M1 = max(M01[2, 3] - (M01[2, 4] * log(pm)), 0.25)
+        end
+    end
+    return DensificationCoeffs(mp.densification_method, pm, tam, pm * 9.81, M0, M1)
+end
+
+"""
+    _densification_rate(p::DensificationCoeffs, ρ, T) -> c [yr-1]
+
+Densification rate coefficient for the method in `p`, dispatching on
+`p.method`. Used by [`steady_state_density`](@ref), where the branch is taken
+once per age step rather than once per cell. `calculate_density`'s hot loop calls
+the per-method functions directly, so it takes the branch once per call.
+"""
+@inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
+    if p.method == :HerronLangway
+        return ρ <= 550.0 + D_TOLERANCE ? _hl_c0(T, p.pm) : _hl_c1(T, p.pm)
+    elseif p.method == :Arthern
+        return _arthern_c(ρ, T, p.tam, p.precip_force)
+    elseif p.method == :Ligtenberg
+        return _ligtenberg_c(ρ, T, p.tam, p.precip_force, p.M0, p.M1)
+    end
+    error("unrecognized densification method: $(p.method)")
+end
 
 """
     herron_langway_steady_state(z_center, T_mean, accumulation, ρ0, ρ_ice;
