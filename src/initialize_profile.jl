@@ -1,16 +1,16 @@
 """
     initialize_profile(mp::ModelParameters, cf::ClimateForcing;
                        constant_density=false, constant_temperature=false)
-        -> (profile::DimStack, mp::ModelParameters)
+        -> profile::DimStack
 
 Initialize a GEMB firn column profile as a DimStack, as a steady-state guess
 derived entirely from the climate forcing.
 
-Returns a tuple `(profile, mp)`. The returned `mp` equals the input parameters
-except for `column_depth`, which is sized to the depth this climate needs (see
-[`_adjust_column_depth`](@ref)) — pass the returned `mp` to [`gemb`](@ref) /
-[`gemb_spinup`](@ref) so the adjusted depth is honored at runtime as well as in
-the initial grid.
+The grid is sized to the depth this climate needs (see
+[`_derive_column_depth`](@ref)) rather than to the configured `mp.column_depth_max`,
+which acts as a ceiling. Nothing else has to be told about that: the derived depth
+lives in the returned `dz`, and both [`gemb`](@ref) and [`gemb_spinup`](@ref) take
+the column depth they hold fixed from `sum(profile[:dz])`, not from `mp`.
 
 # The scheme
 
@@ -40,7 +40,8 @@ of solid ice.
 Both flags exist **only to reproduce the MATLAB `model_initialize_profile`
 initialization** for the fidelity and regression tests. They are not physically
 meaningful choices for a real run — the climate-derived guess is strictly better —
-and both bypass the derived `column_depth`, keeping the configured value.
+and either one builds the grid on the configured `mp.column_depth_max`, bypassing the
+derived depth.
 
 - `constant_density`: fill density with `mp.density_ice`, with the matching
   bare-ice grain state (`grain_dendricity = 0`, `grain_sphericity = 0`,
@@ -69,19 +70,18 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # MATLAB-fidelity path: nothing here is climate-derived, so short-circuit
     # before the summary and the march so neither can perturb it.
     if constant_density && constant_temperature
-        return _uniform_ice_profile(mp, T_mean), mp
+        return _uniform_ice_profile(mp, T_mean)
     end
 
     cs = initialize_climate_summary(cf, mp)
 
-    # Size the grid to the depth this climate needs, unless a fidelity flag pins
-    # it. `column_depth` fixes the run's column depth, so the rebuilt mp is
-    # returned to the caller.
-    if !(constant_density || constant_temperature)
-        mp = _adjust_column_depth(mp, cs)
-    end
+    # Size the grid to the depth this climate needs, unless a fidelity flag pins it
+    # to the configured value. The depth is not returned: it is realized in `dz`,
+    # which is what fixes the column depth for the run.
+    depth = (constant_density || constant_temperature) ? mp.column_depth_max :
+            _derive_column_depth(mp, cs)
 
-    dz = initialize_grid(mp)
+    dz = initialize_grid(mp, depth)
     m = length(dz)
 
     ss = steady_state_profile(dz, cs, mp)
@@ -120,9 +120,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
     # so a profile describes itself the same way whichever end of the pipeline it came
     # from. No `cell_methods`: there is no time dimension here.
-    profile = DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
-
-    return profile, mp
+    return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end
 
 """
@@ -155,14 +153,16 @@ function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
 end
 
 """
-    _adjust_column_depth(mp::ModelParameters, cs::ClimateSummary;
+    _derive_column_depth(mp::ModelParameters, cs::ClimateSummary;
                          margin=1.2, thermal_depths=4)
-        -> ModelParameters
+        -> depth [m]
 
-Rebuild `mp` with `column_depth` sized to the depth this climate needs, replacing
-the old binary 250-vs-25 m switch with a continuous derivation.
+Total column depth this climate needs, replacing the old binary 250-vs-25 m switch
+with a continuous derivation. Used to build the grid in
+[`initialize_profile`](@ref); it goes no further than that, since the grid is what
+carries the depth forward.
 
-The configured `mp.column_depth` is treated as a **ceiling** rather than a target,
+The configured `mp.column_depth_max` is treated as a **ceiling** rather than a target,
 so a shallow-firn or ablation site is not forced to carry hundreds of metres of
 solid ice, while a deep cold site is unaffected. Two requirements set the depth:
 
@@ -179,14 +179,14 @@ solid ice, while a deep cold site is unaffected. Two requirements set the depth:
    physics rather than a constant.
 
 The result is `clamp(max(firn requirement, thermal floor), mp.column_ztop,
-mp.column_depth)`. Depths are found by marching on a coarse 1 m probe grid, which
+mp.column_depth_max)`. Depths are found by marching on a coarse 1 m probe grid, which
 is all the resolution two scalars need and keeps this independent of the final grid
 it is used to build.
 """
-function _adjust_column_depth(mp::ModelParameters, cs::ClimateSummary;
+function _derive_column_depth(mp::ModelParameters, cs::ClimateSummary;
     margin::Real=1.2, thermal_depths::Real=4)
 
-    ceiling = mp.column_depth
+    ceiling = mp.column_depth_max
 
     # Coarse uniform probe grid spanning the ceiling.
     probe_dz = fill(1.0, max(ceil(Int, ceiling), 1))
@@ -196,13 +196,7 @@ function _adjust_column_depth(mp::ModelParameters, cs::ClimateSummary;
     d_thermal = thermal_damping_depth(cs.temperature_air_mean, mp.density_ice, mp)
 
     depth = max(margin * ss.ice_depth, thermal_depths * d_thermal)
-    depth = clamp(depth, mp.column_ztop, ceiling)
-    depth == ceiling && return mp
-
-    return ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(ModelParameters)
-             if f != :column_depth)...,
-        column_depth=Float64(depth))
+    return Float64(clamp(depth, mp.column_ztop, ceiling))
 end
 
 """
@@ -266,14 +260,21 @@ function _albedo_forcing_step(cs::ClimateSummary, mp::ModelParameters)
 end
 
 """
-    initialize_grid(mp::ModelParameters)
+    initialize_grid(mp::ModelParameters, depth=mp.column_depth_max)
 
-Generate the initial vertical grid layer thicknesses.
+Generate the initial vertical grid layer thicknesses, spanning `depth`.
 Matches MATLAB's `model_initialize_grid` (local function in model_initialize_profile.m).
+
+`depth` is an argument rather than read from `mp` because [`initialize_profile`](@ref)
+builds the grid on the climate-derived depth ([`_derive_column_depth`](@ref)), for
+which `mp.column_depth_max` is only the ceiling. It is the depth the grid actually
+spans, hence `depth` and not `column_depth_max`.
 
 Returns a Vector{Float64} of layer thicknesses from surface to depth.
 """
-function initialize_grid(mp::ModelParameters)
+initialize_grid(mp::ModelParameters) = initialize_grid(mp, mp.column_depth_max)
+
+function initialize_grid(mp::ModelParameters, depth::Real)
 
     # Calculate number of top grid points
     n_top = mp.column_ztop / mp.column_dztop
@@ -293,7 +294,7 @@ function initialize_grid(mp::ModelParameters)
     gp0 = mp.column_dztop
     z0 = mp.column_ztop
 
-    while mp.column_depth > (z0 + D_TOLERANCE)
+    while depth > (z0 + D_TOLERANCE)
         dz_new = gp0 * mp.column_zy
         push!(dzB, dz_new)
         gp0 = dz_new

@@ -29,7 +29,7 @@ using Dates
         )
 
         # Initialize profile
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         # Run model for 1 week
         output = gemb(profile, forcing, params)
@@ -82,7 +82,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         output = gemb(profile, forcing, params)
 
@@ -94,7 +94,7 @@ using Dates
         end
 
         # NOTE: initialize_profile can build a column that slightly overshoots
-        # column_depth; the first manage_layer_thickness call trims the bottom layer to
+        # column_depth_max; the first manage_layer_thickness call trims the bottom layer to
         # bring the column back within bounds. That one-time trim is mass leaving
         # through the bottom domain boundary (a legitimate grid operation), not a
         # physics conservation violation. Comparing the pre-trim initial mass to
@@ -137,7 +137,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
         initial_mass = sum(profile.density .* profile.dz)
 
         output = gemb(profile, forcing, params)
@@ -172,7 +172,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         # Test different output frequencies
         for freq in [:all, :daily, :last]
@@ -217,7 +217,7 @@ using Dates
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
         params = initialize_parameters(output_frequency=:last)
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
 
         # No spinup: gemb runs directly on the freshly initialized profile.
         out_nospin = gemb(profile, forcing, params)
@@ -245,7 +245,7 @@ using Dates
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
         params = initialize_parameters(output_frequency=:monthly)
-        profile, params = initialize_profile(params, forcing)
+        profile = initialize_profile(params, forcing)
         out = gemb(profile, forcing, params)
 
         # Every layer is described, in the stack's own key order. DimensionalData

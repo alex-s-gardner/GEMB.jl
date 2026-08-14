@@ -26,27 +26,35 @@ function synthetic_forcing()
     return GEMB.initialize_forcing(ds)
 end
 
-"""Capture the legacy pure-ice initialization."""
+"""
+Capture the legacy pure-ice initialization.
+
+NOTE: `steady_state` / `depth_autoadjust` were removed when the escape-hatch flags
+replaced them, so this cannot run against current GEMB — it only ever worked on the
+pre-migration source, which is the point of a `write`-then-`check` gate. `do_check`
+is the half that still runs.
+"""
 function capture_legacy()
     cf = synthetic_forcing()
     mp = GEMB.ModelParameters(output_frequency=:daily)
-    profile, mp_out = GEMB.initialize_profile(mp, cf;
+    profile = GEMB.initialize_profile(mp, cf;
         steady_state=false, depth_autoadjust=false)
-    return snapshot(profile, mp_out)
+    return snapshot(profile)
 end
 
 """Capture the new escape-hatch initialization."""
 function capture_hatch()
     cf = synthetic_forcing()
     mp = GEMB.ModelParameters(output_frequency=:daily)
-    profile, mp_out = GEMB.initialize_profile(mp, cf;
+    profile = GEMB.initialize_profile(mp, cf;
         constant_density=true, constant_temperature=true)
-    return snapshot(profile, mp_out)
+    return snapshot(profile)
 end
 
-snapshot(profile, mp) = (
+# The column depth is `sum(dz)`, already carried in `layers`, so it needs no separate
+# field: `initialize_profile` no longer reports a depth outside the grid.
+snapshot(profile) = (
     layers = NamedTuple(k => collect(profile[k]) for k in LAYERS),
-    column_depth = mp.column_depth,
 )
 
 # The Herron–Langway steady-state cases exercised directly by
@@ -72,7 +80,7 @@ function do_write()
     hl = capture_hl()
     serialize(SNAPSHOT, (profile = snap, hl = hl))
     n = length(snap.layers.dz)
-    @printf("wrote %s\n  %d cells, column_depth = %.6f m\n", SNAPSHOT, n, snap.column_depth)
+    @printf("wrote %s\n  %d cells, column depth = %.6f m\n", SNAPSHOT, n, sum(snap.layers.dz))
     for k in LAYERS
         v = snap.layers[k]
         @printf("  %-18s sum=%.17g  min=%.17g  max=%.17g\n", k, sum(v), minimum(v), maximum(v))
@@ -91,11 +99,9 @@ function do_check()
     ref = stored.profile
     new = capture_hatch()
 
+    # The `dz` comparison below covers the column depth: equal cell-by-cell implies
+    # equal `sum(dz)`.
     ok = true
-    if new.column_depth != ref.column_depth
-        @printf("MISMATCH column_depth: ref=%.17g new=%.17g\n", ref.column_depth, new.column_depth)
-        ok = false
-    end
     for k in LAYERS
         a, b = ref.layers[k], new.layers[k]
         if length(a) != length(b)

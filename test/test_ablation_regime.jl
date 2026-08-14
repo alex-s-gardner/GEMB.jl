@@ -33,8 +33,8 @@
         temperature_air_mean=276.15, wind_speed_mean=4.0,
         precipitation_mean=0.3 * 365.25)
 
-    mp_config = ModelParameters(output_frequency=:daily)
-    profile, mp = initialize_profile(mp_config, cf)
+    mp = ModelParameters(output_frequency=:daily)
+    profile = initialize_profile(mp, cf)
 
     # The regime emerges as the degenerate limit of the marcher, not from a threshold:
     # nothing is buried, so the column is ice throughout.
@@ -42,16 +42,17 @@
     @test all(parent(profile[:water]) .== 0.0)
 
     # No firn to resolve, so the derived depth collapses to the annual-thermal-wave
-    # floor — far shallower than the configured default, but not degenerate.
-    @test mp.column_depth < 0.2 * mp_config.column_depth
-    @test mp.column_depth >= mp_config.column_ztop
+    # floor — far shallower than the configured default, but not degenerate. The
+    # derived depth is read off the grid, which is where it lives.
+    @test sum(profile[:dz]) < 0.2 * mp.column_depth_max
+    @test sum(profile[:dz]) >= mp.column_ztop
 
     # The escape hatch still yields the old exact pure-ice column on the *configured*
     # grid, which is what the MATLAB-fidelity sites rely on.
-    prof_const, mp_const = initialize_profile(mp_config, cf;
+    prof_const = initialize_profile(mp, cf;
         constant_density=true, constant_temperature=true)
-    @test mp_const.column_depth == mp_config.column_depth
-    @test all(parent(prof_const[:density]) .== mp_config.density_ice)
+    @test parent(prof_const[:dz]) == GEMB.initialize_grid(mp)
+    @test all(parent(prof_const[:density]) .== mp.density_ice)
     @test all(parent(prof_const[:temperature]) .== cf.temperature_air_mean)
 
     N = length(profile[:dz])

@@ -350,7 +350,7 @@ end
 
     for method in (:constant, :CuffeyPaterson)
         mp = ModelParameters(output_frequency=:daily, heat_capacity_method=method)
-        profile, mp = initialize_profile(mp, cf; constant_density=true,
+        profile = initialize_profile(mp, cf; constant_density=true,
             constant_temperature=true)
         output = gemb(profile, cf, mp; verbose=true)
 

@@ -45,8 +45,8 @@ params = initialize_parameters()
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
 forcing = initialize_forcing(ds)
 
-# 3. Initialize the vertical profile (returns possibly depth-adjusted params)
-profile, params = initialize_profile(params, forcing)
+# 3. Initialize the vertical profile (its grid is sized to the forcing climate)
+profile = initialize_profile(params, forcing)
 
 # 4. Run the model
 output = gemb(profile, forcing, params)
@@ -277,6 +277,19 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   methods (574 061 vs 307 385 J kg⁻¹ at 273.15 K), so reported thermal energy shifts when
   switching. The enthalpy solver costs ~17% more wall-clock than the constant-`c_p` form it
   replaced (4.9 s to 5.7 s on the 107-model-year benchmark); allocations fell.
+- **Spinup convergence is judged on the mass-weighted mean density of the whole column**, not
+  on a cubic-spline depth average over a separate `convergence_depth` (removed, along with its
+  half-the-column default). The column depth is now fixed for the run, so the full column is
+  the same domain at every cycle and the mean is exact without interpolation. Shifts the cycle
+  at which a spinup exits — the synthetic example converges at 48 cycles rather than 63,
+  changing whole-run totals by ~0.3% — but not the physics of any cycle. MATLAB has no
+  equivalent criterion.
+- **Added `convergence_drift_density`**, a trend-based spinup exit test: the least-squares slope
+  of column-mean density against cycle over the trailing `drift_window` cycles (default 10),
+  in kg m⁻³ per cycle. Where `convergence_delta_density` bounds the step between consecutive
+  cycles — which a column creeping steadily at just under the tolerance passes while still
+  densifying — this bounds the trend. When both are given both must hold. Not present in
+  MATLAB; off by default, so it changes no existing run.
 
 ### Fixed-length vertical grid
 
@@ -295,8 +308,9 @@ What this changes for consumers of the output:
   recovered by scanning for `NaN`. Neither is needed now; `valid_profile_length` is retained
   and constant.
 - **`output_padding` and `column_zmin` are removed**, and `column_zmax` is renamed
-  **`column_depth`** — padding is obsolete, and depth is now pinned exactly rather than
-  banded within `[column_zmin, column_zmax]`.
+  **`column_depth_max`** — padding is obsolete, and the column depth is now pinned exactly
+  (to the depth `initialize_profile` derives from the climate, capped by `column_depth_max`)
+  rather than banded within `[column_zmin, column_zmax]`.
 - **`thickness_cumulative` carries a real basal flux**, signed: mass leaves through the base
   under accumulation and enters under ablation. Read it as basal flux, not as glacier
   thickness change — the column is an Eulerian window on the firn, not a prognostic

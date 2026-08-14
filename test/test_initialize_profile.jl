@@ -16,7 +16,7 @@ using GEMB: DimArray, Ti
 
     # Both escape-hatch flags → the MATLAB pure-ice initialization, which also
     # keeps the configured column limits for the grid validation below.
-    profile, _ = GEMB.initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+    profile = GEMB.initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
 
     # Check that profile has expected fields
     @test haskey(profile, :temperature)
@@ -40,14 +40,14 @@ using GEMB: DimArray, Ti
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
     @test all(dz[1:n_top] .≈ mp.column_dztop)
 
-    # Total depth should be at or slightly above column_depth
+    # Total depth should be at or slightly above column_depth_max
     # (last cell extends past boundary in MATLAB implementation)
-    @test sum(dz) >= mp.column_depth
-    @test sum(dz) < mp.column_depth + dz[end] + 1e-10
+    @test sum(dz) >= mp.column_depth_max
+    @test sum(dz) < mp.column_depth_max + dz[end] + 1e-10
 end
 
 @testset "Grid stretching" begin
-    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_depth=50.0, column_zy=1.10)
+    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_depth_max=50.0, column_zy=1.10)
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
     cf = GEMB.initialize_forcing(times,
@@ -57,7 +57,7 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile, _ = GEMB.initialize_profile(mp, cf)
+    profile = GEMB.initialize_profile(mp, cf)
     dz = collect(profile[:dz])
 
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
@@ -80,7 +80,7 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile, _ = GEMB.initialize_profile(mp, cf)
+    profile = GEMB.initialize_profile(mp, cf)
     # z_center is no longer stored on the profile; recompute it from dz.
     dz = collect(profile[:dz])
     z_center = GEMB.dz2z(dz)
@@ -156,10 +156,10 @@ end
 
 @testset "Steady-state init: firn column from climate" begin
     cf = _dry_snow_forcing()
-    mp_config = GEMB.ModelParameters()
-    profile, mp = GEMB.initialize_profile(mp_config, cf)
+    mp = GEMB.ModelParameters()
+    profile = GEMB.initialize_profile(mp, cf)
 
-    cs = GEMB.initialize_climate_summary(cf, mp_config)
+    cs = GEMB.initialize_climate_summary(cf, mp)
     @test cs.balance > 0.0                          # accumulating site
 
     density = collect(profile[:density])
@@ -195,7 +195,7 @@ end
 
     # A cold site needs the depth it was given: the derived column is not truncated
     # above the depth where firn reaches ice.
-    @test mp.column_depth > 20.0
+    @test sum(profile[:dz]) > 20.0
 end
 
 @testset "Damped annual thermal wave" begin
@@ -206,7 +206,7 @@ end
     # The harmonic fit recovers the amplitude that was imposed.
     @test isapprox(cs.temperature_amplitude, 12.0; rtol=0.05)
 
-    profile, mp = GEMB.initialize_profile(mp, cf)
+    profile = GEMB.initialize_profile(mp, cf)
     T = collect(profile[:temperature])
     depth = -GEMB.dz2z(collect(profile[:dz]))
     T_deep = cs.temperature_air_mean + cs.latent_warming
@@ -228,7 +228,7 @@ end
     cf = _dry_snow_forcing(T_mean=272.0, T_amp=3.0, precip=2.0,
                            shortwave=150.0, longwave=280.0)
     mp = GEMB.ModelParameters()
-    profile, mp = GEMB.initialize_profile(mp, cf)
+    profile = GEMB.initialize_profile(mp, cf)
 
     dz = collect(profile[:dz])
     density = collect(profile[:density])
@@ -306,8 +306,9 @@ end
     @test maximum(abs.(diff(melts))) < 0.25 * (melts[1] - melts[end])
 
     results = [GEMB.initialize_profile(mp, make(p)) for p in precips]
-    surface_density = [collect(prof[:density])[1] for (prof, _) in results]
-    depths = [mp_i.column_depth for (_, mp_i) in results]
+    surface_density = [collect(prof[:density])[1] for prof in results]
+    # The derived depth is read off the grid it produced.
+    depths = [sum(prof[:dz]) for prof in results]
 
     i_cross = findlast(<=(0.0), balances)     # last ablating case
     @test i_cross !== nothing && i_cross < length(precips)
@@ -323,7 +324,7 @@ end
     # constants, and never exceeds the configured ceiling.
     @test depths[1] < depths[end]
     @test issorted(depths)
-    @test all(depths .<= mp.column_depth)
+    @test all(depths .<= mp.column_depth_max)
 
     # --- the continuity claim itself -------------------------------------------
     #
@@ -345,7 +346,7 @@ end
         bs = [GEMB.initialize_climate_summary(make(p), mp).balance for p in ps]
         i = findlast(<=(0.0), bs)
         (i === nothing || i == length(ps)) && return nothing
-        ρ_above = collect(GEMB.initialize_profile(mp, make(ps[i+1]))[1][:density])[1]
+        ρ_above = collect(GEMB.initialize_profile(mp, make(ps[i+1]))[:density])[1]
         return (balance=bs[i+1], gap=mp.density_ice - ρ_above)
     end
 
@@ -375,9 +376,9 @@ end
     cf = GEMB.initialize_forcing(ds)
     mp = GEMB.initialize_parameters()
 
-    profile, mp_run = GEMB.initialize_profile(mp, cf)
-    gemb(profile, cf, mp_run; verbose=false)         # warm up
-    t_pass = @elapsed gemb(profile, cf, mp_run; verbose=false)
+    profile = GEMB.initialize_profile(mp, cf)
+    gemb(profile, cf, mp; verbose=false)             # warm up
+    t_pass = @elapsed gemb(profile, cf, mp; verbose=false)
 
     GEMB.initialize_profile(mp, cf)                  # warm up
     t_init = @elapsed GEMB.initialize_profile(mp, cf)
@@ -408,7 +409,7 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     # Both escape-hatch flags keep the configured column limits, which is what the
     # MATLAB reference grid was built from — the climate-derived depth is a
     # deliberate departure and would not be a like-for-like geometry comparison.
-    profile, _ = GEMB.initialize_profile(params, forcing;
+    profile = GEMB.initialize_profile(params, forcing;
         constant_density=true, constant_temperature=true)
 
     # Validate number of layers

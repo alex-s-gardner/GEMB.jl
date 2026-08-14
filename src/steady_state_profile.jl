@@ -317,7 +317,7 @@ with `K` from [`thermal_conductivity`](@ref). About 3.3 m at ice density.
 
 Used both to decay the wave through the initialized column
 ([`_steady_state_temperature`](@ref)) and to set the floor on the column depth
-that resolves it ([`_adjust_column_depth`](@ref)), so the two agree by
+that resolves it ([`_derive_column_depth`](@ref)), so the two agree by
 construction.
 """
 @inline function thermal_damping_depth(T::Real, ρ::Real, mp::ModelParameters)
