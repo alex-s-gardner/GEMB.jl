@@ -148,10 +148,15 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 # bubble pressure". Only the overburden is applied here. In open-pore firn the
                 # pore space is atmospherically connected, so the bubble pressure is the
                 # surface pressure and ΔP is the overburden as measured against it; the term
-                # only becomes a real back-pressure once pores close, which needs a trapped
-                # air mass GEMB does not carry as state. This branch therefore overstates the
-                # effective stress above `DENSITY_PORE_CLOSEOFF`. Modelling that back-pressure
-                # is what Goujon et al. (2003) adds over this scheme.
+                # only becomes a real back-pressure once pores close. This branch therefore
+                # overstates the effective stress above `DENSITY_PORE_CLOSEOFF`.
+                #
+                # Not implemented because this paper gives no expression for it. Goujon et al.
+                # (2003) eqs. A11-A12 do, in closed form and without new state:
+                # `P_eff = P + P_atm - P_b` with `P_b = P_c·D(1-D_c)/(D_c(1-D))`, needing only
+                # the close-off density and the overburden at close-off. Adding it here would
+                # mean grafting another paper's law onto this one's calibration, so it belongs
+                # in a `:Goujon2003` scheme rather than as a correction to this branch.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
                 dρ_dt = d0 * BARNOLA_A0 * exp(-BARNOLA_Q / (temperature[i] * R_GAS)) *
                         _barnola_f(d0, density_ice) * σ^BARNOLA_N     # [kg m-3 s-1]

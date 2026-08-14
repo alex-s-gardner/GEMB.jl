@@ -273,7 +273,8 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   densification rate), so it is not an unimplemented firn branch. Two departures, both
   documented in `calculate_density.jl`: (i) the paper's ΔP is overburden *minus bubble
   pressure*; only the overburden is applied, so effective stress is overstated above
-  830 kg m⁻³ where pores close (tracking trapped air is what Goujon et al. 2003 adds);
+  830 kg m⁻³ where pores close. This paper gives no expression for the bubble term; Goujon et
+  al. (2003) eqs. A11–A12 do, so it belongs in a separate scheme rather than as a patch here.
   (ii) only the closed-pore branch scales with `density_ice`, and the branches meet in value
   at ρᵢ = 919.96 and in slope at 920.06 against the paper's stated C¹ matching, so the fit
   assumes ρᵢ ≈ 920 and at GEMB's default 910 the rate steps down 14% crossing 800 kg m⁻³ (a
