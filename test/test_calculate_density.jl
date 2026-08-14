@@ -938,6 +938,28 @@ end
     @test abs(f_open - closed(GEMB.BARNOLA_CLOSEOFF, ρ_i)) / f_open < 0.15
     # The step is downward at the default ice density.
     @test closed(GEMB.BARNOLA_CLOSEOFF, ρ_i) < f_open
+    # The paper states the polynomial was constructed to make both functions "and their first
+    # derivatives equal for ρ = 0.8 g cm-3". Both conditions independently identify the fit's
+    # ice density as ~920, which is what makes the 14% step at GEMB's 910 a ρ_i mismatch rather
+    # than a transcription error. Solve each for the ρ_i that satisfies it.
+    dρ = 1e-4
+    d_poly = (poly(GEMB.BARNOLA_CLOSEOFF + dρ) - poly(GEMB.BARNOLA_CLOSEOFF - dρ)) / (2dρ)
+    d_closed(ρi) = (closed(GEMB.BARNOLA_CLOSEOFF + dρ, ρi) -
+                    closed(GEMB.BARNOLA_CLOSEOFF - dρ, ρi)) / (2dρ)
+    function bisect(g, lo, hi)
+        for _ in 1:200
+            mid = (lo + hi) / 2
+            g(mid) * g(lo) <= 0 ? (hi = mid) : (lo = mid)
+        end
+        return (lo + hi) / 2
+    end
+    ρi_value = bisect(ρi -> f_open - closed(GEMB.BARNOLA_CLOSEOFF, ρi), 900.0, 950.0)
+    ρi_slope = bisect(ρi -> d_poly - d_closed(ρi), 900.0, 950.0)
+    @test ρi_value ≈ 919.96 atol = 0.01
+    @test ρi_slope ≈ 920.06 atol = 0.01
+    # The paper's C1 claim holds only if the two agree; they do, to 0.1 kg m-3.
+    @test abs(ρi_value - ρi_slope) < 0.15
+
     # 800, deliberately not GEMB's 830 pore-close-off constant. See BARNOLA_CLOSEOFF.
     @test GEMB.BARNOLA_CLOSEOFF == 800.0
     @test GEMB.BARNOLA_CLOSEOFF != GEMB.DENSITY_PORE_CLOSEOFF
@@ -956,6 +978,15 @@ end
     # The closed-pore branch follows the configured ice density; the fitted one cannot.
     @test GEMB._barnola_f(850.0, 917.0) != GEMB._barnola_f(850.0, 910.0)
     @test GEMB._barnola_f(700.0, 917.0) == GEMB._barnola_f(700.0, 910.0)
+
+    # n = 3, the value the paper adopts for firn. Its stated premise — effective stress
+    # "rapidly higher than 0.1 MPa" — does not hold in shallow firn, where the paper gives
+    # n = 1 instead. Pinned so a future low-stress branch is a deliberate change, with the
+    # documented reason recorded in the BARNOLA_N docstring.
+    @test GEMB.BARNOLA_N == 3.0
+    # A 12 m column of 600 kg m-3 firn is still below the paper's 0.1 MPa threshold, so the
+    # regime is reachable rather than hypothetical.
+    @test 600.0 * 12.0 * GEMB.GRAVITY < 1.0e5
 end
 
 @testset "Barnola1991 stage 1 is exactly Herron-Langway" begin

@@ -255,7 +255,8 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   every density.
 - **Added `densification_method = :Barnola1991`** — Herron & Langway (1980) stage 1 below
   550 kg m⁻³, Barnola et al. (1991) pressure sintering above:
-  `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` with `A₀ = 2.54e4 Pa⁻³ s⁻¹ ×1e-18`, `Q = 60 kJ mol⁻¹`.
+  `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` (Tellus 43B, 83–90, eq. 2) with `A₀ = 2.54e4 MPa⁻³ s⁻¹`
+  converted to Pa⁻³ s⁻¹, `Q = 60 kJ mol⁻¹`.
   Not present in MATLAB. The only scheme here that treats the firn–ice transition
   mechanistically rather than extrapolating a snow/firn fit: `f(ρ)` is a polynomial fitted to
   Pimienta and Duval (1987) below 800 kg m⁻³ and the analytic isolated-spherical-pore form
@@ -266,10 +267,18 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   `:HerronLangway`, sharing one kernel; the steady-state initial guess falls back to
   `:HerronLangway`, exact below 550 and approximate above. Cross-checked against the
   Community Firn Model's `Barnola1991`, which agrees on both branches and all four
-  polynomial coefficients. One caveat carried from the fit: only the closed-pore branch
-  scales with `density_ice`, and the two branches cross at ρᵢ = 919.96 — so the polynomial
-  was fitted against an ice density of ~920, and at GEMB's default 910 the rate steps down
-  14% crossing 800 kg m⁻³ (a discontinuity in `dρ/dt`, not in ρ).
+  polynomial coefficients. Three departures from the paper, all documented in
+  `calculate_density.jl`: (i) the paper's ΔP is overburden *minus bubble pressure*; only the
+  overburden is applied, so effective stress is overstated above 830 kg m⁻³ where pores close
+  (tracking trapped air is what Goujon et al. 2003 adds); (ii) `n` is fixed at 3, the value
+  the paper adopts for firn on the premise that stress "is rapidly higher than 0.1 MPa", while
+  the paper's own `n = 1` low-stress regime covers everything above 550 kg m⁻³ shallower than
+  ~18 m — no low-stress prefactor is published to pair with it, so the switch is not
+  implemented and shallow densification is understated; (iii) only the closed-pore branch
+  scales with `density_ice`, and the branches meet in value at ρᵢ = 919.96 and in slope at
+  920.06 against the paper's stated C¹ matching, so the fit assumes ρᵢ ≈ 920 and at GEMB's
+  default 910 the rate steps down 14% crossing 800 kg m⁻³ (a discontinuity in `dρ/dt`, not in
+  ρ). Calibrated over −14 to −57 °C and 2.2–65 g cm⁻² yr⁻¹; no liquid-water term.
 - **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
   `0.07` that overrides the documented parameter at every percolation retention site; only
   the pre-percolation squeeze read the parameter. Changes output wherever

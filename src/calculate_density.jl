@@ -41,7 +41,7 @@ deviates from the reference — see the comment on that branch.
 - Vionnet, V., et al. (2012). Geosci. Model Dev., 5, 773-791.
 - Lundin, J. M. D., et al. (2017). J. Glaciol., 63, 401-422. (FirnMICE; eqs. A36-A37)
 - Pimienta, P. and Duval, P. (1987). J. Phys. Colloques, 48, C1-243-C1-248.
-- Barnola, J.-M., et al. (1991). J. Geophys. Res., 96, 17669-17677.
+- Barnola, J.-M., Pimienta, P., Raynaud, D., and Korotkevich, Y. S. (1991). Tellus, 43B, 83-90.
 """
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
@@ -119,6 +119,10 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         #
         # Not in the MATLAB reference. Ported from the published law; see `_barnola_f`.
         #
+        # Calibration range: the paper fits eq. 2 to Antarctic and Greenland profiles at
+        # -14 to -57 °C and 2.2 to 65 g cm-2 yr-1. Warmer or wetter sites are extrapolation,
+        # and the law has no liquid-water term (`:Crocus` is the scheme that does).
+        #
         # Integrated as a rate on ρ rather than through `_densify_cell!`: this is a genuine
         # `dρ/dt`, not the `c·(ρᵢ − ρ)` relaxation the accumulation-driven schemes share, and
         # it does not vanish as ρ → ρᵢ. Forward Euler on `dρ/dt` is used directly, with the
@@ -139,6 +143,15 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             else
                 # Cell-midpoint overburden, the same convention `:Crocus` uses: the load of
                 # everything above plus half this cell's own weight.
+                #
+                # The paper's σ is `ΔP`, "the pressure due to the overburden load, minus the
+                # bubble pressure". Only the overburden is applied here. In open-pore firn the
+                # pore space is atmospherically connected, so the bubble pressure is the
+                # surface pressure and ΔP is the overburden as measured against it; the term
+                # only becomes a real back-pressure once pores close, which needs a trapped
+                # air mass GEMB does not carry as state. This branch therefore overstates the
+                # effective stress above `DENSITY_PORE_CLOSEOFF`. Modelling that back-pressure
+                # is what Goujon et al. (2003) adds over this scheme.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
                 dρ_dt = d0 * BARNOLA_A0 * exp(-BARNOLA_Q / (temperature[i] * R_GAS)) *
                         _barnola_f(d0, density_ice) * σ^BARNOLA_N     # [kg m-3 s-1]
@@ -333,11 +346,38 @@ end
 # Barnola et al. (1991) pressure sintering
 # ---------------------------------------------------------------------------
 
-# Creep parameters. `A0` is per second with stress in Pa and `n = 3`, so `ρ·A0·exp(-Q/RT)·
-# f·σ³` is kg m-3 s-1 directly — no year conversion, unlike `:ArthernB`.
-const BARNOLA_A0 = 2.54e4 / 1.0e18   # [Pa-3 s-1]
-const BARNOLA_Q = 60.0e3             # creep activation energy [J mol-1]
-const BARNOLA_N = 3.0                # Glen exponent
+# Creep parameters of Barnola et al. (1991) eq. 2. The paper publishes
+# `A0 = 2.54e4 MPa-3 s-1`; the `/1e18` below is the MPa-3 -> Pa-3 conversion (1 MPa-3 =
+# 1e-18 Pa-3), so with σ in Pa and `n = 3`, `ρ·A0·exp(-Q/RT)·f·σ³` is kg m-3 s-1 directly —
+# no year conversion, unlike `:ArthernB`.
+const BARNOLA_A0 = 2.54e4 / 1.0e18   # [Pa-3 s-1], from 2.54e4 MPa-3 s-1
+const BARNOLA_Q = 60.0e3             # ice lattice diffusion activation energy [J mol-1]
+
+"""
+    BARNOLA_N
+
+Stress exponent in `dρ/dt = ρ·A0·exp(-Q/RT)·f(ρ)·σⁿ`.
+
+Fixed at 3, which is the value Barnola et al. (1991) themselves adopt for firn: "*n* taken
+to be equal to 3, as the effective stress in the firn is rapidly higher than 0.1 MPa".
+
+That premise does not hold throughout a GEMB column. The paper adds that "the exponent *n*
+is 1 when the effective stress is lower than 0.1 MPa, in good agreement with the Doake and
+Wolff (1985) field data analyses and the Pimienta and Duval (1987) mechanical tests at low
+stresses", and cites Pimienta (1987) as obtaining a good fit below close-off "by taking
+successively *n* = 3 and *n* = 1". Cell-midpoint σ reaches 1e5 Pa only around 18 m depth, so
+on a shallow column every cell above `DENSITY_STAGE_TRANSITION` sits in the paper's *n* = 1
+regime, and on a deep one the top ~18 m does.
+
+Keeping `n = 3` throughout therefore *understates* densification in shallow firn, since
+`σ³ < σ` in the Pa-magnitude units used here — by σ² = (1e4/1e5)² ≈ 1e-2 at 10 kPa relative
+to the low-stress law. It is retained because switching `n` at 0.1 MPa is not a change of
+exponent alone: `A0` is calibrated against `n = 3` with units of Pa-3 s-1, and the paper
+gives no companion low-stress prefactor, so an `n = 1` branch cannot be written down from
+this paper without inventing one. The Community Firn Model reaches the same conclusion,
+carrying the switch as dead code (`# nBa[sigmaEff<1.0e5]=1.0`).
+"""
+const BARNOLA_N = 3.0
 
 # Coefficients of the log10 f(ρ) polynomial in `_barnola_f`, in the paper's g cm-3.
 const BARNOLA_ALPHA = -37.455
@@ -358,38 +398,48 @@ Pimienta and Duval's data over roughly 0.55-0.8 g cm-3 and diverges from the ana
 beyond it — at ρ = 900 it gives 0.0432 against the analytic 0.0087, a factor of 5 — which is
 why the handover exists rather than running the polynomial to ρᵢ.
 
-The size of the discontinuity at the handover depends on `mp.density_ice`, because only the
-closed-pore branch carries it. The two branches cross at ρᵢ = 919.96, and agree to 0.06% at
-920 against 4.3% at 917 and 14.1% at GEMB's default 910. Read the other way: the polynomial
-was fitted against an ice density of ~920 kg m-3, so the gap at any other `density_ice`
-measures the mismatch between the configured value and the fit's own. At the default 910 the
-rate steps *down* by 14% crossing 800, which is a discontinuity in `dρ/dt` but not in ρ, and
-is small against the factor-5 error the alternative would introduce deeper in the column.
+The handover is meant to be smooth. The paper states that the polynomial "was calculated in
+order to make the two functions, `fe(ρ)` and `fs(ρ)`, and their first derivatives equal for
+ρ = 0.8 g cm-3" — so both value and slope should match there, and any step is a mismatch
+rather than an intended feature of the law.
+
+The size of that step depends on `mp.density_ice`, because only the closed-pore branch
+carries it. The two branches cross at ρᵢ = 919.96, and their first derivatives cross at
+920.06 — the paper's C¹ statement is what fixes both, and it identifies the fit's own ice
+density as ~920 kg m-3. The branches agree to 0.06% at 920 against 4.3% at 917 and 14.1% at
+GEMB's default 910, so the gap at any other `density_ice` measures the mismatch between the
+configured value and the fit's. At the default 910 the rate steps *down* by 14% crossing 800,
+which is a discontinuity in `dρ/dt` but not in ρ, and is small against the factor-5 error the
+alternative would introduce deeper in the column.
 """
 const BARNOLA_CLOSEOFF = 800.0
 
 """
     _barnola_f(ρ, density_ice) -> f [-]
 
-Densification factor of Barnola et al. (1991), the geometric term in
+Densification factor of Barnola et al. (1991), the geometric term in their eq. 2,
 
-    dρ/dt = ρ · A0 · exp(-Q/RT) · f(ρ) · σⁿ
+    dρ/dt = ρ · A0 · exp(-Q/RT) · f(ρ) · ΔPⁿ
 
 Two regimes, meeting at [`BARNOLA_CLOSEOFF`]:
 
-  - Open pores, `ρ <= 800`: the empirical fit
-    `log10 f = α(ρ/1000)³ + β(ρ/1000)² + δ(ρ/1000) + γ`, which parameterizes the
-    Pimienta and Duval (1987) pressure-sintering data. Note the polynomial is in
-    g cm-3, so the coefficients are only meaningful against `ρ/1000`.
-  - Closed pores, `ρ > 800`: the analytic form for an isolated spherical pore,
-    `f = (3/16)·(1 − ρ/ρᵢ) / (1 − (1 − ρ/ρᵢ)^(1/3))³`.
+  - Open pores, `ρ <= 800`: the paper's eq. 3, `fe(ρ)`, an empirical fit
+    `log10 f = α(ρ/1000)³ + β(ρ/1000)² + δ(ρ/1000) + γ` "empirically deduced for the
+    0.55-0.8 g cm-3 density range", parameterizing the Pimienta and Duval (1987)
+    pressure-sintering data. Note the polynomial is in g cm-3, so the coefficients are only
+    meaningful against `ρ/1000`.
+  - Closed pores, `ρ > 800`: the paper's eq. 4, `fs(ρ)`, the Wilkinson and Ashby (1975)
+    spherical pore model, `f = (3/16)·(1 − ρ/ρᵢ) / (1 − (1 − ρ/ρᵢ)^(1/3))³`, which the paper
+    describes as "already valid below ρ = 0.8 g cm-3".
 
 `ρᵢ` is `mp.density_ice`, so the closed-pore branch follows the configured ice density.
-The polynomial branch cannot: its coefficients were fitted with a fixed ice density, and
-rescaling them is not something the paper licenses.
+The polynomial branch cannot: its coefficients were fitted with a fixed ice density (~920
+kg m-3; see [`BARNOLA_CLOSEOFF`]), and rescaling them is not something the paper licenses.
 
 Below `DENSITY_STAGE_TRANSITION` the scheme does not use this factor at all — it uses
-Herron & Langway stage 1, which is exactly GEMB's `_hl_c0`. That identity was verified
+Herron & Langway stage 1, matching the paper ("from the surface to ρ = 0.55 g cm-3 the
+Herron and Langway (1980) model was used"), and that is exactly GEMB's `_hl_c0`. The
+identity was verified
 against the Community Firn Model's `Barnola1991` zone 1 to a ratio of 1.0 (12 significant
 figures) across three (T, ρ, accumulation) triples, so `:Barnola1991` and `:HerronLangway`
 share the one kernel rather than restating it.
