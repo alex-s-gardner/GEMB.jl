@@ -253,6 +253,40 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   Community Firn Model uses for the same purpose; the handover is a branch, not a weighted
   blend, since neither paper prescribes a blending function. `:CrocusPure` applies eq. 5 at
   every density.
+- **Added `densification_method = :Barnola1991`** — Herron & Langway (1980) stage 1 below
+  550 kg m⁻³, Barnola et al. (1991) pressure sintering above:
+  `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` (Tellus 43B, 83–90, eq. 2) with `A₀ = 2.54e4 MPa⁻³ s⁻¹`
+  converted to Pa⁻³ s⁻¹, `Q = 60 kJ mol⁻¹`.
+  Not present in MATLAB. The only scheme here that treats the firn–ice transition
+  mechanistically rather than extrapolating a snow/firn fit: `f(ρ)` is a polynomial fitted to
+  Pimienta and Duval (1987) below 800 kg m⁻³ and the analytic isolated-spherical-pore form
+  `(3/16)(1−ρ/ρᵢ)/(1−(1−ρ/ρᵢ)^⅓)³` above, which vanishes with porosity, so the law
+  self-limits as ρ → ρᵢ instead of being driven to zero by a `(ρᵢ−ρ)` factor. That
+  self-limiting holds only while the closed-pore branch is reached at all: the 800 kg m⁻³
+  handover is absolute while the polynomial carries no `ρᵢ`, so `:Barnola1991` requires
+  `density_ice >= 900` (enforced in `validate_parameters`), against `[800, 950]` elsewhere.
+  Overburden is
+  the same `Σ(ρdz + water)·g` integral `:ArthernB` uses, at the cell midpoint as for
+  `:Crocus`. Integrated with forward Euler on `dρ/dt`. Stage 1 is bit-for-bit
+  `:HerronLangway`, sharing one kernel; the steady-state initial guess falls back to
+  `:HerronLangway`, exact below 550 and approximate above. Cross-checked against the
+  Community Firn Model's `Barnola1991`, which agrees on both branches and all four
+  polynomial coefficients. `n = 3` throughout, as in the paper, whose `A₀` was fitted against
+  it over 0.55–0.8 g cm⁻³; the paper's `n = 1` remark scopes itself to bulk ice below
+  close-off (Pimienta and Duval 1987 torsion-tested 0.85 g cm⁻³ ice and report no
+  densification rate), so it is not an unimplemented firn branch. Two departures, both
+  documented in `calculate_density.jl`: (i) the paper's ΔP is overburden *minus bubble
+  pressure*; only the overburden is applied, so effective stress is overstated above
+  830 kg m⁻³ where pores close. This paper gives no expression for the bubble term; Goujon et
+  al. (2003) eqs. A11–A12 do, so it belongs in a separate scheme rather than as a patch here.
+  (ii) only the closed-pore branch scales with `density_ice`, and the branches meet in value
+  at ρᵢ = 919.96 and in slope at 920.06 against the paper's stated C¹ matching, so the fit
+  assumes ρᵢ ≈ 920 and at GEMB's default 910 the rate steps down 14% crossing 800 kg m⁻³ (a
+  discontinuity in `dρ/dt`, not in ρ). The 550 kg m⁻³ handover is also a rate discontinuity, by
+  construction in the paper: it joins a depth-independent accumulation-driven rate to a σ³ one,
+  so on a 250 K, 300 kg m⁻² yr⁻¹ column sintering is ~1.3e4× slower than Herron–Langway just
+  above 550 at 1 m depth and overtakes it only near 13 m. Calibrated over −14 to −57 °C and
+  2.2–65 g cm⁻² yr⁻¹; no liquid-water term.
 - **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
   `0.07` that overrides the documented parameter at every percolation retention site; only
   the pre-percolation squeeze read the parameter. Changes output wherever
