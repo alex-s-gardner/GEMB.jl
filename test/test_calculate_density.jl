@@ -911,3 +911,193 @@ end
         copy(grain_radius), water, cfs, mp)
     @test (d_wet[2] - density[2]) * 365.0 > hybrid[2]
 end
+
+@testset "Barnola f(ρ) (Barnola et al. 1991)" begin
+    ρ_i = 910.0
+
+    # Open-pore branch: the fitted polynomial, in g cm-3. Pinned against a direct
+    # evaluation so a transcribed coefficient cannot drift silently.
+    poly(ρ) = exp10(-37.455 * (ρ / 1000)^3 + 99.743 * (ρ / 1000)^2 -
+                    95.027 * (ρ / 1000) + 30.673)
+    for ρ in (560.0, 600.0, 700.0, 800.0)
+        @test GEMB._barnola_f(ρ, ρ_i) ≈ poly(ρ) rtol = 1e-14
+    end
+
+    # Closed-pore branch: the analytic isolated-spherical-pore form.
+    closed(ρ, ρi) = (3 / 16) * (1 - ρ / ρi) / (1 - (1 - ρ / ρi)^(1 / 3))^3
+    for ρ in (810.0, 830.0, 870.0, 900.0)
+        @test GEMB._barnola_f(ρ, ρ_i) ≈ closed(ρ, ρ_i) rtol = 1e-12
+    end
+
+    # The two branches cross at ρ_i ≈ 919.96, so the polynomial was fitted against an ice
+    # density of ~920: at 920 the handover is continuous to 0.1%, and the gap at any other
+    # `density_ice` measures the mismatch with the fit's own. Pin both ends so the
+    # discontinuity at GEMB's default cannot grow unnoticed.
+    f_open = GEMB._barnola_f(GEMB.BARNOLA_CLOSEOFF, ρ_i)
+    @test abs(f_open - closed(GEMB.BARNOLA_CLOSEOFF, 920.0)) / f_open < 0.001
+    @test abs(f_open - closed(GEMB.BARNOLA_CLOSEOFF, ρ_i)) / f_open < 0.15
+    # The step is downward at the default ice density.
+    @test closed(GEMB.BARNOLA_CLOSEOFF, ρ_i) < f_open
+    # 800, deliberately not GEMB's 830 pore-close-off constant. See BARNOLA_CLOSEOFF.
+    @test GEMB.BARNOLA_CLOSEOFF == 800.0
+    @test GEMB.BARNOLA_CLOSEOFF != GEMB.DENSITY_PORE_CLOSEOFF
+
+    # Beyond the fit the polynomial diverges from the analytic form by ~5x, which is why
+    # the handover exists at all rather than running the polynomial to ρ_i.
+    @test poly(900.0) / closed(900.0, ρ_i) > 4.0
+
+    # f vanishes with porosity, so the law self-limits as ρ → ρ_i without needing the clamp.
+    @test GEMB._barnola_f(ρ_i, ρ_i) == 0.0
+    @test GEMB._barnola_f(ρ_i - 1e-3, ρ_i) > 0.0
+    @test GEMB._barnola_f(ρ_i - 1e-3, ρ_i) < 1e-5
+    # Monotone decreasing in the closed-pore regime.
+    fs = [GEMB._barnola_f(ρ, ρ_i) for ρ in 810.0:10.0:900.0]
+    @test all(diff(fs) .< 0)
+    # The closed-pore branch follows the configured ice density; the fitted one cannot.
+    @test GEMB._barnola_f(850.0, 917.0) != GEMB._barnola_f(850.0, 910.0)
+    @test GEMB._barnola_f(700.0, 917.0) == GEMB._barnola_f(700.0, 910.0)
+end
+
+@testset "Barnola1991 stage 1 is exactly Herron-Langway" begin
+    # Below DENSITY_STAGE_TRANSITION the two schemes share `_hl_c0`, so they must agree
+    # bit-for-bit — not merely closely. This identity was verified against the Community
+    # Firn Model's Barnola1991 zone 1 before being relied on here.
+    n = 6
+    dz = fill(0.1, n)
+    density = [300.0, 350.0, 400.0, 450.0, 500.0, 540.0]
+    temperature = [245.0, 248.0, 250.0, 252.0, 255.0, 258.0]
+    grain_radius = fill(0.5, n)
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, precipitation_mean=300.0,
+        temperature_air_mean=250.0)
+
+    dz_b, d_b = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), zeros(n), cfs,
+        GEMB.ModelParameters(density_ice=910.0, densification_method=:Barnola1991))
+    dz_h, d_h = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), zeros(n), cfs,
+        GEMB.ModelParameters(density_ice=910.0, densification_method=:HerronLangway))
+
+    @test d_b == d_h
+    @test dz_b == dz_h
+    @test all(d_b .> density)      # not vacuous
+end
+
+@testset "Barnola1991 densification above the transition" begin
+    n = 8
+    dz = fill(0.5, n)
+    density = [560.0, 620.0, 680.0, 740.0, 790.0, 830.0, 870.0, 900.0]
+    temperature = fill(250.0, n)
+    grain_radius = fill(1.0, n)
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:Barnola1991)
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, precipitation_mean=300.0,
+        temperature_air_mean=250.0)
+
+    dz_out, d_out = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), zeros(n), cfs, mp)
+
+    # Densifies everywhere, conserves mass, never exceeds ice.
+    @test all(d_out .>= density)
+    @test all(d_out .<= mp.density_ice)
+    @test all(abs.(d_out .* dz_out .- density .* dz) .< 1e-9)
+
+    # Hand-computed rate for cell 2, to pin the whole assembled law (stress integral,
+    # Arrhenius, f, σ³) rather than just f.
+    load = density[1] * dz[1]                       # cells above cell 2
+    σ = (load + 0.5 * density[2] * dz[2]) * GEMB.GRAVITY
+    expected = density[2] + density[2] * GEMB.BARNOLA_A0 *
+                            exp(-GEMB.BARNOLA_Q / (temperature[2] * GEMB.R_GAS)) *
+                            GEMB._barnola_f(density[2], mp.density_ice) *
+                            σ^GEMB.BARNOLA_N * cfs.dt
+    @test d_out[2] ≈ expected rtol = 1e-13
+
+    # The surface cell compacts under half its own weight, not zero — the same midpoint
+    # convention `:Crocus` uses. (Cell 1 here is above the transition, so it takes the
+    # pressure-sintering branch.)
+    @test d_out[1] > density[1]
+end
+
+@testset "Barnola1991 does not stall at the firn-ice transition" begin
+    # The reason this scheme exists. `c·(ρᵢ−ρ)` schemes must go to zero as ρ → ρᵢ because
+    # the driving term does; Barnola's rate is set by porosity-dependent creep instead, so
+    # it stays finite deep in the column where the others have died off.
+    n = 300
+    dz = fill(0.2, n)
+    z = cumsum(dz) .- 0.1
+    density = [min(910.0, 350.0 + 560.0 * (1 - exp(-zz / 25))) for zz in z]
+    temperature = fill(250.0, n)
+    grain_radius = fill(0.5, n)
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, precipitation_mean=300.0,
+        temperature_air_mean=250.0)
+
+    rate(method) = begin
+        (_, d) = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+            copy(grain_radius), zeros(n), cfs,
+            GEMB.ModelParameters(density_ice=910.0, densification_method=method))
+        (d .- density) ./ (cfs.dt / (365.0 * 86400.0))     # kg m-3 yr-1
+    end
+    barnola = rate(:Barnola1991)
+    arthern = rate(:Arthern)
+
+    @test all(barnola .> 0.0)
+
+    # Deepest cells (ρ > 830): Arthern is monotonically dying toward zero, Barnola is not.
+    deep = findall(>(GEMB.DENSITY_PORE_CLOSEOFF), density)
+    @test !isempty(deep)
+    # Arthern's rate at the very bottom is below its rate at close-off; Barnola's is above.
+    @test arthern[deep[end]] < arthern[deep[1]]
+    @test barnola[deep[end]] > barnola[deep[1]]
+    # Barnola stays below Arthern in absolute terms on this profile — the point is not that
+    # it is faster, but that it recovers with depth where Arthern monotonically decays. So
+    # the ratio closes with depth: 0.40 at close-off against 0.65 at the base.
+    ratio = barnola[deep] ./ arthern[deep]
+    @test ratio[end] > 1.5 * ratio[1]
+    @test ratio[end] < 1.0
+    @test argmin(ratio) == 1
+end
+
+@testset "Barnola1991 validator and steady-state fallback" begin
+    @test initialize_parameters(densification_method=:Barnola1991).densification_method ===
+          :Barnola1991
+    @test_throws AssertionError initialize_parameters(densification_method=:Barnola)
+
+    # The steady-state marcher has no stress, so `:Barnola1991` falls back to
+    # `:HerronLangway` — whose stage 1 is its own below-transition branch, making the
+    # fallback exact there and an approximation above.
+    p_b = GEMB.DensificationCoeffs(
+        GEMB.ModelParameters(densification_method=:Barnola1991), 300.0, 250.0)
+    p_h = GEMB.DensificationCoeffs(
+        GEMB.ModelParameters(densification_method=:HerronLangway), 300.0, 250.0)
+    for ρ in (300.0, 450.0, 540.0, 600.0, 800.0)
+        @test GEMB._densification_rate(p_b, ρ, 250.0) ==
+              GEMB._densification_rate(p_h, ρ, 250.0)
+    end
+    # k0/k1 are unused by this scheme.
+    @test p_b.k0 == 1.0
+    @test p_b.k1 == 1.0
+end
+
+@testset "Barnola1991 reads overburden water" begin
+    # Stress-driven, so pore water in the overlying cells adds load. Third scheme with
+    # this property, after `:ArthernB` and `:Crocus`.
+    n = 3
+    dz = fill(0.5, n)
+    density = fill(700.0, n)
+    temperature = fill(250.0, n)
+    grain_radius = fill(1.0, n)
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:Barnola1991)
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, precipitation_mean=300.0,
+        temperature_air_mean=250.0)
+
+    (_, d_dry) = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), zeros(n), cfs, mp)
+    water = [20.0, 0.0, 0.0]
+    (_, d_wet) = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), water, cfs, mp)
+
+    # Cell 1's own load is unchanged (water is in cell 1, and only half its own weight
+    # counts — but that half does include its water), cells 2-3 carry more.
+    @test d_wet[2] > d_dry[2]
+    @test d_wet[3] > d_dry[3]
+    # σ³ dependence makes this strongly superlinear, not a rounding effect.
+    @test (d_wet[3] - density[3]) / (d_dry[3] - density[3]) > 1.05
+end

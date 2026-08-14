@@ -253,6 +253,23 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   Community Firn Model uses for the same purpose; the handover is a branch, not a weighted
   blend, since neither paper prescribes a blending function. `:CrocusPure` applies eq. 5 at
   every density.
+- **Added `densification_method = :Barnola1991`** — Herron & Langway (1980) stage 1 below
+  550 kg m⁻³, Barnola et al. (1991) pressure sintering above:
+  `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` with `A₀ = 2.54e4 Pa⁻³ s⁻¹ ×1e-18`, `Q = 60 kJ mol⁻¹`.
+  Not present in MATLAB. The only scheme here that treats the firn–ice transition
+  mechanistically rather than extrapolating a snow/firn fit: `f(ρ)` is a polynomial fitted to
+  Pimienta and Duval (1987) below 800 kg m⁻³ and the analytic isolated-spherical-pore form
+  `(3/16)(1−ρ/ρᵢ)/(1−(1−ρ/ρᵢ)^⅓)³` above, which vanishes with porosity, so the law
+  self-limits as ρ → ρᵢ instead of being driven to zero by a `(ρᵢ−ρ)` factor. Overburden is
+  the same `Σ(ρdz + water)·g` integral `:ArthernB` uses, at the cell midpoint as for
+  `:Crocus`. Integrated with forward Euler on `dρ/dt`. Stage 1 is bit-for-bit
+  `:HerronLangway`, sharing one kernel; the steady-state initial guess falls back to
+  `:HerronLangway`, exact below 550 and approximate above. Cross-checked against the
+  Community Firn Model's `Barnola1991`, which agrees on both branches and all four
+  polynomial coefficients. One caveat carried from the fit: only the closed-pore branch
+  scales with `density_ice`, and the two branches cross at ρᵢ = 919.96 — so the polynomial
+  was fitted against an ice density of ~920, and at GEMB's default 910 the rate steps down
+  14% crossing 800 kg m⁻³ (a discontinuity in `dρ/dt`, not in ρ).
 - **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
   `0.07` that overrides the documented parameter at every percolation retention site; only
   the pre-percolation squeeze read the parameter. Changes output wherever

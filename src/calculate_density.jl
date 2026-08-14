@@ -10,6 +10,8 @@ Compute the densification of snow/firn using one of several models:
 - `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
 - `:Simonsen2013`: Arthern retuned for Greenland by Simonsen et al. (2013)
+- `:Barnola1991`: Herron-Langway stage 1 below `DENSITY_STAGE_TRANSITION`, pressure
+  sintering above; the only scheme here that models the firn-ice transition mechanistically
 - `:LiZwally`: empirical model of Li and Zwally (2004)
 - `:Helsen`: modified empirical model by Helsen et al. (2008)
 - `:Ligtenberg`: semi-empirical model of Ligtenberg et al. (2011)
@@ -17,9 +19,10 @@ Compute the densification of snow/firn using one of several models:
 Returns `(dz, density)`. `density` is updated in place; `dz` is returned as a
 new array (recomputed from the conserved cell mass).
 
-`water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` (as part of the
-overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity reduction); the
-accumulation-driven schemes proxy overburden with mean accumulation and ignore it.
+`water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
+(as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity
+reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
+ignore it.
 
 The accumulation-driven branches are scalar-loop implementations that are
 numerically identical, element by element, to the reference vectorized MATLAB
@@ -37,6 +40,8 @@ deviates from the reference — see the comment on that branch.
 - Simonsen, S. B., et al. (2013). J. Glaciol., 59, 545-558.
 - Vionnet, V., et al. (2012). Geosci. Model Dev., 5, 773-791.
 - Lundin, J. M. D., et al. (2017). J. Glaciol., 63, 401-422. (FirnMICE; eqs. A36-A37)
+- Pimienta, P. and Duval, P. (1987). J. Phys. Colloques, 48, C1-243-C1-248.
+- Barnola, J.-M., et al. (1991). J. Geophys. Res., 96, 17669-17677.
 """
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
@@ -105,6 +110,46 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
             # accumulate the load using this cell's original density
             load += d0 * dz[i] + water[i]
+        end
+
+    elseif method == :Barnola1991
+        # Barnola et al. (1991) pressure sintering, with Herron & Langway (1980) stage 1
+        # below `DENSITY_STAGE_TRANSITION`. The only scheme here that treats the firn-ice
+        # transition mechanistically rather than by extrapolating a snow/firn fit.
+        #
+        # Not in the MATLAB reference. Ported from the published law; see `_barnola_f`.
+        #
+        # Integrated as a rate on ρ rather than through `_densify_cell!`: this is a genuine
+        # `dρ/dt`, not the `c·(ρᵢ − ρ)` relaxation the accumulation-driven schemes share, and
+        # it does not vanish as ρ → ρᵢ. Forward Euler on `dρ/dt` is used directly, with the
+        # same ice-density clamp the other branches apply. The paper's own note that the
+        # model overshoots ρᵢ by ~1e-3 is what that clamp absorbs.
+        #
+        # Below 550 the law is exactly `_hl_c0` — see the identity noted on `_barnola_f`.
+        load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
+        @inbounds for i in 1:m
+            d0 = density[i]
+            dz0 = dz[i]
+            self_load = d0 * dz0 + water[i]
+            if d0 <= DENSITY_STAGE_TRANSITION + d_tolerance
+                # Herron & Langway stage 1, shared with `:HerronLangway` so the two can
+                # never drift.
+                _densify_cell!(density, dz, dz_out, i, _hl_c0(temperature[i], pm), dt,
+                    density_ice, d_tolerance)
+            else
+                # Cell-midpoint overburden, the same convention `:Crocus` uses: the load of
+                # everything above plus half this cell's own weight.
+                σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
+                dρ_dt = d0 * BARNOLA_A0 * exp(-BARNOLA_Q / (temperature[i] * R_GAS)) *
+                        _barnola_f(d0, density_ice) * σ^BARNOLA_N     # [kg m-3 s-1]
+                d = d0 + dρ_dt * cfs.dt
+                if d > density_ice - d_tolerance
+                    d = density_ice
+                end
+                density[i] = d
+                dz_out[i] = d0 * dz0 / d
+            end
+            load += self_load
         end
 
     elseif method == :Crocus || method == :CrocusPure
@@ -285,6 +330,92 @@ end
 # are evaluated by `_arthern_scaled_c` above; only their hoisted stage scalars differ.
 
 # ---------------------------------------------------------------------------
+# Barnola et al. (1991) pressure sintering
+# ---------------------------------------------------------------------------
+
+# Creep parameters. `A0` is per second with stress in Pa and `n = 3`, so `ρ·A0·exp(-Q/RT)·
+# f·σ³` is kg m-3 s-1 directly — no year conversion, unlike `:ArthernB`.
+const BARNOLA_A0 = 2.54e4 / 1.0e18   # [Pa-3 s-1]
+const BARNOLA_Q = 60.0e3             # creep activation energy [J mol-1]
+const BARNOLA_N = 3.0                # Glen exponent
+
+# Coefficients of the log10 f(ρ) polynomial in `_barnola_f`, in the paper's g cm-3.
+const BARNOLA_ALPHA = -37.455
+const BARNOLA_BETA = 99.743
+const BARNOLA_DELTA = -95.027
+const BARNOLA_GAMMA = 30.673
+
+"""
+    BARNOLA_CLOSEOFF
+
+Density [kg m-3] at which `_barnola_f` switches from the fitted polynomial to the
+analytic closed-pore expression.
+
+800, not GEMB's `DENSITY_PORE_CLOSEOFF = 830`: this is the density at which Barnola's
+*polynomial fit* is superseded by the closed-pore geometry, which is a property of that fit
+rather than of pore close-off as GEMB's other code means it. The polynomial is fitted to
+Pimienta and Duval's data over roughly 0.55-0.8 g cm-3 and diverges from the analytic form
+beyond it — at ρ = 900 it gives 0.0432 against the analytic 0.0087, a factor of 5 — which is
+why the handover exists rather than running the polynomial to ρᵢ.
+
+The size of the discontinuity at the handover depends on `mp.density_ice`, because only the
+closed-pore branch carries it. The two branches cross at ρᵢ = 919.96, and agree to 0.06% at
+920 against 4.3% at 917 and 14.1% at GEMB's default 910. Read the other way: the polynomial
+was fitted against an ice density of ~920 kg m-3, so the gap at any other `density_ice`
+measures the mismatch between the configured value and the fit's own. At the default 910 the
+rate steps *down* by 14% crossing 800, which is a discontinuity in `dρ/dt` but not in ρ, and
+is small against the factor-5 error the alternative would introduce deeper in the column.
+"""
+const BARNOLA_CLOSEOFF = 800.0
+
+"""
+    _barnola_f(ρ, density_ice) -> f [-]
+
+Densification factor of Barnola et al. (1991), the geometric term in
+
+    dρ/dt = ρ · A0 · exp(-Q/RT) · f(ρ) · σⁿ
+
+Two regimes, meeting at [`BARNOLA_CLOSEOFF`]:
+
+  - Open pores, `ρ <= 800`: the empirical fit
+    `log10 f = α(ρ/1000)³ + β(ρ/1000)² + δ(ρ/1000) + γ`, which parameterizes the
+    Pimienta and Duval (1987) pressure-sintering data. Note the polynomial is in
+    g cm-3, so the coefficients are only meaningful against `ρ/1000`.
+  - Closed pores, `ρ > 800`: the analytic form for an isolated spherical pore,
+    `f = (3/16)·(1 − ρ/ρᵢ) / (1 − (1 − ρ/ρᵢ)^(1/3))³`.
+
+`ρᵢ` is `mp.density_ice`, so the closed-pore branch follows the configured ice density.
+The polynomial branch cannot: its coefficients were fitted with a fixed ice density, and
+rescaling them is not something the paper licenses.
+
+Below `DENSITY_STAGE_TRANSITION` the scheme does not use this factor at all — it uses
+Herron & Langway stage 1, which is exactly GEMB's `_hl_c0`. That identity was verified
+against the Community Firn Model's `Barnola1991` zone 1 to a ratio of 1.0 (12 significant
+figures) across three (T, ρ, accumulation) triples, so `:Barnola1991` and `:HerronLangway`
+share the one kernel rather than restating it.
+
+Cross-checked against the Community Firn Model's `Barnola1991`, which agrees on both
+branches and on all four polynomial coefficients. CFM applies the full overburden `σ`
+where this uses the cell-midpoint value, matching the convention `:Crocus` already uses
+here; and CFM's zone 1 carries an `A^aHL` accumulation term with `aHL = 1`, which is the
+linear accumulation dependence already inside `_hl_c0`.
+"""
+@inline function _barnola_f(ρ::Float64, density_ice::Float64)
+    if ρ <= BARNOLA_CLOSEOFF
+        ρ_cgs = ρ / 1000.0
+        return exp10(BARNOLA_ALPHA * ρ_cgs^3 + BARNOLA_BETA * ρ_cgs^2 +
+                     BARNOLA_DELTA * ρ_cgs + BARNOLA_GAMMA)
+    else
+        porosity = 1.0 - ρ / density_ice
+        # `porosity -> 0` as ρ -> ρᵢ; the cube of the cube-root difference vanishes with it,
+        # and the ratio tends to 9/16 · porosity^(1/3) · ... -> 0. Guard the exact endpoint,
+        # where both numerator and denominator are 0.
+        porosity <= 0.0 && return 0.0
+        return (3.0 / 16.0) * porosity / (1.0 - cbrt(porosity))^3
+    end
+end
+
+# ---------------------------------------------------------------------------
 # Crocus viscous settling (Vionnet et al., 2012, GMD 5, 773-791, eqs. 7-9)
 # ---------------------------------------------------------------------------
 
@@ -395,7 +526,7 @@ their *meaning* is per-method while their arity is not:
 
 | method | `k0`, `k1` |
 |---|---|
-| `:Arthern`, `:ArthernB`, `:CrocusPure`, `:HerronLangway` | unused (1.0) |
+| `:Arthern`, `:ArthernB`, `:Barnola1991`, `:CrocusPure`, `:HerronLangway` | unused (1.0) |
 | `:Ligtenberg` | the accumulation-dependent `M0`, `M1` |
 | `:Simonsen2013` | `F0 = 0.8` and `F1·γ` |
 | `:GSFC2020`, `:Crocus` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
@@ -465,11 +596,13 @@ The stress-driven schemes cannot be evaluated here: the march carries neither ov
 stress, grain radius, nor water, and it only produces an initial guess that the spinup then
 relaxes. Each therefore falls back to the nearest accumulation-driven law — `:Crocus` to
 `:GSFC2020`, which is already its own above-threshold branch and so governs most of the
-column the march builds; `:ArthernB` and `:CrocusPure` to `:Arthern`. The transient run uses
-the real law in every case.
+column the march builds; `:Barnola1991` to `:HerronLangway`, whose stage 1 *is* its own
+below-threshold branch, so the two agree exactly below `DENSITY_STAGE_TRANSITION` and the
+fallback is only an approximation above it; `:ArthernB` and `:CrocusPure` to `:Arthern`. The
+transient run uses the real law in every case.
 """
 @inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
-    if p.method == :HerronLangway
+    if p.method == :HerronLangway || p.method == :Barnola1991
         return ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? _hl_c0(T, p.pm) : _hl_c1(T, p.pm)
     elseif p.method == :GSFC2020 || p.method == :Crocus
         return _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1)
