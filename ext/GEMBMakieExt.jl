@@ -13,11 +13,17 @@ using Statistics
 using Makie
 
 #=============================================================================
-# Metadata: labels, colormaps, and the grouping of scalar variables.
+# Metadata: labels, units, colormaps, and the grouping of scalar variables.
+#
+# Units are *not* duplicated here. They are read from each layer's CF metadata
+# (`GEMB.GEMB_CF_ATTRIBUTES`, attached by `gemb`), so this file holds only what
+# is genuinely a plotting concern: short display names sized for cramped axes and
+# legends, and the display units a reader expects to see (°C rather than K).
 =============================================================================#
 
-# Short, unit-bearing labels for scalar variables (used as y-axis labels or
-# legend entries). Falls back to the raw name when a key is missing.
+# Short display names. A CF `long_name` is a sentence-length description; a legend
+# entry has room for two words, so these are separate by design. Falls back to the
+# raw variable name when a key is missing.
 const _LABELS = Dict{Symbol,String}(
     :melt => "melt",
     :runoff => "runoff",
@@ -36,16 +42,71 @@ const _LABELS = Dict{Symbol,String}(
     :densification_from_melt => "melt",
     :valid_profile_length => "valid layers",
     # 2-D (profile) variables
-    :temperature => "temperature [°C]",
-    :density => "density [kg m⁻³]",
-    :water => "water [kg m⁻²]",
-    :grain_radius => "grain radius [mm]",
+    :temperature => "temperature",
+    :density => "density",
+    :water => "water",
+    :grain_radius => "grain radius",
     :grain_dendricity => "dendricity",
     :grain_sphericity => "sphericity",
     :albedo => "albedo",
     :albedo_diffuse => "diffuse albedo",
 )
-_label(v::Symbol) = get(_LABELS, v, string(v))
+_short(v::Symbol) = get(_LABELS, v, string(v))
+
+# CF units → (display unit, value conversion). GEMB stores temperature in kelvin,
+# which is right for the model and for CF, but glaciological plots are read in °C —
+# so the conversion lives here, keyed by unit rather than by variable name, and
+# applies to every temperature field automatically. Units absent from this table
+# are displayed as stored.
+const _DISPLAY_UNITS = Dict{String,Tuple{String,Any}}(
+    "K" => ("°C", x -> x - 273.15),
+)
+
+# CF units are ASCII/UDUNITS ("kg m-3"); render the exponents as superscripts for
+# display, and show the dimensionless unit "1" as an en dash.
+const _SUPERSCRIPTS = Dict{Char,Char}(
+    '-' => '⁻', '0' => '⁰', '1' => '¹', '2' => '²', '3' => '³', '4' => '⁴',
+    '5' => '⁵', '6' => '⁶', '7' => '⁷', '8' => '⁸', '9' => '⁹',
+)
+function _pretty_units(u::AbstractString)
+    isempty(u) && return ""
+    u == "1" && return "–"
+    # Superscript a trailing exponent on each whitespace-separated factor, e.g.
+    # "m-3" → "m⁻³". A bare factor with no exponent ("kg", "W") passes through.
+    factors = map(split(u)) do f
+        i = findfirst(c -> c == '-' || isdigit(c), f)
+        i === nothing && return f
+        # A factor that is all digits (rare) is not an exponent — leave it alone.
+        i == 1 && return f
+        String(f[1:i-1]) * map(c -> get(_SUPERSCRIPTS, c, c), f[i:end])
+    end
+    return join(factors, " ")
+end
+
+# CF `units` for a layer, from the stack's own metadata when it has any, else from
+# the package table, else "". The fallback keeps the extension working on output
+# stacks produced before layer metadata existed.
+function _units(output, v::Symbol)
+    md = DimensionalData.metadata(output[v])
+    if !(md isa DimensionalData.Dimensions.Lookups.NoMetadata) && haskey(md, "units")
+        return String(md["units"])
+    end
+    haskey(GEMB.GEMB_CF_ATTRIBUTES, v) && return GEMB.GEMB_CF_ATTRIBUTES[v].units
+    return ""
+end
+
+# Display units for a layer and the conversion that produces them.
+function _display_units(output, v::Symbol)
+    u = _units(output, v)
+    haskey(_DISPLAY_UNITS, u) && return _DISPLAY_UNITS[u]
+    return (_pretty_units(u), identity)
+end
+
+# Short display name with its display units appended, e.g. "density [kg m⁻³]".
+function _label(output, v::Symbol)
+    du, _ = _display_units(output, v)
+    return isempty(du) ? _short(v) : string(_short(v), " [", du, "]")
+end
 
 # Colormap per 2-D variable. Most are perceptually-uniform named maps; `water`
 # and `density` use hand-built blue ramps so their endpoints carry meaning:
@@ -67,19 +128,30 @@ _cmap(v::Symbol) = get(_CMAP, v, :viridis)
 
 # Scalar variables grouped by physical theme + shared unit so multiple series
 # share one axis (increasing data density, removing near-duplicate panels).
-# Each entry: (panel title with units, [member variables]).
+# Each entry: (theme name, [member variables]). The unit suffix is *not* stored —
+# it is derived from the members' own CF units at plot time by `_group_title`,
+# so the panel can never disagree with the data it draws.
 # Air temperature is placed first so it sits at the top of the right column,
 # above (aligned with) the temperature profile heatmap in the left column.
 const _SCALAR_GROUPS = [
-    ("Air temperature [°C]", [:temperature_air]),
-    ("Energy fluxes [W m⁻²]",
+    ("Air temperature", [:temperature_air]),
+    ("Energy fluxes",
         [:shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent]),
-    ("Mass fluxes [kg m⁻²]",
+    ("Mass fluxes",
         [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation]),
-    ("Surface albedo [–]", [:albedo_surface]),
-    ("Firn air content [m]", [:firn_air_content]),
-    ("Densification [m]", [:densification_from_compaction, :densification_from_melt]),
+    ("Surface albedo", [:albedo_surface]),
+    ("Firn air content", [:firn_air_content]),
+    ("Densification", [:densification_from_compaction, :densification_from_melt]),
 ]
+
+# Panel title for a scalar group: the theme name plus the members' shared display
+# units. A group whose members disagree on units gets no suffix rather than a
+# misleading one — the per-series legend then carries the distinction.
+function _group_title(output, theme::AbstractString, members::Vector{Symbol})
+    us = unique(first(_display_units(output, v)) for v in members)
+    (length(us) == 1 && !isempty(us[1])) || return theme
+    return string(theme, " [", us[1], "]")
+end
 
 #=============================================================================
 # Helpers
@@ -238,7 +310,16 @@ function _mass_budget_str(output, times)
     end
 
     isempty(parts) && return ""
-    return join(parts, "  ") * "  [kg m⁻² yr⁻¹]"
+    # The terms are per-interval mass accumulations divided by the record length, so the
+    # unit is a mass layer's own unit per year. Any of them will do; `parts` being
+    # non-empty guarantees at least one is present.
+    mass_var = findfirst(in(present),
+        [:precipitation, :rain, :runoff, :refreeze, :evaporation_condensation])
+    base = mass_var === nothing ? "" :
+           _units(output, [:precipitation, :rain, :runoff, :refreeze,
+                           :evaporation_condensation][mass_var])
+    suffix = isempty(base) ? "" : "  [" * _pretty_units(base * " yr-1") * "]"
+    return join(parts, "  ") * suffix
 end
 
 # Even index stride so a heatmap never exceeds `maxcols` columns — a raster
@@ -276,7 +357,7 @@ function GEMB.gemb_plot_output(output::DimStack;
     # Densification is dropped from the default panel set (kept available when the
     # caller lists its variables explicitly via `variables`).
     if variables === nothing
-        scalar_groups = [(t, g) for (t, g) in scalar_groups if t != "Densification [m]"]
+        scalar_groups = [(t, g) for (t, g) in scalar_groups if t != "Densification"]
     end
 
     # ---- Shared time axis (decimal year) ----------------------------------
@@ -322,9 +403,11 @@ function GEMB.gemb_plot_output(output::DimStack;
     # ---- Left column: profile heatmaps ------------------------------------
     for (i, v) in enumerate(profile_vars)
         vals = parent(output[v])[:, tcols]
-        # Temperature is stored in K; show it in °C so the profile shares the
-        # air-temperature panel's units.
-        v === :temperature && (vals = vals .- 273.15)
+        # Convert to display units (e.g. K → °C, so the profile shares the
+        # air-temperature panel's units). Driven by the layer's CF `units`, so it
+        # applies to any temperature field rather than to `:temperature` by name.
+        _, convert_units = _display_units(output, v)
+        convert_units === identity || (vals = convert_units.(vals))
         gridded = gemb_interp(z_center[:, tcols], vals, z_target)
         ax = Axis(left[i, 1]; ylabel="depth [m]")
         push!(prof_axes, ax)
@@ -333,19 +416,21 @@ function GEMB.gemb_plot_output(output::DimStack;
         v === :water && (lo = 0.0)
         hm = heatmap!(ax, x_hm, collect(dims(gridded, Z)), parent(gridded');
             colormap=_cmap(v), colorrange=(lo, hi))
-        Colorbar(left[i, 2], hm; label=_label(v), width=12)
+        Colorbar(left[i, 2], hm; label=_label(output, v), width=12)
         ylims!(ax, zbot, ztop)
     end
 
     # ---- Right column: grouped scalar time series -------------------------
-    for (i, (gtitle, members)) in enumerate(scalar_groups)
-        ax = Axis(right[i, 1]; ylabel=gtitle)
+    for (i, (theme, members)) in enumerate(scalar_groups)
+        ax = Axis(right[i, 1]; ylabel=_group_title(output, theme, members))
         push!(scal_axes, ax)
-        # Air temperature: show in °C with the curve filled to zero — warm
-        # (> 0 °C) in red, cold (≤ 0 °C) in blue — so melt-permissive periods
-        # read at a glance.
+        # Air temperature: shown in its display units (°C) with the curve filled to
+        # zero — warm (> 0 °C) in red, cold (≤ 0 °C) in blue — so melt-permissive
+        # periods read at a glance. The zero crossing is meaningful only in °C, which
+        # is why this panel is special-cased rather than drawn as a plain series.
         if members == [:temperature_air]
-            tc = Float64.(parent(output[:temperature_air])) .- 273.15
+            _, convert_units = _display_units(output, :temperature_air)
+            tc = convert_units.(Float64.(parent(output[:temperature_air])))
             band!(ax, decyear, min.(tc, 0.0), 0.0;
                 color=(:blue, 0.5))
             band!(ax, decyear, 0.0, max.(tc, 0.0);
@@ -355,9 +440,17 @@ function GEMB.gemb_plot_output(output::DimStack;
         # With ~10⁵ sub-daily points, overplotted opaque lines saturate to a
         # solid block; thin, semi-transparent strokes let density show through.
         alpha = length(members) > 1 ? 0.75 : 0.9
+        # The axis title carries the shared units, so legend entries are the short
+        # names alone. If the members' units disagree the title drops its suffix, and
+        # each legend entry has to carry its own units instead.
+        shared_units = _group_title(output, theme, members) != theme
         for v in members
-            lines!(ax, decyear, Float64.(parent(output[v]));
-                label=_label(v), linewidth=0.6, alpha=alpha)
+            _, convert_units = _display_units(output, v)
+            vals = Float64.(parent(output[v]))
+            convert_units === identity || (vals = convert_units.(vals))
+            lines!(ax, decyear, vals;
+                label=shared_units ? _short(v) : _label(output, v),
+                linewidth=0.6, alpha=alpha)
         end
         length(members) > 1 && axislegend(ax; position=:rt, framevisible=false,
             padding=(4, 4, 2, 2), rowgap=0, labelsize=11, patchsize=(12, 8))

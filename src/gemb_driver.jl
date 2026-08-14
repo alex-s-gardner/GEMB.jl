@@ -15,6 +15,15 @@ provenance is copied onto the output and `spinup_performed => true` is set. If
 `profile` came straight from [`initialize_profile`](@ref) (no spinup), the output
 records `spinup_performed => false`, so the run is unambiguous about having
 started from an un-spun-up column.
+
+# Metadata
+Every output layer carries CF-style attributes — `units`, `long_name`, the interval
+reduction as `cell_methods` (`time: sum` / `time: mean` / `time: point`), and a
+`standard_name` where a CF standard name matches the quantity exactly — and the stack
+carries `Conventions = "CF-1.11"` alongside the provenance above. See
+[`GEMB_CF_ATTRIBUTES`](@ref) for the table and [`cf_attributes`](@ref) to read one
+layer's attributes. Conformance is at the attribute level: GEMB.jl ships no NetCDF
+writer, so the attributes are there for whichever writer or plotting code consumes them.
 """
 function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters; verbose::Bool=false)
     # Get time information
@@ -101,12 +110,15 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     z_target = sum(state.dz)
     _assert_grid_feasible(state.dz, z_target, mp)
 
-    # Create output time coordinate and dimensions
-    ti_dim = Ti(out_time)
-    z_dim = Z(1:profile_size)
+    # Create output time coordinate and dimensions. `Z` is a bare 1-based cell index,
+    # not a height, so its attributes say so rather than claiming a vertical coordinate.
+    ti_dim = Ti(out_time; metadata=cf_time_attributes())
+    z_dim = Z(1:profile_size; metadata=cf_layer_index_attributes())
 
-    # Initialize output as DimStack with NaN-filled arrays
-    output = DimStack((
+    # Initialize output as NaN-filled arrays. Held as a NamedTuple first so the CF
+    # attribute table can be indexed by the same keys in the same order, which is what
+    # `cf_layermetadata` relies on.
+    layers = (
         # Monolevel outputs
         melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         runoff=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -138,12 +150,20 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo_diffuse=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-    );
-        # Carry forcing provenance onto the output so downstream consumers
+    )
+
+    output = DimStack(layers;
+        # Per-layer CF attributes: units, long_name, the interval reduction
+        # (`cell_methods`), and a standard_name only where a CF standard name matches
+        # GEMB's quantity exactly. See `cf_metadata.jl`.
+        layermetadata=cf_layermetadata(layers),
+        # CF global attributes, then forcing provenance so downstream consumers
         # (e.g. `gemb_plot_output`) can report where the forcing came from, plus
         # spinup/climatology provenance from the initial profile (or a flag noting
-        # the run started from an un-spun-up profile).
+        # the run started from an un-spun-up profile). Globals go first so a
+        # run-specific key would win on any collision.
         metadata=merge(
+            GEMB_CF_GLOBAL_ATTRIBUTES,
             Dict{String,Any}(
                 "dataset" => climate_forcing.dataset,
                 "latitude" => climate_forcing.latitude,

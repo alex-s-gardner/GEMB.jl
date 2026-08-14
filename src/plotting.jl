@@ -16,6 +16,11 @@ The figure has two columns sharing a common (linked) time axis:
   on a common axis, with a legend when a panel holds more than one series. Air
   temperature is placed first (top), aligned with the temperature profile heatmap.
 
+Axis, colorbar, and legend labels take their units from each layer's CF metadata (see
+[`GEMB_CF_ATTRIBUTES`](@ref)) rather than from a hard-coded table, so a panel cannot
+disagree with the data it draws. Fields stored in kelvin are converted to °C for
+display; everything else is shown in its stored units.
+
 Redundant decorations are removed: x ticks and the "year" label appear only on the
 bottom panel of each column, and a header banner records provenance (GEMB version,
 forcing source, time span, sampling cadence, spinup climatology window + convergence

@@ -112,7 +112,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     end
 
     # Create Z dimension
-    zdim = Z(1:m)
+    zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
     # Grain and albedo initialization is regime-dependent. An ice column is
     # non-dendritic (dendricity 0), faceted (sphericity 0), large-grained
@@ -128,7 +128,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Note: `z_center` is intentionally not stored — it is a pure function of `dz`
     # (via `dz2z`) and is recomputed on demand, so the profile stays a clean slice
     # of the `gemb` output layout (which likewise carries `dz`, not `z_center`).
-    profile = DimStack((
+    layers = (
         dz=DimArray(dz, (zdim,)),
         temperature=DimArray(fill(T_init, m), (zdim,)),
         density=DimArray(density, (zdim,)),
@@ -138,7 +138,12 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         grain_sphericity=DimArray(fill(gsp0, m), (zdim,)),
         albedo=DimArray(fill(alb0, m), (zdim,)),
         albedo_diffuse=DimArray(fill(alb0, m), (zdim,)),
-    ))
+    )
+
+    # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
+    # so a profile describes itself the same way whichever end of the pipeline it came
+    # from. No `cell_methods`: there is no time dimension here.
+    profile = DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 
     return profile, mp
 end

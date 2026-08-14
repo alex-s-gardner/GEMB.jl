@@ -40,7 +40,7 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
     # and the whole column is taken as-is.
     m = size(parent(out[:temperature]), 1)
 
-    zdim = Z(1:m)
+    zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
     # Extract albedo from profile output if available, otherwise use defaults
     if haskey(out, :albedo)
@@ -54,7 +54,7 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
 
     # `z_center` is intentionally omitted so the extracted profile matches the
     # output layout (a slice of it); recompute via `dz2z(profile[:dz])` if needed.
-    return DimStack((
+    layers = (
         dz=DimArray(parent(out[:dz])[:, col_idx], (zdim,)),
         temperature=DimArray(parent(out[:temperature])[:, col_idx], (zdim,)),
         density=DimArray(parent(out[:density])[:, col_idx], (zdim,)),
@@ -64,5 +64,12 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         grain_sphericity=DimArray(parent(out[:grain_sphericity])[:, col_idx], (zdim,)),
         albedo=DimArray(albedo_col, (zdim,)),
         albedo_diffuse=DimArray(albedo_diffuse_col, (zdim,)),
-    ))
+    )
+
+    # Carry the CF attributes through, minus `cell_methods`: the extracted column has no
+    # `Ti` dimension, so an interval reduction referencing a `time` coordinate that isn't
+    # there would be wrong. Stack-level metadata is deliberately left unset — `gemb_spinup`
+    # owns that slot (`rebuild(profile; metadata=prov)` in `spinup.jl`), and `rebuild`
+    # preserves the layer metadata set here.
+    return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end
