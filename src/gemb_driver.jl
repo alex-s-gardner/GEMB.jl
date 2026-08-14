@@ -358,7 +358,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # would pass every step and still accumulate over a multi-decade run. These run-level
     # accumulators are never reset by the output interval, so they close the budget across
     # the entire run. Reported once at the end rather than per timestep.
-    run_mass_initial = verbose ? first(column_mass_energy(state)) : 0.0
+    run_mass_initial = verbose ? column_mass(state) : 0.0
     run_precipitation = 0.0
     run_runoff = 0.0
     run_ec = 0.0
@@ -413,12 +413,14 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_albedo_surface += state.albedo[1]
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
-        # Compute firn air content without temporary array allocation
+        # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice), computed without a temporary
+        # array. Normalizing by `density_ice` (not 1000) is what makes this metres of air
+        # rather than metres of water equivalent — see upstream GEMB issue #198.
         _fac = 0.0
         @inbounds for j in eachindex(state.dz)
             _fac += state.dz[j] * (density_ice - min(state.density[j], density_ice))
         end
-        cum_firn_air_content += _fac / 1000
+        cum_firn_air_content += _fac / density_ice
         cum_thickness += thickness_added_total
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
@@ -514,7 +516,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # across a run of arbitrary length, where floating-point summation error grows with the
     # number of steps.
     if verbose
-        run_mass_final = first(column_mass_energy(state))
+        run_mass_final = column_mass(state)
         supplied = run_precipitation + run_ec + run_mass_added - run_runoff
         residual = (run_mass_final - run_mass_initial) - supplied
         turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +

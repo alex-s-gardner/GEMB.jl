@@ -35,7 +35,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
         grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
 
     if verbose
-        M_total_initial, E_total_initial = column_mass_energy(cols)
+        M_total_initial, E_total_initial = column_mass_energy(cols, mp)
     end
 
     T_bottom = temperature[end]
@@ -60,7 +60,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
             # Merge downward, except for the bottom cell, which merges into the
             # deepest surviving cell above it.
             i_target = i == m ? findlast(.!delete_cell) : i + 1
-            M[i_target] = merge_pair!(cols, i, i_target, M[i], M[i_target])
+            M[i_target] = merge_pair!(cols, i, i_target, M[i], M[i_target], mp)
         end
     end
 
@@ -91,17 +91,20 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     # The count controller conserves mass and energy exactly, and depth is pinned by
     # `trim_bottom!` later in the timestep, so the only budget term arising here is the
     # Dirichlet bottom boundary condition.
-    E_added = ((T_bottom - temperature[end]) * (dz[end] * density[end]) * C_ICE)
+    E_added = (dz[end] * density[end]) *
+              (specific_enthalpy(mp, T_bottom) - specific_enthalpy(mp, temperature[end]))
     temperature[end] = T_bottom
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose
-        M_total_final, E_total_final = column_mass_energy(cols)
+        M_total_final, E_total_final = column_mass_energy(cols, mp)
 
         M_delta = M_total_initial - M_total_final
         E_delta = E_total_initial - E_total_final + E_added
 
-        if (abs(M_delta) > 1e-3) || (abs(E_delta) > 1e-3)
+        E_tol = energy_tolerance(E_total_initial)
+
+        if (abs(M_delta) > 1e-3) || (abs(E_delta) > E_tol)
             error("Mass and/or energy are not conserved in manage_layer_thickness:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
         end
     end

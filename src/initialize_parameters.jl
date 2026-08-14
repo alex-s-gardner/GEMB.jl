@@ -15,7 +15,10 @@ end
 
 function validate_parameters(mp::ModelParameters)
     # Densification method
-    @assert mp.densification_method in (:HerronLangway, :Arthern, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, Ligtenberg"
+    # `:LiZwally` and `:Helsen` stay gated: their accumulation units are ambiguous in the
+    # literature (m i.e. vs m w.e., a factor of ~1.099), so the coefficients cannot be
+    # confirmed against an independent implementation.
+    @assert mp.densification_method in (:HerronLangway, :Arthern, :ArthernB, :Crocus, :CrocusPure, :GSFC2020, :Simonsen2013, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, ArthernB, Crocus, CrocusPure, GSFC2020, Simonsen2013, Ligtenberg"
 
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
@@ -46,7 +49,12 @@ function validate_parameters(mp::ModelParameters)
     # Thermal conductivity
     @assert mp.thermal_conductivity_method in (:Sturm, :Calonne) "thermal_conductivity_method must be Sturm or Calonne"
 
+    # Heat capacity
+    @assert mp.heat_capacity_method in (:constant, :CuffeyPaterson) "heat_capacity_method must be constant or CuffeyPaterson"
+    @assert 1500 <= mp.heat_capacity_ice <= 2500 "heat_capacity_ice must be in [1500, 2500]"
+
     # Water
+    @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
 
     # Albedo method

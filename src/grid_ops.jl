@@ -98,26 +98,29 @@ end
 end
 
 """
-    merge_pair!(cols, i, i_target, M_i, M_target) -> M_new
+    merge_pair!(cols, i, i_target, M_i, M_target, mp) -> M_new
 
 Fold the contents of cell `i` into cell `i_target`, conserving mass and energy exactly.
 `M_i` and `M_target` are the ice/firn masses `dz*density` of the two cells; the combined
 mass is returned so callers tracking a mass vector can keep it in sync.
 
-Intensive quantities (temperature, albedo) are averaged weighted by mass; extensive ones
-(thickness, pore water) are summed and density is recovered from the totals. Grain
-properties are inherited from cell `i` — that is the historical convention (the *upper*
-cell of the pair wins), preserved deliberately.
+Temperature is combined by [`mix_temperature`](@ref), which mixes in enthalpy and inverts.
+Under a temperature-dependent heat capacity the mass-weighted mean temperature is *not*
+energy-conserving — it loses `(b/2)·M·Var_M(T)` joules, thousands of times the
+conservation tolerance for a realistic deep merge. Albedo is intensive and is averaged by
+mass; thickness and pore water are extensive and are summed, with density recovered from
+the totals. Grain properties are inherited from cell `i` — that is the historical
+convention (the *upper* cell of the pair wins), preserved deliberately.
 
 This performs only the physics of the merge. The now-redundant cell `i` still occupies a
 slot; the caller removes it with [`close_slot!`](@ref), either immediately or in a batch.
 """
 @inline function merge_pair!(cols::NamedTuple, i::Int, i_target::Int,
-                             M_i::Float64, M_target::Float64)
+                             M_i::Float64, M_target::Float64, mp::ModelParameters)
     M_new = M_i + M_target
     @inbounds begin
-        cols.temperature[i_target] =
-            (cols.temperature[i] * M_i + cols.temperature[i_target] * M_target) / M_new
+        cols.temperature[i_target] = mix_temperature(mp,
+            cols.temperature[i], M_i, cols.temperature[i_target], M_target)
         cols.albedo[i_target] =
             (cols.albedo[i] * M_i + cols.albedo[i_target] * M_target) / M_new
         cols.albedo_diffuse[i_target] =
@@ -262,7 +265,7 @@ function enforce_column_length!(cols::NamedTuple, n_target::Int, mp::ModelParame
         i === nothing && break
         ii = i::Int
         @inbounds merge_pair!(cols, ii, ii + 1,
-            dz[ii] * cols.density[ii], dz[ii+1] * cols.density[ii+1])
+            dz[ii] * cols.density[ii], dz[ii+1] * cols.density[ii+1], mp)
         close_slot!(cols, ii)
         n -= 1
         ops += 1
@@ -370,7 +373,7 @@ function _select_split_cell(dz::Vector{Float64}, dzmin::Vector{Float64},
 end
 
 """
-    trim_bottom!(cols, z_target) -> (mass_added, E_added)
+    trim_bottom!(cols, z_target, mp) -> (mass_added, E_added)
 
 Controller 2 (mass). Pin the total column depth to `z_target` by adjusting the bottom
 cell's thickness, and return the mass [kg m-2] and energy [J m-2] added to the column as a
@@ -396,7 +399,7 @@ The column is an Eulerian window on the firn, not a prognostic ice-thickness mod
 `thickness_cumulative` measures basal flux in either regime, not thickness change. For the
 latter, use the surface terms (`precipitation - runoff + evaporation_condensation`).
 """
-function trim_bottom!(cols::NamedTuple, z_target::Float64)
+function trim_bottom!(cols::NamedTuple, z_target::Float64, mp::ModelParameters)
     dz = cols.dz
     n = length(dz)
     n == 0 && error("trim_bottom!: empty column")
@@ -426,8 +429,8 @@ function trim_bottom!(cols::NamedTuple, z_target::Float64)
         mass_delta = delta * cols.density[n] + water_delta
 
         mass_added = -mass_delta
-        E_added = -(delta * cols.density[n] * cols.temperature[n] * C_ICE +
-                    water_delta * (LF + CtoK * C_ICE))
+        E_added = -(delta * cols.density[n] * specific_enthalpy(mp, cols.temperature[n]) +
+                    water_delta * specific_enthalpy_water(mp))
 
         dz[n] = dz_new
         cols.water[n] -= water_delta
@@ -437,19 +440,39 @@ function trim_bottom!(cols::NamedTuple, z_target::Float64)
 end
 
 """
-    column_mass_energy(cols) -> (mass, energy)
+    column_mass(cols) -> mass [kg m-2]
+
+Total column mass: ice/firn `dz*density` plus pore water. Needs no `ModelParameters`,
+unlike [`column_mass_energy`](@ref), so callers that want mass alone can avoid threading
+one through.
+"""
+function column_mass(cols::NamedTuple)
+    mass = 0.0
+    @inbounds for i in eachindex(cols.dz)
+        mass += cols.dz[i] * cols.density[i] + cols.water[i]
+    end
+    return mass
+end
+
+"""
+    column_mass_energy(cols, mp) -> (mass, energy)
 
 Total column mass [kg m-2] and enthalpy [J m-2], the reference quantities for every
-conservation check. Ice/firn contributes `dz*density*T*C_ICE`; pore water contributes its
-latent heat plus sensible heat at the melt point.
+conservation check. Ice/firn contributes `dz*density*h(T)` with `h` the enthalpy integral
+[`specific_enthalpy`](@ref); pore water contributes [`specific_enthalpy_water`](@ref) —
+its latent heat plus sensible heat at the melt point.
+
+Absolute energies are measured from a 0 K reference and so are not comparable across
+`mp.heat_capacity_method`; only differences are meaningful.
 """
-function column_mass_energy(cols::NamedTuple)
+function column_mass_energy(cols::NamedTuple, mp::ModelParameters)
     mass = 0.0
     energy = 0.0
+    h_water = specific_enthalpy_water(mp)
     @inbounds for i in eachindex(cols.dz)
         mi = cols.dz[i] * cols.density[i]
         mass += mi + cols.water[i]
-        energy += mi * cols.temperature[i] * C_ICE + cols.water[i] * (LF + CtoK * C_ICE)
+        energy += mi * specific_enthalpy(mp, cols.temperature[i]) + cols.water[i] * h_water
     end
     return mass, energy
 end

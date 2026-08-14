@@ -2,8 +2,19 @@
 # All values match the MATLAB implementation exactly
 
 const CtoK = 273.15        # Celsius to Kelvin conversion [K]
-const C_ICE = 2102.0       # Specific heat capacity of snow/ice [J kg-1 K-1]
-const C_AIR = 1005.0       # Specific heat capacity of air [J kg-1 K-1]
+
+# Specific heat capacity of snow/firn/ice [J kg-1 K-1]. This seeds
+# `ModelParameters.heat_capacity_ice` and is *not* authoritative — the model reads
+# `heat_capacity(mp, T)`, which honours `mp.heat_capacity_method`. The MATLAB value 2102
+# is c_p at the melting point.
+const HEAT_CAPACITY_ICE_DEFAULT = 2102.0
+
+# Cuffey and Paterson (2010) eq. 9.1: c_p(T) = a + b·T, T in kelvin.
+const HEAT_CAPACITY_CUFFEY_A = 152.5
+const HEAT_CAPACITY_CUFFEY_B = 7.122
+
+const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
+
 const LF = 0.3345e6        # Latent heat of fusion [J kg-1]
 const LV = 2.495e6         # Latent heat of vaporization [J kg-1]
 const LS = 2.8295e6        # Latent heat of sublimation [J kg-1]
@@ -15,6 +26,14 @@ const VON_KARMAN = 0.4     # Von Karman constant [-]
 
 const SECONDS_PER_YEAR = 365.25 * 86400.0  # Seconds in a (Julian) year [s]
 
+# Year length assumed by the densification rate coefficients, in days. Deliberately 365, not
+# `SECONDS_PER_YEAR / 86400` (365.25): every densification scheme's `c` is applied as
+# `c / DAYS_PER_YEAR_DENSIFICATION * dt` with `dt` in days, so any scheme published with SI
+# per-second coefficients must be converted against *this* value for the two to cancel.
+# Changing it rescales every densification rate by 0.07%; it is also ~0.07% of the offset
+# against the Community Firn Model, which uses a 365.25-day year.
+const DAYS_PER_YEAR_DENSIFICATION = 365.0
+
 # Snow/firn state values shared by the accumulation physics and the steady-state
 # initial guess, so a freshly initialized column and freshly fallen snow agree.
 const RE_NEW_SNOW = 0.05   # New snow effective grain radius [mm]
@@ -23,6 +42,13 @@ const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
 const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+
+# Density separating the two densification stages [kg m-3]. Every scheme in
+# `calculate_density` switches rate coefficients here: it is the transition from
+# grain-settling-dominated to creep-dominated compaction, and all the published two-stage
+# coefficient pairs (Herron & Langway, Arthern, Ligtenberg, Simonsen, GSFC) are fitted
+# against this same split.
+const DENSITY_STAGE_TRANSITION = 550.0
 
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
@@ -55,3 +81,17 @@ const WATER_TOLERANCE = 1e-13          # pore water presence
 const GDN_TOLERANCE = 1e-10            # grain dendricity / sphericity [0,1] clamps
 const E_TOLERANCE = 1e-3               # energy-conservation check [J] (verbose only)
 const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offset [K]
+
+"""
+    energy_tolerance(E_reference)
+
+Absolute tolerance [J] for a verbose-only energy-conservation check whose budget totals
+`E_reference`.
+
+`E_TOLERANCE` alone is a *relative* 1e-14 against a deep column's ~1e11 J of enthalpy, which
+only ever passed because both sides of the check were bit-identical arithmetic. Working in
+enthalpy adds real round-trip noise (~3e-6 J per deep-cell merge), so every check is
+relative-with-floor: the floor keeps small columns strict, the relative term scales with the
+budget being checked.
+"""
+@inline energy_tolerance(E_reference::Real) = max(E_TOLERANCE, 1e-12 * abs(E_reference))

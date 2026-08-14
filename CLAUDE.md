@@ -13,7 +13,7 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance model. 
 - Densification (compaction and wet compaction)
 - Layer management
 
-The model is a translation from MATLAB to Julia, maintaining fidelity to the original implementation while leveraging Julia's performance and type system.
+The model began as a translation from MATLAB to Julia and leverages Julia's performance and type system. Physics deviations from the MATLAB version are permitted where justified, and must be documented (see [Documenting deviations](#documenting-deviations-from-matlab)).
 
 ## Quick Start
 
@@ -197,7 +197,7 @@ Initialize Profile → Time Loop [
 
 ### Key Design Principles
 
-- **MATLAB Fidelity**: Physics match original MATLAB implementation. Comments reference MATLAB line numbers.
+- **MATLAB Provenance**: Physics derive from the original MATLAB implementation, and comments reference MATLAB line numbers. Deviations are permitted where physically justified and must be documented (see [Documenting deviations](#documenting-deviations-from-matlab)).
 - **DimensionalData.jl**: All input/output arrays use `DimArray` with explicit dimensions (`Ti` for time, `Z` for vertical). Indexing uses keyword syntax: `output[:temperature][Z=1:10, Ti=At(t)]`
 - **State as NamedTuple**: The column state (temperature, dz, density, etc.) is passed between timesteps as a plain NamedTuple of vectors — no DimStack overhead in the hot loop
 - **Symbols for Options**: Model parameters that select methods use `Symbol` (e.g., `albedo_method=:GardnerSharp`, `output_frequency=:daily`)
@@ -217,7 +217,7 @@ The test suite in `runtests.jl` runs all module tests in order of dependency.
 
 ### Constants and Physical Models
 
-Physical constants are defined in `constants.jl` (e.g., `C_ICE`, `LF`, `CtoK`) and match MATLAB conventions.
+Physical constants are defined in `constants.jl` (e.g., `LF`, `CtoK`, `GRAVITY`) and match MATLAB conventions.
 
 GEMB simulates:
 - **Surface Energy Balance**: Radiative (shortwave/longwave) and turbulent (sensible/latent) fluxes using Monin-Obukhov similarity theory
@@ -230,6 +230,16 @@ GEMB simulates:
 ## Testing Against MATLAB
 
 When modifying physics functions, always run the corresponding test to ensure MATLAB equivalence is maintained. Tests use the MAT.jl package to load reference data stored in `test/` directory (MAT files). Validation typically requires ~1e-12 relative tolerance to match MATLAB. If you add new physics, generate reference data using `test/generate_reference_data.m` (MATLAB script).
+
+## Documenting deviations from MATLAB
+
+When a change alters model output relative to the MATLAB reference, add a one-line entry to
+the **Physics deviations** subsection of `README.md`. State what changed and what it
+affects, concisely and factually. Do not editorialize.
+
+If the deviation corrects a defect that also exists in the MATLAB source, open an issue on
+[the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues) and reference its
+number in the README entry.
 
 ### Cross-Validation Examples
 - `examples/synthetic_example.jl` - Simple synthetic forcing test

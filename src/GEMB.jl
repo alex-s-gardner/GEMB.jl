@@ -27,6 +27,7 @@ include("steady_state_profile.jl")
 include("initialize_profile.jl")
 
 # Leaf physics
+include("heat_capacity.jl")
 include("thermal_conductivity.jl")
 include("turbulent_heat_flux.jl")
 include("densification_lookup.jl")

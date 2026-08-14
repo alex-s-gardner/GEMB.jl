@@ -10,7 +10,7 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance (GEMB, 
 
 GEMB is a column model (no horizontal communication) of intermediate complexity, prioritizing computational efficiency to accommodate the multi-millennial spin-ups required for initializing deep firn columns. It is used for interpreting satellite altimetry data, firn studies, surface mass balance inversion from satellite data, ice core studies, uncertainty quantification and model exploration in cryosphere research. A complete description of GEMB can be found in [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
 
-This Julia implementation maintains fidelity to the original MATLAB version while leveraging Julia's performance, type system, and modern ecosystem including DimensionalData.jl for labeled arrays.
+This Julia implementation began as a translation of the original MATLAB version and leverages Julia's performance, type system, and modern ecosystem including DimensionalData.jl for labeled arrays. It now deviates from the MATLAB version where the physics warranted it; those deviations are listed under [Differences from MATLAB Version](#differences-from-matlab-version).
 
 ## Key Capabilities
 
@@ -162,14 +162,15 @@ after warmup:
 | Implementation | Total runtime | Speedup vs MATLAB |
 |---|---|---|
 | MATLAB (R2024b) | 98.8 s | 1× |
-| Julia (current) | **4.9 s** | **~20×** |
+| Julia (current) | **5.7 s** | **~17×** |
 
 Both were re-benchmarked on the same machine with the same protocol
 (`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
 
-The Julia hot loop has been tuned for low allocations and type stability. The individual
-physics functions remain numerically faithful to the MATLAB reference and the full
-MATLAB-validation test suite passes (~1e-12 relative tolerance per module).
+The Julia hot loop has been tuned for low allocations and type stability. The
+MATLAB-validation test suite passes (~1e-12 relative tolerance per module) for every
+physics function except where a deviation is documented under
+[Physics deviations](#physics-deviations).
 
 Whole-column output is **not** bit-identical to the MATLAB reference, and cannot be: the
 fixed-length vertical grid (see below) merges and splits cells at depth to hold the cell
@@ -184,7 +185,7 @@ compiled native code.
 
 ## Differences from MATLAB Version
 
-GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Julia idioms:
+GEMB.jl embraces Julia idioms and deviates from the MATLAB implementation where justified:
 
 - **DimensionalData.jl:** All arrays use explicit dimension labels (`Ti`, `Z`) instead of implicit ordering
 - **Immutable Parameters:** `ModelParameters` is immutable; create new instance for modifications
@@ -194,6 +195,88 @@ GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Jul
 - **Fixed-length vertical grid:** the column holds a constant cell count and a constant total
   depth for the whole run, rather than growing and shrinking as cells are added and removed
   (see below)
+
+### Physics deviations
+
+Changes that alter model output relative to the MATLAB reference. Upstream issue numbers
+refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
+
+- **`firn_air_content` is metres of air**, `Σ dz (1 − ρ/ρ_ice)`. MATLAB normalizes the same
+  mass deficit by 1000 rather than `density_ice`, which yields metres of water equivalent —
+  9.0% lower for `density_ice = 910`. Affects the `firn_air_content` output only
+  (upstream [#198](https://github.com/alex-s-gardner/GEMB/issues/198)).
+- **`:ArthernB` densification is corrected and selectable.** MATLAB omits gravity and the
+  per-second-to-per-year conversion from Arthern et al. (2010) eq. B1 — a combined factor of
+  ~3.1e8, leaving the scheme inert — and applies the overlying cell's density to the whole
+  overlying depth rather than integrating `Σ(ρⱼdzⱼ + waterⱼ)g`. Corrected here and validated
+  against the Community Firn Model's `Arthern2010T` to 1e-8. MATLAB marks the scheme
+  "DO NOT USE"; it is now a permitted `densification_method`
+  (upstream [#200](https://github.com/alex-s-gardner/GEMB/issues/200)). The steady-state
+  initial guess falls back to `:Arthern`, which the spinup then relaxes. `:LiZwally` and
+  `:Helsen` remain gated.
+- **Added `densification_method = :GSFC2020`** — Medley et al. (2022) GSFC-FDM v1.2.1
+  eq. 18, the recalibrated successor to `:Arthern`: the same `dρ/dt = c(ρᵢ−ρ)` form with the
+  mean accumulation raised to a fitted exponent (α₀ = 0.91, α₁ = 0.644) and a per-stage
+  activation energy (59500 and 56870 J mol⁻¹ against Arthern's single 60000). Not present in
+  MATLAB. Cross-checked against the Community Firn Model's `GSFC2020` to the 0.102% `g`
+  offset. Because α ≠ 1 the accumulation units are load-bearing rather than absorbed into a
+  prefactor: `precipitation_mean` is kg m⁻² yr⁻¹, which is the convention the exponents were
+  fitted against.
+- **Added `densification_method = :Simonsen2013`** — Simonsen et al. (2013), `:Arthern`'s form
+  and activation energies retuned for Greenland: a constant factor 0.8 below 550 kg m⁻³, and
+  1.25·γ above with `γ = 61.7/√A · exp(−3800/RT̄)`, where γ scales the second stage only. Not
+  present in MATLAB. The form follows Lundin et al. (2017) FirnMICE eqs. A36–A37; that paper
+  publishes no numeric tuning scalars, so the values 0.8 and 1.25 are the Community Firn
+  Model's, against which the implementation is cross-checked to the 0.102% `g` offset. As for
+  `:GSFC2020`, the accumulation units are load-bearing (`γ ∝ A^−1/2`): `precipitation_mean` is
+  kg m⁻² yr⁻¹.
+- **Added `densification_method = :Crocus` and `:CrocusPure`** — viscous settling of Vionnet
+  et al. (2012) eqs. 5–9, `dD/D = −σ/η·dt` with `η = f1·f2·η₀(ρ/cη)·exp(aη(T_fus−T) + bη·ρ)`.
+  Not present in MATLAB, and the only scheme in which liquid water affects densification:
+  `f1 = (1 + 60·W_liq/(ρ_w·D))⁻¹` reduces viscosity by up to ~61× in wet cells, `f2 =
+  min(4, exp(min(0.4 mm, gs−0.2 mm)/0.1 mm))` raises it for coarse angular grains. Overburden
+  is the same `Σ(ρdz + water)·g` integral `:ArthernB` uses, taken at the cell midpoint (the
+  paper's half-own-weight rule for the surface layer, applied uniformly). Integrated as
+  `D·exp(−σ/η·dt)`, eq. 5's exact solution at constant σ and η, rather than through the
+  `c(ρᵢ−ρ)` relaxation the other schemes share. Cross-checked against the Community Firn
+  Model's `Crocus`, which differs in hardcoding `f2 = 4` and adopting van Kampenhout et al.
+  (2017)'s retuned `cη = 358`; the paper's `f2` and `cη = 250` are used. Two departures from
+  the published law: `f2` is floored at 1 (eq. 9 is bounded above but not below, so it
+  *softens* fine-grained snow — 0.368, a 2.7× speedup, at GEMB's 0.05 mm fresh-snow radius.
+  Crocus never reaches that regime because eq. 9 applies only to non-dendritic snow, whose
+  `gs` the paper puts at 0.3–0.4 mm where eq. 9 gives 2.7–4; GEMB carries one grain radius
+  for both regimes, so the floor keeps `f2` a stiffening correction across the domain eq. 9
+  actually covers and inert below it), and `:Crocus` hands cells at or above 450 kg m⁻³
+  to `:GSFC2020`. That handover exists because eq. 7 is fitted to a 1–2 m alpine snowpack and
+  `exp(bη·ρ)` saturates in firn: the unblended law gives 0.7–0.8× `:Arthern`'s compaction
+  rate in the top few metres but only 0.02–0.09× below 20 m. 450 kg m⁻³ is the threshold the
+  Community Firn Model uses for the same purpose; the handover is a branch, not a weighted
+  blend, since neither paper prescribes a blending function. `:CrocusPure` applies eq. 5 at
+  every density.
+- **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
+  `0.07` that overrides the documented parameter at every percolation retention site; only
+  the pre-percolation squeeze read the parameter. Changes output wherever
+  `water_irreducible_saturation != 0.07` (upstream
+  [#199](https://github.com/alex-s-gardner/GEMB/issues/199)).
+- **Added `water_irreducible_method = :ColeouLesaffre`** — density-dependent irreducible
+  saturation, `S_wi = wmi/(1−wmi)·ρᵢρ/(ρ_w(ρᵢ−ρ))` with `wmi = 0.057(ρᵢ−ρ)/ρ + 0.017`
+  (Coléou and Lesaffre 1998 eq. 3 via Langen et al. 2017 eq. 4), matching the Community Firn
+  Model. Retention is zero at and above `DENSITY_PORE_CLOSEOFF`, as in CFM. Default
+  `:constant` is unchanged and bit-identical.
+- **Added `heat_capacity_method = :CuffeyPaterson`** — temperature-dependent specific heat,
+  `c_p(T) = 152.5 + 7.122 T` (Cuffey and Paterson 2010 eq. 9.1). MATLAB uses the constant
+  2102 J kg⁻¹ K⁻¹, its value at the melting point, which overstates the cold content of firn
+  at 240 K by 12.9% and at 210 K by 27.5%. Default `:constant` reproduces the MATLAB value.
+- **Internal energy is the enthalpy integral `∫c_p dT`, not `M·T·c_p`.** The latter is valid
+  only for constant `c_p`; under `:CuffeyPaterson` it overstates enthalpy by `(b/2)T²`, which
+  is 0.79·`LF` at the melting point. Cell mixing, the thermal solver, and every energy budget
+  now work in enthalpy. For the default `:constant` the two forms are algebraically identical,
+  so the change is arithmetic reordering (~1e-13 per operation); the 75-cycle spinup is not
+  converged and amplifies this to ~0.3% in melt-related whole-run totals, so the synthetic
+  regression pins were re-centered. Absolute column enthalpy is not comparable between the two
+  methods (574 061 vs 307 385 J kg⁻¹ at 273.15 K), so reported thermal energy shifts when
+  switching. The enthalpy solver costs ~17% more wall-clock than the constant-`c_p` form it
+  replaced (4.9 s to 5.7 s on the 107-model-year benchmark); allocations fell.
 
 ### Fixed-length vertical grid
 
@@ -250,7 +333,8 @@ Schlegel, N.-J., & Gardner, A. (2025). Output from the Glacier Energy and Mass B
 ## Contributing
 
 Contributions are welcome! Please:
-1. Maintain fidelity to the MATLAB implementation for physics functions
+1. Deviate from the MATLAB implementation only where physically justified, and document the
+   deviation under [Physics deviations](#physics-deviations)
 2. Add tests that validate against MATLAB reference data
 3. Follow Julia style guidelines
 4. Update documentation for new features

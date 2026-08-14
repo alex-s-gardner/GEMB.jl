@@ -222,7 +222,7 @@ end
 
     # Constants from GEMB
     lf = GEMB.LF
-    ci = GEMB.C_ICE
+    ci = mp.heat_capacity_ice
 
     old_mass = density[1] * dz[1]
     old_dz1 = dz[1]
