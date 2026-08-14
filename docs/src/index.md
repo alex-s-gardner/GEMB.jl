@@ -28,7 +28,7 @@ pkg> add GEMB
 Using GEMB requires four basic steps:
 
 1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5-Land data.
-2. **Define Model Parameters** -- Use [`ModelParameters`](@ref) to set model configuration (densification model, albedo method, grid geometry, etc.).
+2. **Define Model Parameters** -- Use [`initialize_parameters`](@ref) to set and validate model configuration (densification model, albedo method, grid geometry, etc.). It builds and checks a [`ModelParameters`](@ref).
 3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
 4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
 
