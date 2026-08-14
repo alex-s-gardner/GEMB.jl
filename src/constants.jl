@@ -13,6 +13,36 @@ const R_GAS = 8.314        # Universal gas constant [J mol-1 K-1]
 const DENSITY_WATER = 1000.0  # Density of water [kg m-3]
 const VON_KARMAN = 0.4     # Von Karman constant [-]
 
+const SECONDS_PER_YEAR = 365.25 * 86400.0  # Seconds in a (Julian) year [s]
+
+# Snow/firn state values shared by the accumulation physics and the steady-state
+# initial guess, so a freshly initialized column and freshly fallen snow agree.
+const RE_NEW_SNOW = 0.05   # New snow effective grain radius [mm]
+const GDN_NEW_SNOW = 1.0   # New snow dendricity [-]
+const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
+const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
+const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
+const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+
+# Surface roughness lengths (Bougamont, 2005), shared by the transient surface
+# energy balance (`calculate_temperature`) and the initial-guess one
+# (`_seb_annual_melt`), which blends between the dry-snow and ice values.
+const Z0_SNOW_DRY = 0.00012  # 0.12 mm, dry snow [m]
+const Z0_SNOW_WET = 0.0013   # 1.3 mm, wet snow [m]
+const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
+
+# How close to `density_ice` counts as "firn has become ice" when sizing the initial
+# column. Densification laws approach ice *asymptotically*, so no finite depth ever
+# reaches it to within a float epsilon — testing against `D_TOLERANCE` would report
+# "never reached ice" for every column. 0.5 kg m-3 is well below the uncertainty of
+# any densification law and far below one output digit.
+const DENSITY_FIRN_TOLERANCE = 0.5     # [kg m-3]
+
+# Convergence tolerance on the albedo/melt fixed point in the initial guess. This is
+# an initial state a spinup then relaxes, so resolving the albedo beyond ~1e-4 buys
+# nothing and each iteration costs a full sweep of the forcing series.
+const ALBEDO_FIXED_POINT_TOLERANCE = 1e-4
+
 # Numerical boundary tolerances.
 # These are float-safe offsets on branch comparisons (e.g. `x < threshold - D_TOLERANCE`)
 # that reproduce the original MATLAB's exact branch decisions. They are load-bearing for

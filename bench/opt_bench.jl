@@ -11,9 +11,9 @@ function build_inputs()
     ds = simulate_climate_forcing("test_1", TIME_STEP_HOURS)  # DimStack
     cf = GEMB.initialize_forcing(ds)                          # convert to ClimateForcing
     cf_clim = forcing_climatology(cf)
-    # `initialize_profile` returns (profile, mp); with depth_autoadjust=true (default)
-    # an inferred-ice column gets shallower limits in the returned mp, so rebind it and
-    # use it for both spinup and the transient run. `gemb_spinup` forces
+    # `initialize_profile` returns (profile, mp); the returned mp carries the
+    # climate-derived column limits, so rebind it and use it for both the spinup
+    # and the transient run. `gemb_spinup` forces
     # output_frequency=:last internally, so no separate spinup params object is needed.
     mp = ModelParameters(output_frequency=:daily)
     profile, mp = initialize_profile(mp, cf)

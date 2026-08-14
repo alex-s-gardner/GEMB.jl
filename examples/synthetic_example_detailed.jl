@@ -29,8 +29,8 @@ mp = initialize_parameters(output_frequency=:daily)
 println("   Output frequency: $(mp.output_frequency)")
 println("   Densification model: $(mp.densification_model)")
 
-# Initialize a column. Returns (profile, mp); with depth_autoadjust=true (default)
-# an inferred-ice column gets shallower limits in the returned mp — rebind it.
+# Initialize a column. Returns (profile, mp); the returned mp carries the
+# climate-derived column limits — rebind it.
 println("\n3. Initializing profile...")
 profile, mp = initialize_profile(mp, cf)
 println("   Initial layers: $(length(profile.dz))")
@@ -45,7 +45,7 @@ println("   Climatology length: $(length(cf_climatology.temperature_air)) steps"
 
 # Spin up a profile for up to 75 years of average forcing (exits early on convergence).
 # gemb_spinup internally forces output_frequency=:last, so pass the mp returned by
-# initialize_profile (with any depth_autoadjust'd column limits) rather than a separate
+# initialize_profile (with its derived column limits) rather than a separate
 # :last params object.
 println("\n5. Running spinup (up to 75 years)...")
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;

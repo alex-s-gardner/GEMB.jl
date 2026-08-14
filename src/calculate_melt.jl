@@ -26,7 +26,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     water_tolerance = 1e-13
 
     # Specify constants
-    d_phc = 830.0           # pore hole close off density [kg m-3]
+    d_phc = DENSITY_PORE_CLOSEOFF   # pore hole close off density [kg m-3]
     ice_layer_dzmin = 0.1   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)

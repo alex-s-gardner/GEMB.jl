@@ -250,3 +250,37 @@ struct ClimateForcingStep
     shortwave_downward_diffuse::Float64
     cloud_fraction::Float64
 end
+
+"""
+    ClimateForcingStep(; dt, temperature_air, ...)
+
+Keyword constructor, defaulting every field to zero.
+
+The physics loop builds these positionally from the forcing vectors, but the
+initialization helpers each need only the handful of fields their callee reads
+(grain growth reads `dt`; the surface energy balance reads the air state; albedo
+reads the optical properties). Naming those fields keeps a field insertion or
+reorder in the struct above from silently mis-assigning values — every field is a
+`Float64`, so a positional mistake is not a type error.
+"""
+function ClimateForcingStep(;
+    dt::Real=0.0,
+    temperature_air::Real=0.0, pressure_air::Real=0.0, precipitation::Real=0.0,
+    wind_speed::Real=0.0, shortwave_downward::Real=0.0, longwave_downward::Real=0.0,
+    vapor_pressure::Real=0.0,
+    temperature_air_mean::Real=0.0, wind_speed_mean::Real=0.0,
+    precipitation_mean::Real=0.0, temperature_observation_height::Real=0.0,
+    wind_observation_height::Real=0.0,
+    black_carbon_snow::Real=0.0, black_carbon_ice::Real=0.0,
+    cloud_optical_thickness::Real=0.0, solar_zenith_angle::Real=0.0,
+    shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0)
+
+    return ClimateForcingStep(
+        dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    )
+end

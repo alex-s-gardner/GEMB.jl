@@ -22,6 +22,8 @@ include("cf_metadata.jl")
 include("initialize_parameters.jl")
 include("initialize_forcing.jl")
 include("forcing_climatology.jl")
+include("initialize_climate_summary.jl")
+include("steady_state_profile.jl")
 include("initialize_profile.jl")
 
 # Leaf physics
@@ -66,6 +68,8 @@ export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
 export dz2z, surface_timeseries, fast_divisors, decyear2datenum, datetime2decyear
 export CFAttrs, GEMB_CF_ATTRIBUTES, GEMB_CF_GLOBAL_ATTRIBUTES, cf_attributes
-export herron_langway_steady_state, annual_pdd_melt, fresh_snow_density
+export fresh_snow_density
+export ClimateSummary, initialize_climate_summary
+export steady_state_profile, steady_state_density
 
 end
