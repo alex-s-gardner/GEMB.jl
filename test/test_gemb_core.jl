@@ -34,9 +34,6 @@ function _make_core_mp(; dt=3600.0, column_depth_max=0.9)
         albedo_snow=0.85,
         albedo_fixed=0.7,
         albedo_density_threshold=1023.0,
-        albedo_wet_snow_t0=15.0,
-        albedo_dry_snow_t0=30.0,
-        albedo_K=7.0,
         shortwave_subsurface_absorption=true,
         emissivity=0.98,
         emissivity_grain_radius_large=0.97,
@@ -69,8 +66,6 @@ function _make_core_state(; n=10)
         grain_radius = 0.5 * ones(n),
         grain_dendricity = 0.5 * ones(n),
         grain_sphericity = 0.5 * ones(n),
-        albedo = 0.8 * ones(n),
-        albedo_diffuse = 0.8 * ones(n),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -131,8 +126,6 @@ end
         grain_radius = 0.5 * ones(10),
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
-        albedo = 0.8 * ones(10),
-        albedo_diffuse = 0.8 * ones(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -153,8 +146,6 @@ end
         grain_radius = 0.5 * ones(10),
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
-        albedo = 0.8 * ones(10),
-        albedo_diffuse = 0.8 * ones(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )

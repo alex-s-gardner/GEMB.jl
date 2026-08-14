@@ -61,9 +61,6 @@ Base.@kwdef struct ModelParameters
     black_carbon_snow::Float64 = 0.0
     black_carbon_ice::Float64 = 0.0
     cloud_fraction::Float64 = 0.1
-    albedo_wet_snow_t0::Float64 = 15.0
-    albedo_dry_snow_t0::Float64 = 30.0
-    albedo_K::Float64 = 7.0
 
     # --- Output Controls ---
     output_frequency::Symbol = :all

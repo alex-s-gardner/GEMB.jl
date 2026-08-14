@@ -80,5 +80,5 @@ rh = vapor_pressure_to_relative_humidity(
     parent(cf.vapor_pressure), parent(cf.temperature_air))
 
 println("Simulation complete!")
-println("  Mean surface albedo: ", round(mean(parent(output[:albedo_surface])), digits=3))
+println("  Mean surface albedo: ", round(mean(parent(output[:albedo_broadband])), digits=3))
 println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content])), digits=3), " m")

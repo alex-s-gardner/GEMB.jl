@@ -79,8 +79,6 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_radius = Vector{Float64}(profile[:grain_radius]),
         grain_dendricity = Vector{Float64}(profile[:grain_dendricity]),
         grain_sphericity = Vector{Float64}(profile[:grain_sphericity]),
-        albedo = Vector{Float64}(profile[:albedo]),
-        albedo_diffuse = Vector{Float64}(profile[:albedo_diffuse]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -128,7 +126,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         longwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_sensible=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_latent=DimArray(fill(NaN, n_outputs), (ti_dim,)),
-        albedo_surface=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         thickness_cumulative=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -148,8 +146,6 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_radius=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_dendricity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-        albedo=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-        albedo_diffuse=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
 
     output = DimStack(layers;
@@ -313,7 +309,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lwnet = parent(output[:longwave_net])
     out_shf = parent(output[:heat_flux_sensible])
     out_lhf = parent(output[:heat_flux_latent])
-    out_albsurf = parent(output[:albedo_surface])
+    out_albedo_broadband = parent(output[:albedo_broadband])
     out_fac = parent(output[:firn_air_content])
     out_thick = parent(output[:thickness_cumulative])
     out_ta = parent(output[:temperature_air])
@@ -327,8 +323,6 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_radius = parent(output[:grain_radius])
     out_grain_dendricity = parent(output[:grain_dendricity])
     out_grain_sphericity = parent(output[:grain_sphericity])
-    out_albedo = parent(output[:albedo])
-    out_albedo_diffuse = parent(output[:albedo_diffuse])
 
     density_ice = mp.density_ice
 
@@ -343,7 +337,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_longwave_net = 0.0
     cum_shf = 0.0
     cum_lhf = 0.0
-    cum_albedo_surface = 0.0
+    cum_albedo_broadband = 0.0
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
     cum_firn_air_content = 0.0
@@ -410,7 +404,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_longwave_net += forcing_step.longwave_downward - flux.longwave_upward
         cum_shf += flux.heat_flux_sensible
         cum_lhf += flux.heat_flux_latent
-        cum_albedo_surface += state.albedo[1]
+        cum_albedo_broadband += flux.albedo_broadband
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
         # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice), computed without a temporary
@@ -452,7 +446,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lwnet[oi] = cum_longwave_net / cum_count
                 out_shf[oi] = cum_shf / cum_count
                 out_lhf[oi] = cum_lhf / cum_count
-                out_albsurf[oi] = cum_albedo_surface / cum_count
+                out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_thick[oi] = cum_thickness / cum_count
 
@@ -483,8 +477,6 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_grain_radius[k, oi] = state.grain_radius[k]
                 out_grain_dendricity[k, oi] = state.grain_dendricity[k]
                 out_grain_sphericity[k, oi] = state.grain_sphericity[k]
-                out_albedo[k, oi] = state.albedo[k]
-                out_albedo_diffuse[k, oi] = state.albedo_diffuse[k]
             end
 
             # Reset accumulators
@@ -498,7 +490,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_longwave_net = 0.0
             cum_shf = 0.0
             cum_lhf = 0.0
-            cum_albedo_surface = 0.0
+            cum_albedo_broadband = 0.0
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0
             cum_firn_air_content = 0.0

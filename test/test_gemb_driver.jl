@@ -276,7 +276,7 @@ using Dates
         @test named == Set([:melt, :runoff, :precipitation, :rain,
                             :shortwave_net, :longwave_net,
                             :heat_flux_sensible, :heat_flux_latent,
-                            :albedo_surface, :temperature_air])
+                            :albedo_broadband, :temperature_air])
         for k in (:temperature, :density, :water)
             @test !haskey(DimensionalData.metadata(out[k]), "standard_name")
         end

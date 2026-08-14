@@ -43,20 +43,24 @@ whole-cell jumps a drop/create scheme would produce.
 
 """
     column_state(temperature, dz, density, water, grain_radius,
-                 grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+                 grain_dendricity, grain_sphericity)
 
-Bundle the nine per-cell state vectors so the grid primitives can operate on all of them
-generically. `values(...)` of the result is a homogeneous `NTuple{9,Vector{Float64}}`, so
+Bundle the seven per-cell state vectors so the grid primitives can operate on all of them
+generically. `values(...)` of the result is a homogeneous `NTuple{7,Vector{Float64}}`, so
 the generic loops below stay type-stable and fully unrolled.
+
+Albedo is deliberately absent: every albedo method is diagnostic in the current column
+state (see [`calculate_albedo`](@ref)), so there is no per-cell albedo to carry through a
+merge or a split.
 
 The structural primitives (`open_slot!`, `close_slot!`) need no change when a field is added;
 `merge_pair!` and `split_cell!` do, since a new field's extensive-vs-intensive merge semantics
 cannot be inferred. See the module preamble on why the bundle is rebuilt per call site.
 """
 @inline column_state(temperature, dz, density, water, grain_radius,
-    grain_dendricity, grain_sphericity, albedo, albedo_diffuse) =
+    grain_dendricity, grain_sphericity) =
     (; temperature, dz, density, water, grain_radius,
-       grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+       grain_dendricity, grain_sphericity)
 
 """
     open_slot!(cols, i)
@@ -107,10 +111,10 @@ mass is returned so callers tracking a mass vector can keep it in sync.
 Temperature is combined by [`mix_temperature`](@ref), which mixes in enthalpy and inverts.
 Under a temperature-dependent heat capacity the mass-weighted mean temperature is *not*
 energy-conserving — it loses `(b/2)·M·Var_M(T)` joules, thousands of times the
-conservation tolerance for a realistic deep merge. Albedo is intensive and is averaged by
-mass; thickness and pore water are extensive and are summed, with density recovered from
-the totals. Grain properties are inherited from cell `i` — that is the historical
-convention (the *upper* cell of the pair wins), preserved deliberately.
+conservation tolerance for a realistic deep merge. Thickness and pore water are extensive
+and are summed, with density recovered from the totals. Grain properties are inherited from
+cell `i` — that is the historical convention (the *upper* cell of the pair wins), preserved
+deliberately.
 
 This performs only the physics of the merge. The now-redundant cell `i` still occupies a
 slot; the caller removes it with [`close_slot!`](@ref), either immediately or in a batch.
@@ -121,11 +125,6 @@ slot; the caller removes it with [`close_slot!`](@ref), either immediately or in
     @inbounds begin
         cols.temperature[i_target] = mix_temperature(mp,
             cols.temperature[i], M_i, cols.temperature[i_target], M_target)
-        cols.albedo[i_target] =
-            (cols.albedo[i] * M_i + cols.albedo[i_target] * M_target) / M_new
-        cols.albedo_diffuse[i_target] =
-            (cols.albedo_diffuse[i] * M_i + cols.albedo_diffuse[i_target] * M_target) / M_new
-
         # Grain properties come from the upper cell of the merged pair.
         cols.grain_radius[i_target] = cols.grain_radius[i]
         cols.grain_dendricity[i_target] = cols.grain_dendricity[i]
@@ -143,8 +142,8 @@ end
 
 Split cell `i` into two cells of half its thickness, conserving mass and energy exactly.
 
-Thickness and pore water are halved (both extensive); density, temperature, grain
-properties and albedo are intensive and so are simply duplicated. The result occupies
+Thickness and pore water are halved (both extensive); density, temperature and grain
+properties are intensive and so are simply duplicated. The result occupies
 indices `i` and `i+1`, and the column grows by one cell.
 """
 @inline function split_cell!(cols::NamedTuple, i::Int)
@@ -390,7 +389,7 @@ The adjustment is signed and continuous:
 
 Accreted material inherits the bottom cell's properties (the column below is unresolved):
 `density[n]`, and `temperature[n]`, which is the Dirichlet-pinned basal boundary. Pore water
-scales with the thickness change; grain and albedo properties are intensive and unchanged.
+scales with the thickness change; grain properties are intensive and unchanged.
 
 Errors if the adjustment would consume the whole bottom cell — at realistic forcing it is
 ~1e-3 of the cell, so that signals a bug upstream, not an extreme climate.

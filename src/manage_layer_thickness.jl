@@ -1,5 +1,5 @@
 """
-    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, mp::ModelParameters, verbose::Bool; n_target=length(dz))
+    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, mp::ModelParameters, verbose::Bool; n_target=length(dz))
 
 Return every cell to its per-cell thickness band, then restore the column to exactly
 `n_target` cells.
@@ -21,18 +21,17 @@ The Dirichlet temperature boundary condition is re-imposed at the bottom; the en
 requires is the only term returned in `E_added`.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
-grain_sphericity, albedo, albedo_diffuse, E_added)`. Arrays are mutated in place and their
+grain_sphericity, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
 """
 function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, albedo::Vector{Float64},
-    albedo_diffuse::Vector{Float64},
+    grain_sphericity::Vector{Float64},
     mp::ModelParameters, verbose::Bool; n_target::Int=length(dz))
 
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+        grain_dendricity, grain_sphericity)
 
     if verbose
         M_total_initial, E_total_initial = column_mass_energy(cols, mp)
@@ -109,5 +108,5 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, E_added
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, E_added
 end

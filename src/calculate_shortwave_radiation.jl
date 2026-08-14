@@ -1,5 +1,5 @@
 """
-    calculate_shortwave_radiation(dz, density, grain_radius, albedo_surface, albedo_diffuse_surface, cfs::ClimateForcingStep, mp::ModelParameters)
+    calculate_shortwave_radiation(dz, density, grain_radius, albedo_broadband, albedo_diffuse, cfs::ClimateForcingStep, mp::ModelParameters)
 
 Distribute absorbed shortwave radiation vertically within snow/ice.
 
@@ -18,8 +18,8 @@ Returns `shortwave_flux` vector [W m-2] of absorbed shortwave radiation per grid
 - Greuell, W. and Konzelmann, T. (1994). Global Planet. Change, 9, 91-114.
 """
 function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Float64},
-    grain_radius::Vector{Float64}, albedo_surface::Float64,
-    albedo_diffuse_surface::Float64,
+    grain_radius::Vector{Float64}, albedo_broadband::Float64,
+    albedo_diffuse::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
     d_tolerance = 1e-11
@@ -33,10 +33,10 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
         # all sw radiation is absorbed by the top grid cell
 
         if mp.albedo_method == :GardnerSharp
-            shortwave_flux[1] = (1.0 - albedo_surface) * max(0.0, (cfs.shortwave_downward - cfs.shortwave_downward_diffuse)) +
-                (1.0 - albedo_diffuse_surface) * cfs.shortwave_downward_diffuse
+            shortwave_flux[1] = (1.0 - albedo_broadband) * max(0.0, (cfs.shortwave_downward - cfs.shortwave_downward_diffuse)) +
+                (1.0 - albedo_diffuse) * cfs.shortwave_downward_diffuse
         else
-            shortwave_flux[1] = (1 - albedo_surface) * cfs.shortwave_downward
+            shortwave_flux[1] = (1 - albedo_broadband) * cfs.shortwave_downward
         end
 
     else  # sw radiation is absorbed at depth within the glacier
@@ -84,10 +84,10 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
             SWs = 0.36
 
             # calculate surface shortwave radiation fluxes [W m-2]
-            swf_s = SWs * (1 - albedo_surface) * cfs.shortwave_downward
+            swf_s = SWs * (1 - albedo_broadband) * cfs.shortwave_downward
 
             # calculate subsurface shortwave radiation fluxes [W m-2]
-            swf_ss = (1 - SWs) * (1 - albedo_surface) * cfs.shortwave_downward
+            swf_ss = (1 - SWs) * (1 - albedo_broadband) * cfs.shortwave_downward
 
             # SW extinction coefficients
             Bs = 10.0    # snow SW extinction coefficient [m-1] (Bassford, 2006)

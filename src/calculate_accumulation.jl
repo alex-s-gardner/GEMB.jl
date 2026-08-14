@@ -29,7 +29,7 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
 end
 
 """
-    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Add precipitation and deposition to the model column.
 
@@ -38,15 +38,18 @@ Snow is added as a new layer (if depth > dzmin) or merged into the top cell.
 Rain is added by increasing the mass and temperature of the top grid cell,
 with temperature adjusted to account for latent heat of fusion.
 
-Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain)`.
+Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain)`.
 Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the extra cell
 is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s count controller.
+
+Albedo is absent: it is diagnosed from the column at the top of the *next* timestep (see
+[`calculate_albedo`](@ref)), which reads the fresh-snow grain size and density this
+function sets, so new snow brightens the surface without an albedo being stored here.
 """
 function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, albedo::Vector{Float64},
-    albedo_diffuse::Vector{Float64},
+    grain_sphericity::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
     # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
@@ -93,15 +96,13 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             # if snow depth is greater than specified min dz, new cell created
             if z_snow > mp.column_dzmin + d_tolerance
                 cols = column_state(temperature, dz, density, water, grain_radius,
-                    grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+                    grain_dendricity, grain_sphericity)
                 open_slot!(cols, 1)
                 @inbounds begin
                     temperature[1] = cfs.temperature_air
                     dz[1] = z_snow
                     density[1] = density_new_snow
                     water[1] = 0.0
-                    albedo[1] = mp.albedo_snow
-                    albedo_diffuse[1] = mp.albedo_snow
                     grain_radius[1] = refall
                     grain_dendricity[1] = dfall
                     grain_sphericity[1] = sfall
@@ -115,11 +116,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 # adjust temperature (assume precipitation is same temp as air)
                 temperature[1] = mix_temperature(mp, cfs.temperature_air, cfs.precipitation,
                     temperature[1], M_surface)
-
-                # adjust albedo
-                if mp.albedo_method != :None
-                    albedo[1] = (mp.albedo_snow * cfs.precipitation + albedo[1] * M_surface) / M_surface_new
-                end
 
                 grain_dendricity[1] = dfall
                 grain_sphericity[1] = sfall
@@ -168,5 +164,5 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain
 end

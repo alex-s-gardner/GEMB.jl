@@ -25,8 +25,6 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     grain_radius = state.grain_radius
     grain_dendricity = state.grain_dendricity
     grain_sphericity = state.grain_sphericity
-    albedo = state.albedo
-    albedo_diffuse = state.albedo_diffuse
     evaporation_condensation = state.evaporation_condensation
     melt_surface = state.melt_surface
 
@@ -42,14 +40,15 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_grain_size(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, cfs, mp)
 
-    # 2. Calculate snow, firn, and ice albedo
-    albedo, albedo_diffuse =
-        calculate_albedo(temperature, dz, density, water, grain_radius,
-            albedo, albedo_diffuse, evaporation_condensation, melt_surface, cfs, mp)
+    # 2. Calculate snow, firn, and ice albedo. Both are scalars diagnosed from the current
+    #    column, not carried state: `albedo_broadband` is returned in `flux` for output and
+    #    is not read again.
+    albedo_broadband, albedo_diffuse =
+        calculate_albedo(dz, density, water, grain_radius, melt_surface, cfs, mp)
 
     # 3. Determine distribution of absorbed SW radiation with depth
     shortwave_flux = calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo[1], albedo_diffuse[1], cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
     # 4. Calculate net shortwave [W m-2]
     shortwave_net = sum(shortwave_flux)
@@ -68,26 +67,26 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     # 7. Add snow/rain to top grid cell
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, albedo, albedo_diffuse, rain =
+        grain_sphericity, rain =
         calculate_accumulation(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, albedo, albedo_diffuse, cfs, mp, verbose)
+            grain_dendricity, grain_sphericity, cfs, mp, verbose)
 
     # 8. Melt and wet compaction
     densification_from_melt = sum(dz)
 
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, albedo, albedo_diffuse, melt, melt_surface, runoff, refreeze =
+        grain_sphericity, melt, melt_surface, runoff, refreeze =
         calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain, mp, verbose)
+            grain_dendricity, grain_sphericity, rain, mp, verbose)
 
     densification_from_melt = densification_from_melt - sum(dz)
 
     # 9. Return cells to their thickness bands and restore the cell count to n_target
     #    (exactly conservative)
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, albedo, albedo_diffuse, E_added =
+        grain_sphericity, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, albedo, albedo_diffuse, mp, verbose;
+            grain_dendricity, grain_sphericity, mp, verbose;
             n_target=n_target)
 
     # 10. Allow non-melt densification
@@ -103,7 +102,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # energy flux, and is signed: negative `mass_added` under accumulation (material
     # leaves through the base), positive under net ablation (basal accretion).
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
+        grain_dendricity, grain_sphericity)
     mass_added, trim_energy = trim_bottom!(cols, z_target, mp)
     E_added += trim_energy
 
@@ -172,13 +171,12 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_radius=grain_radius,
         grain_dendricity=grain_dendricity,
         grain_sphericity=grain_sphericity,
-        albedo=albedo,
-        albedo_diffuse=albedo_diffuse,
         evaporation_condensation=evaporation_condensation,
         melt_surface=melt_surface,
     )
 
     flux = (
+        albedo_broadband=albedo_broadband,
         shortwave_net=shortwave_net,
         heat_flux_sensible=heat_flux_sensible,
         heat_flux_latent=heat_flux_latent,
