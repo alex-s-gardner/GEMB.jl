@@ -413,12 +413,14 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_albedo_surface += state.albedo[1]
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
-        # Compute firn air content without temporary array allocation
+        # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice), computed without a temporary
+        # array. Normalizing by `density_ice` (not 1000) is what makes this metres of air
+        # rather than metres of water equivalent — see upstream GEMB issue #198.
         _fac = 0.0
         @inbounds for j in eachindex(state.dz)
             _fac += state.dz[j] * (density_ice - min(state.density[j], density_ice))
         end
-        cum_firn_air_content += _fac / 1000
+        cum_firn_air_content += _fac / density_ice
         cum_thickness += thickness_added_total
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation

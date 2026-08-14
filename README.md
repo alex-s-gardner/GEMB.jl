@@ -201,6 +201,11 @@ GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Jul
 Changes that alter model output relative to the MATLAB reference. Upstream issue numbers
 refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
 
+- **`firn_air_content` is metres of air**, `Σ dz (1 − ρ/ρ_ice)`. MATLAB normalizes the same
+  mass deficit by 1000 rather than `density_ice`, which yields metres of water equivalent —
+  9.0% lower for `density_ice = 910`. Affects the `firn_air_content` output only
+  (upstream [#198](https://github.com/alex-s-gardner/GEMB/issues/198)).
+
 ### Fixed-length vertical grid
 
 MATLAB GEMB lets the column length float: cells are pushed and popped as snow accumulates,
