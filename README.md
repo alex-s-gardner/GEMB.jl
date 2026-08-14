@@ -230,6 +230,26 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   Model's, against which the implementation is cross-checked to the 0.102% `g` offset. As for
   `:GSFC2020`, the accumulation units are load-bearing (`γ ∝ A^−1/2`): `precipitation_mean` is
   kg m⁻² yr⁻¹.
+- **Added `densification_method = :Crocus` and `:CrocusPure`** — viscous settling of Vionnet
+  et al. (2012) eqs. 5–9, `dD/D = −σ/η·dt` with `η = f1·f2·η₀(ρ/cη)·exp(aη(T_fus−T) + bη·ρ)`.
+  Not present in MATLAB, and the only scheme in which liquid water affects densification:
+  `f1 = (1 + 60·W_liq/(ρ_w·D))⁻¹` reduces viscosity by up to ~61× in wet cells, `f2 =
+  min(4, exp(min(0.4 mm, gs−0.2 mm)/0.1 mm))` raises it for coarse angular grains. Overburden
+  is the same `Σ(ρdz + water)·g` integral `:ArthernB` uses, taken at the cell midpoint (the
+  paper's half-own-weight rule for the surface layer, applied uniformly). Integrated as
+  `D·exp(−σ/η·dt)`, eq. 5's exact solution at constant σ and η, rather than through the
+  `c(ρᵢ−ρ)` relaxation the other schemes share. Cross-checked against the Community Firn
+  Model's `Crocus`, which differs in hardcoding `f2 = 4` and adopting van Kampenhout et al.
+  (2017)'s retuned `cη = 358`; the paper's `f2` and `cη = 250` are used. Two departures from
+  the published law: `f2` is floored at 1 (eq. 9 is unbounded below and would soften GEMB's
+  fresh snow 7×, a regime the law is not defined on — Crocus applies eq. 9 only to
+  non-dendritic snow with `gs ≥ 0.3 mm`), and `:Crocus` hands cells at or above 450 kg m⁻³
+  to `:GSFC2020`. That handover exists because eq. 7 is fitted to a 1–2 m alpine snowpack and
+  `exp(bη·ρ)` saturates in firn: the unblended law gives 0.7–0.8× `:Arthern`'s compaction
+  rate in the top few metres but only 0.02–0.09× below 20 m. 450 kg m⁻³ is the threshold the
+  Community Firn Model uses for the same purpose; the handover is a branch, not a weighted
+  blend, since neither paper prescribes a blending function. `:CrocusPure` applies eq. 5 at
+  every density.
 - **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
   `0.07` that overrides the documented parameter at every percolation retention site; only
   the pre-percolation squeeze read the parameter. Changes output wherever

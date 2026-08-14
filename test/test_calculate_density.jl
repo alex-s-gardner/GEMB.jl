@@ -644,3 +644,261 @@ end
     @test GEMB._densification_rate(p, 700.0, 250.0) !=
         GEMB._densification_rate(p_a, 700.0, 250.0)
 end
+
+@testset "Crocus viscosity (Vionnet et al. 2012 eqs. 7-9)" begin
+    # `η = f1·f2·η₀(ρ/cη)·exp(aη(T_fus−T) + bη·ρ)`, evaluated against the paper's
+    # coefficients directly rather than against the loop.
+    ρ, T, D = 300.0, 263.15, 0.05
+    r_fine = 0.05                              # mm; f2 = 1 at gs <= 0.2 mm
+    η_dry = GEMB._crocus_viscosity(ρ, T, 0.0, D, r_fine)
+    @test η_dry ≈ 7.62237e6 * (300.0 / 250.0) * exp(0.1 * 10.0 + 0.023 * 300.0) rtol = 1e-14
+
+    # Eq. 8: f1 = 1/(1 + 60·W/(ρ_w·D)). 2.5 kg m-2 in a 0.05 m cell is a fully
+    # saturated pore space by volume, so f1 bottoms out near 1/61.
+    W = 2.5
+    f1 = 1.0 / (1.0 + 60.0 * W / (1000.0 * D))
+    @test f1 ≈ 1 / 4 rtol = 1e-14
+    @test GEMB._crocus_viscosity(ρ, T, W, D, r_fine) ≈ f1 * η_dry rtol = 1e-14
+
+    # Monotone in water: wetter is always weaker, never stronger.
+    ηs = [GEMB._crocus_viscosity(ρ, T, w, D, r_fine) for w in 0.0:0.25:5.0]
+    @test issorted(ηs, rev=true)
+
+    # Eq. 9: the exponential is 1 at gs = 0.2 mm (a grain *diameter*, so radius 0.1 mm),
+    # rises with grain size, and is capped at 4.
+    @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 0.1) ≈ η_dry rtol = 1e-14
+    @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 0.12) ≈ exp(0.4) * η_dry rtol = 1e-14
+    @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 2.5) ≈ 4.0 * η_dry rtol = 1e-14
+
+    # Below gs = 0.2 mm eq. 9 would fall under 1 and soften the snow (0.14× at GEMB's
+    # fresh-snow radius). The floor keeps it a stiffening correction — see
+    # `_crocus_viscosity`. Without the floor this returns η_dry/7.
+    @test GEMB._crocus_viscosity(ρ, T, 0.0, D, GEMB.RE_NEW_SNOW) ≈ η_dry rtol = 1e-14
+    @test GEMB._crocus_viscosity(ρ, T, 0.0, D, 0.01) ≈ η_dry rtol = 1e-14
+
+    # Monotone non-decreasing in grain size across the whole GEMB range.
+    η_gs = [GEMB._crocus_viscosity(ρ, T, 0.0, D, r) for r in 0.01:0.01:GEMB.GRAIN_RADIUS_ICE]
+    @test issorted(η_gs)
+
+    # Colder and denser snow is stiffer, in both cases by the exponential.
+    @test GEMB._crocus_viscosity(ρ, 233.15, 0.0, D, r_fine) >
+          GEMB._crocus_viscosity(ρ, 273.15, 0.0, D, r_fine)
+    @test GEMB._crocus_viscosity(600.0, T, 0.0, D, r_fine) > η_dry
+end
+
+@testset "CrocusPure densification" begin
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    cfs = _make_density_cfs(dt=86400.0)     # 1 day
+
+    dz = [0.05, 0.05, 0.05]
+    density = [300.0, 350.0, 400.0]
+    t_vec = fill(263.15, 3)
+    grain_radius = [0.05, 0.07, 0.09]       # mm, all below eq. 9's f2 = 1 threshold
+    water = zeros(3)
+
+    (dz_out, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
+        grain_radius, water, cfs, mp)
+    Δρ = density_out .- density
+
+    # Unlike `:ArthernB`, the surface cell densifies: eq. 6's half-own-weight rule gives
+    # it a nonzero stress.
+    @test all(Δρ .> 0.0)
+
+    # Hand-computed increment for cell 2 from the paper's equations:
+    # σ = (ρ₁dz₁ + 0.5ρ₂dz₂)·g, dz' = dz·exp(-σ/η·dt).
+    σ = (density[1] * dz[1] + 0.5 * density[2] * dz[2]) * GEMB.GRAVITY
+    η = GEMB._crocus_viscosity(density[2], t_vec[2], 0.0, dz[2], grain_radius[2])
+    dz_expected = dz[2] * exp(-σ / η * 86400.0)
+    @test dz_out[2] ≈ dz_expected rtol = 1e-12
+    @test density_out[2] ≈ density[2] * dz[2] / dz_expected rtol = 1e-12
+
+    # Mass conservation.
+    @test dz_out .* density_out ≈ dz .* density rtol = 1e-14
+end
+
+@testset "CrocusPure liquid water accelerates densification" begin
+    # The reason this scheme exists: no other GEMB scheme lets pore water weaken the
+    # matrix. `:ArthernB` reads `water` only as overburden, so it densifies the cells
+    # *below* the wet one; Crocus densifies the wet cell itself.
+    dz = fill(0.05, 3)
+    density = [400.0, 400.0, 400.0]
+    t_vec = fill(273.15, 3)                 # wet snow is at the melting point
+    grain_radius = fill(0.05, 3)
+    cfs = _make_density_cfs(dt=86400.0)
+
+    rates = map((zeros(3), [0.0, 2.0, 0.0])) do water
+        mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+        (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
+            copy(grain_radius), water, cfs, mp)
+        d .- density
+    end
+    dry, wet = rates
+
+    # Cell 2 holds the water: f1 = 1/(1+60·2/(1000·0.05)) = 1/3.4 softens it by 3.4×, and
+    # its own half-weight rises with the water from 30g to 31g. In the small-strain limit
+    # the strain rate `σ/η` therefore rises by 3.4·31/30.
+    @test wet[2] > dry[2]
+    @test wet[2] / dry[2] ≈ 3.4 * 31 / 30 rtol = 1e-3
+
+    # Cell 3 sees more overburden from the water above, so it too speeds up — but only
+    # slightly, since the load rises by 2 against 20 kg m-2.
+    @test wet[3] > dry[3]
+    @test wet[3] / dry[3] < 1.2
+
+    # Cell 1 is above the water and unaffected.
+    @test wet[1] == dry[1]
+end
+
+@testset "CrocusPure is physically plausible in deep firn" begin
+    # Guard on the unit chain (η in kg s-1 m-1, σ in Pa, dt in seconds): a missing
+    # seconds-per-year factor either way is a 3.15e7 error and shows up immediately.
+    n = 120
+    dz = fill(0.5, n)
+    z = cumsum(dz) .- 0.25
+    density = [min(910.0, 350.0 + 560.0 * (1 - exp(-zz / 15))) for zz in z]
+    t_vec = fill(253.0, n)
+    grain_radius = [0.5 + 1.5 * (1 - exp(-zz / 25)) for zz in z]
+    cfs = _make_density_cfs(dt=86400.0)
+
+    rates = map((:Arthern, :CrocusPure)) do meth
+        mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
+        (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
+            copy(grain_radius), zeros(n), cfs, mp)
+        (d .- density) .* 365.0     # per year
+    end
+    arthern, crocus = rates
+
+    # Both must be positive and of a comparable order through the firn column.
+    @test all(crocus .> 0.0)
+    @test all(crocus[20:n] ./ arthern[20:n] .> 0.01)
+    @test all(crocus[20:n] ./ arthern[20:n] .< 100.0)
+
+    # Pin the published law's domain limit rather than leave it implicit: `exp(bη·ρ)` is
+    # ~1e9 at ρ = 900, so Crocus compacts deep firn far more slowly than `:Arthern`. This
+    # is the law as fitted (to a 1-2 m alpine snowpack), not a unit error, and it is why
+    # `:Crocus` hands the deep column to `:GSFC2020` instead of using this branch.
+    shallow = 1:6                               # top ~3 m, ρ <= 450
+    @test all(0.3 .< crocus[shallow] ./ arthern[shallow] .< 1.0)
+    deep = 40:n                                 # below 20 m, ρ >= 760
+    @test all(crocus[deep] ./ arthern[deep] .< 0.1)
+end
+
+@testset "Crocus validator and steady-state fallback" begin
+    for meth in (:Crocus, :CrocusPure)
+        @test initialize_parameters(densification_method=meth).densification_method === meth
+    end
+    @test_throws AssertionError initialize_parameters(densification_method=:Crocus2012)
+
+    # The steady-state marcher carries neither stress, grain radius, nor water, so both
+    # Crocus variants fall back there. `:CrocusPure` falls back to `:Arthern`; `:Crocus`
+    # falls back to `:GSFC2020`, which is already its own above-threshold branch.
+    mp_a = GEMB.ModelParameters(density_ice=910.0, densification_method=:Arthern)
+    mp_g = GEMB.ModelParameters(density_ice=910.0, densification_method=:GSFC2020)
+    mp_c = GEMB.ModelParameters(density_ice=910.0, densification_method=:Crocus)
+    mp_p = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    ps = map(m -> GEMB.DensificationCoeffs(m, 300.0, 250.0), (mp_a, mp_g, mp_c, mp_p))
+    p_a, p_g, p_c, p_p = ps
+
+    @test GEMB._densification_rate(p_p, 400.0, 250.0) ==
+        GEMB._densification_rate(p_a, 400.0, 250.0)
+    @test GEMB._densification_rate(p_c, 400.0, 250.0) ==
+        GEMB._densification_rate(p_g, 400.0, 250.0)
+    # ...and the two fallbacks are genuinely different laws, so the dispatch above is not
+    # vacuously true.
+    @test GEMB._densification_rate(p_c, 400.0, 250.0) !=
+        GEMB._densification_rate(p_p, 400.0, 250.0)
+
+    # `:Crocus` therefore needs GSFC2020's hoisted accumulation powers; `:CrocusPure` does
+    # not use `k0`/`k1` at all.
+    @test p_c.k0 ≈ 300.0^0.91 * GEMB.GRAVITY rtol = 1e-14
+    @test p_c.k1 ≈ 300.0^0.644 * GEMB.GRAVITY rtol = 1e-14
+    @test p_p.k0 == 1.0 && p_p.k1 == 1.0
+end
+
+@testset "CrocusPure never exceeds the density of ice" begin
+    # `D·exp(-σ/η·dt)` is unconditionally positive, so the clamp is the only thing
+    # standing between a long step and ρ > ρᵢ.
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    cfs = _make_density_cfs(dt=86400.0 * 365 * 100)     # absurdly long step
+    n = 5
+    dz = fill(1.0, n)
+    density = fill(890.0, n)
+    (dz_out, d_out) = GEMB.calculate_density(fill(273.15, n), copy(dz), copy(density),
+        fill(0.05, n), fill(1.0, n), cfs, mp)
+    @test all(d_out .<= mp.density_ice)
+    @test all(dz_out .> 0.0)
+    @test dz_out .* d_out ≈ dz .* density rtol = 1e-14
+end
+
+@testset "Crocus hybrid handover at CROCUS_HYBRID_DENSITY" begin
+    # `:Crocus` is Crocus viscosity below the threshold and `:GSFC2020` at or above it.
+    # Assert each cell equals the scheme it should have been handed to — exactly, since the
+    # handover is a branch, not a blend.
+    ρ_c = GEMB.CROCUS_HYBRID_DENSITY
+    @test ρ_c == 450.0
+
+    dz = fill(0.05, 4)
+    density = [ρ_c - 50, ρ_c - 1e-9, ρ_c, ρ_c + 50]
+    t_vec = fill(263.15, 4)
+    grain_radius = fill(0.05, 4)
+    water = zeros(4)
+    cfs = _make_density_cfs(dt=86400.0)
+
+    outs = map((:Crocus, :CrocusPure, :GSFC2020)) do meth
+        mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
+        GEMB.calculate_density(t_vec, copy(dz), copy(density),
+            copy(grain_radius), copy(water), cfs, mp)
+    end
+    (dz_h, d_h), (dz_p, d_p), (dz_g, d_g) = outs
+
+    # Below the threshold: the hybrid is the pure Crocus law.
+    @test d_h[1:2] == d_p[1:2]
+    @test dz_h[1:2] == dz_p[1:2]
+    # At and above: the hybrid is GSFC2020. `:GSFC2020` ignores overburden, so its result
+    # for these cells does not depend on what the cells above did.
+    @test d_h[3:4] == d_g[3:4]
+    @test dz_h[3:4] == dz_g[3:4]
+    # The two branches genuinely differ here, so the equalities above are not vacuous.
+    @test d_p[3:4] != d_g[3:4]
+
+    # Mass conservation across the handover.
+    @test dz_h .* d_h ≈ dz .* density rtol = 1e-14
+end
+
+@testset "Crocus hybrid keeps the wet-snow effect and fixes the deep column" begin
+    n = 120
+    dz = fill(0.5, n)
+    z = cumsum(dz) .- 0.25
+    density = [min(910.0, 350.0 + 560.0 * (1 - exp(-zz / 15))) for zz in z]
+    t_vec = fill(253.0, n)
+    grain_radius = [0.5 + 1.5 * (1 - exp(-zz / 25)) for zz in z]
+    cfs = _make_density_cfs(dt=86400.0)
+
+    rates = map((:Arthern, :Crocus, :CrocusPure)) do meth
+        mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
+        (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
+            copy(grain_radius), zeros(n), cfs, mp)
+        (d .- density) .* 365.0
+    end
+    arthern, hybrid, pure = rates
+
+    # The point of the hybrid: the deep column no longer stalls. `:CrocusPure` falls to
+    # <0.1 of `:Arthern` below 20 m; the hybrid stays within a factor of a few.
+    deep = 40:n
+    @test all(hybrid[deep] .> pure[deep])
+    @test all(0.2 .< hybrid[deep] ./ arthern[deep] .< 5.0)
+    @test all(hybrid .> 0.0)
+
+    # And the surface (ρ < 450, here the top ~2.5 m) is untouched by the handover, so the
+    # wet-snow physics is still in force there.
+    shallow = findall(<(GEMB.CROCUS_HYBRID_DENSITY), density)
+    @test !isempty(shallow)
+    @test hybrid[shallow] == pure[shallow]
+
+    # Liquid water still weakens those surface cells under the hybrid.
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:Crocus)
+    water = zeros(n); water[2] = 5.0
+    (_, d_wet) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
+        copy(grain_radius), water, cfs, mp)
+    @test (d_wet[2] - density[2]) * 365.0 > hybrid[2]
+end

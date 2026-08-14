@@ -5,6 +5,9 @@ Compute the densification of snow/firn using one of several models:
 - `:HerronLangway`: Herron and Langway (1980)
 - `:Arthern`: semi-empirical model of Arthern et al. (2010) [default]
 - `:ArthernB`: physical model from Appendix B of Arthern et al. (2010)
+- `:Crocus`: viscous settling of Vionnet et al. (2012) below `CROCUS_HYBRID_DENSITY`,
+  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix
+- `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
 - `:Simonsen2013`: Arthern retuned for Greenland by Simonsen et al. (2013)
 - `:LiZwally`: empirical model of Li and Zwally (2004)
@@ -14,9 +17,9 @@ Compute the densification of snow/firn using one of several models:
 Returns `(dz, density)`. `density` is updated in place; `dz` is returned as a
 new array (recomputed from the conserved cell mass).
 
-`water` [kg m-2] is only read by `:ArthernB`, the one stress-driven scheme here;
-the accumulation-driven schemes proxy overburden with mean accumulation and
-ignore it.
+`water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` (as part of the
+overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity reduction); the
+accumulation-driven schemes proxy overburden with mean accumulation and ignore it.
 
 The accumulation-driven branches are scalar-loop implementations that are
 numerically identical, element by element, to the reference vectorized MATLAB
@@ -32,6 +35,7 @@ deviates from the reference — see the comment on that branch.
 - Ligtenberg, S. R. M., et al. (2011). The Cryosphere, 5, 809-819.
 - Medley, B., et al. (2022). The Cryosphere, 16, 3971-4011.
 - Simonsen, S. B., et al. (2013). J. Glaciol., 59, 545-558.
+- Vionnet, V., et al. (2012). Geosci. Model Dev., 5, 773-791.
 - Lundin, J. M. D., et al. (2017). J. Glaciol., 63, 401-422. (FirnMICE; eqs. A36-A37)
 """
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
@@ -101,6 +105,51 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
             # accumulate the load using this cell's original density
             load += d0 * dz[i] + water[i]
+        end
+
+    elseif method == :Crocus || method == :CrocusPure
+        # Crocus viscous settling, Vionnet et al. (2012) eqs. 5-9. The second stress-driven
+        # scheme here, and the only one in which liquid water weakens the matrix.
+        #
+        # Not in the MATLAB reference. Ported from the paper; see `_crocus_viscosity`.
+        #
+        # Integrated in thickness rather than through `_densify_cell!`: eq. 5 is a strain rate
+        # on `D`, not the `c·(ρᵢ − ρ)` relaxation the other schemes share. Over a step of
+        # constant σ and η its exact integral is `D exp(-σ/η·dt)`, which is used directly —
+        # unconditionally positive, where a forward-Euler step on the same law is not.
+        #
+        # `:Crocus` hands cells at or above `CROCUS_HYBRID_DENSITY` to `:GSFC2020`, because
+        # eq. 7 is fitted to a 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn —
+        # see `CROCUS_HYBRID_DENSITY`. `:CrocusPure` applies eq. 5 at every density.
+        hybrid = method == :Crocus
+        p = hybrid ? DensificationCoeffs(mp, pm, tam) : nothing
+        dt_seconds = cfs.dt
+        load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
+        @inbounds for i in 1:m
+            d0 = density[i]
+            dz0 = dz[i]
+            self_load = d0 * dz0 + water[i]
+            if hybrid && d0 >= CROCUS_HYBRID_DENSITY - d_tolerance
+                c = _gsfc2020_c(d0, temperature[i], tam, p.k0, p.k1)
+                _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            else
+                # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
+                # midpoint: the paper states the half-own-weight rule for the uppermost
+                # layer, which is the same convention applied uniformly here. For every cell
+                # but the first the self term is a per-mille correction to the overlying
+                # load; for the first it is the difference between compacting and not.
+                σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
+                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
+                dz_new = dz0 * exp(-σ / η * dt_seconds)
+                d = d0 * dz0 / dz_new
+                if d > density_ice - d_tolerance
+                    d = density_ice
+                    dz_new = d0 * dz0 / d
+                end
+                density[i] = d
+                dz_out[i] = dz_new
+            end
+            load += self_load
         end
 
     elseif method == :GSFC2020
@@ -235,6 +284,85 @@ end
 # Both `:Simonsen2013` and `:Ligtenberg` (Arthern scaled by the accumulation-dependent M0/M1)
 # are evaluated by `_arthern_scaled_c` above; only their hoisted stage scalars differ.
 
+# ---------------------------------------------------------------------------
+# Crocus viscous settling (Vionnet et al., 2012, GMD 5, 773-791, eqs. 7-9)
+# ---------------------------------------------------------------------------
+
+# Eq. 7 coefficients. `η0` in kg s-1 m-1, so `η` is too, and eq. 5's `σ/η` is s-1.
+const CROCUS_ETA0 = 7.62237e6   # [kg s-1 m-1]
+const CROCUS_A_ETA = 0.1        # [K-1]
+const CROCUS_B_ETA = 0.023      # [m3 kg-1]
+const CROCUS_C_ETA = 250.0      # [kg m-3]
+
+# Eq. 9 grain-size thresholds, in metres (the paper quotes mm).
+const CROCUS_G1 = 4.0e-4        # cap on the grain-size excess entering the exponential
+const CROCUS_G2 = 2.0e-4        # grain size at which the exponential is 1
+const CROCUS_G3 = 1.0e-4        # e-folding grain size
+# Eq. 9's explicit ceiling, reached at gs − g2 = ln(4)·g3, i.e. gs = 0.339 mm. It therefore
+# binds before `CROCUS_G1` ever does (that would need gs >= 0.6 mm), so `g1` is redundant in
+# the published form; it is kept to keep the expression recognizable against the paper.
+const CROCUS_F2_MAX = 4.0
+# Floor, not in the paper. See `_crocus_viscosity`.
+const CROCUS_F2_MIN = 1.0
+
+"""
+    CROCUS_HYBRID_DENSITY
+
+Density [kg m-3] at which `:Crocus` hands a cell over to `:GSFC2020`.
+
+Eq. 7 is fitted to a 1-2 m alpine snowpack, and `exp(bη·ρ)` reaches ~1e9 at ρ = 900: on a
+Greenland firn profile the pure law gives 0.7-0.8 of `:Arthern`'s compaction rate in the top
+few metres but only 0.02-0.09 below 20 m. That is the published law behaving as fitted, not
+a unit error, so `:Crocus` is a composite — Crocus viscosity where liquid water and grain
+type govern settling, `:GSFC2020` where creep does.
+
+450 kg m-3 is the threshold the Community Firn Model's `Crocus` scheme uses for the same
+purpose (its `RHO_CC`), and it sits between the two laws' calibration ranges rather than
+inside either. The blend is a discontinuous handover, not a weighted average: nothing in
+either paper prescribes a blending function. `:CrocusPure` applies eq. 5 at every density.
+"""
+const CROCUS_HYBRID_DENSITY = 450.0
+
+"""
+    _crocus_viscosity(ρ, T, W_liq, D, grain_radius) -> η [kg s-1 m-1]
+
+Snow viscosity of Vionnet et al. (2012) eq. 7, with the two microstructure correction
+factors of eqs. 8 and 9:
+
+- `f1 = 1/(1 + 60·W_liq/(ρ_w·D))` (eq. 8) reduces viscosity in the presence of liquid
+  water, bottoming out around 1/61 for a saturated cell. This is the term GEMB has no
+  other expression of: every accumulation-driven scheme here is blind to `water`, and
+  `:ArthernB` reads it only as overburden.
+- `f2 = min(4, exp(min(g1, gs − g2)/g3))` (eq. 9) *raises* viscosity for coarse angular
+  grains, suppressing compaction in depth hoar.
+
+`W_liq` is cell water [kg m-2], `D` cell thickness [m], `grain_radius` [mm]; `gs` in eq. 9
+is a grain size, taken here as the grain diameter `2·grain_radius` in metres.
+
+`f2` is floored at 1. Eq. 9 is unbounded below — `gs < g2 = 0.2 mm` makes the exponential
+less than 1, reaching 0.14 at GEMB's fresh-snow radius (`RE_NEW_SNOW`, gs = 0.1 mm), i.e. a
+7× *softening* of new snow. In Crocus that branch is unreachable: eq. 9 applies only to
+non-dendritic snow, whose `gs` the paper bounds at 0.3-0.4 mm (Sect. 3.3), where the
+expression is already at or above its ceiling. GEMB carries a single grain radius for
+dendritic and non-dendritic snow alike and starts it at 0.05 mm, so the floor is what keeps
+the factor a stiffening correction as eq. 9 intends rather than a large softening of exactly
+the cells where the law is not defined.
+
+Deviates from the Community Firn Model's `Crocus`, which was used to cross-check eq. 7 and
+the `dρ/dt = ρσ/η` form: CFM hardcodes `f2 = 4.0` (eq. 9's ceiling, so it stiffens every
+cell including fresh fine-grained snow) and adopts van Kampenhout et al. (2017) eq. 8's
+retuned `cη = 358`. The paper's `f2` and `cη = 250` are used here.
+"""
+@inline function _crocus_viscosity(ρ::Float64, T::Float64, W_liq::Float64,
+    D::Float64, grain_radius::Float64)
+    f1 = 1.0 / (1.0 + 60.0 * W_liq / (DENSITY_WATER * D))
+    gs = 2.0 * grain_radius / 1000.0        # radius [mm] -> diameter [m]
+    f2 = clamp(exp(min(CROCUS_G1, gs - CROCUS_G2) / CROCUS_G3),
+               CROCUS_F2_MIN, CROCUS_F2_MAX)
+    return f1 * f2 * CROCUS_ETA0 * (ρ / CROCUS_C_ETA) *
+           exp(CROCUS_A_ETA * (CtoK - T) + CROCUS_B_ETA * ρ)
+end
+
 """
     DensificationCoeffs(mp::ModelParameters, pm, tam)
 
@@ -248,10 +376,10 @@ their *meaning* is per-method while their arity is not:
 
 | method | `k0`, `k1` |
 |---|---|
-| `:Arthern`, `:ArthernB`, `:HerronLangway` | unused (1.0) |
+| `:Arthern`, `:ArthernB`, `:CrocusPure`, `:HerronLangway` | unused (1.0) |
 | `:Ligtenberg` | the accumulation-dependent `M0`, `M1` |
 | `:Simonsen2013` | `F0 = 0.8` and `F1·γ` |
-| `:GSFC2020` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
+| `:GSFC2020`, `:Crocus` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
 
 `pm` is mean annual accumulation [kg m-2 yr-1] and `tam` mean annual air
 temperature [K].
@@ -278,7 +406,9 @@ function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
     pm_nonneg = max(pm, 0.0)
 
     k0 = k1 = 1.0
-    if method == :GSFC2020
+    if method == :GSFC2020 || method == :Crocus
+        # `:Crocus` is a hybrid whose above-threshold branch *is* `:GSFC2020`, so it needs
+        # that scheme's hoisted accumulation powers. `:CrocusPure` has no such branch.
         # `pm` is kg m-2 yr-1 (see `_gsfc2020_c`); `^0.91` of a negative would be NaN.
         k0 = pm_nonneg^0.91 * GRAVITY
         k1 = pm_nonneg^0.644 * GRAVITY
@@ -312,18 +442,19 @@ Densification rate coefficient for the method in `p`, dispatching on
 once per age step rather than once per cell. `calculate_density`'s hot loop calls
 the per-method functions directly, so it takes the branch once per call.
 
-`:ArthernB` falls back to `:Arthern` here. The steady-state march carries neither
-overburden stress nor grain radius, which eq. B1 needs, and it only produces an
-initial guess that the spinup then relaxes — so the accumulation-driven form of
-the same paper's eq. 1 is the closest available stand-in. The transient run uses
-the real `:ArthernB` law.
+The stress-driven schemes cannot be evaluated here: the march carries neither overburden
+stress, grain radius, nor water, and it only produces an initial guess that the spinup then
+relaxes. Each therefore falls back to the nearest accumulation-driven law — `:Crocus` to
+`:GSFC2020`, which is already its own above-threshold branch and so governs most of the
+column the march builds; `:ArthernB` and `:CrocusPure` to `:Arthern`. The transient run uses
+the real law in every case.
 """
 @inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
     if p.method == :HerronLangway
         return ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? _hl_c0(T, p.pm) : _hl_c1(T, p.pm)
-    elseif p.method == :GSFC2020
+    elseif p.method == :GSFC2020 || p.method == :Crocus
         return _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1)
-    elseif p.method == :Arthern || p.method == :ArthernB ||
+    elseif p.method == :Arthern || p.method == :ArthernB || p.method == :CrocusPure ||
            p.method == :Simonsen2013 || p.method == :Ligtenberg
         # One kernel for the whole scaled-Arthern family; `k0`/`k1` are 1.0 for `:Arthern`.
         return _arthern_scaled_c(ρ, T, p.tam, p.precip_force, p.k0, p.k1)

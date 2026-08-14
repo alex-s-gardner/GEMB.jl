@@ -18,7 +18,7 @@ function validate_parameters(mp::ModelParameters)
     # `:LiZwally` and `:Helsen` stay gated: their accumulation units are ambiguous in the
     # literature (m i.e. vs m w.e., a factor of ~1.099), so the coefficients cannot be
     # confirmed against an independent implementation.
-    @assert mp.densification_method in (:HerronLangway, :Arthern, :ArthernB, :GSFC2020, :Simonsen2013, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, ArthernB, GSFC2020, Simonsen2013, Ligtenberg"
+    @assert mp.densification_method in (:HerronLangway, :Arthern, :ArthernB, :Crocus, :CrocusPure, :GSFC2020, :Simonsen2013, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, ArthernB, Crocus, CrocusPure, GSFC2020, Simonsen2013, Ligtenberg"
 
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
