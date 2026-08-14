@@ -50,7 +50,7 @@ using GEMB_ClimateForcing
     output = gemb(profile_spunup, cf, mp)
 
     # Julia reference values (GEMB.jl's own deterministic output — NOT MATLAB).
-    mean_albedo = Statistics.mean(parent(output[:albedo_surface]))
+    mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
     total_runoff = sum(parent(output[:runoff]))
 

@@ -87,7 +87,7 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :heat_flux_latent => CFAttrs("W m-2", "latent heat flux at the surface",
         "time: mean"; standard_name="surface_downward_latent_heat_flux",
         comment="Positive downward (toward the surface)."),
-    :albedo_surface => CFAttrs("1", "broadband surface albedo", "time: mean";
+    :albedo_broadband => CFAttrs("1", "broadband surface albedo", "time: mean";
         standard_name="surface_albedo"),
     :temperature_air => CFAttrs("K", "near-surface air temperature",
         "time: mean"; standard_name="air_temperature"),
@@ -114,8 +114,6 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :grain_radius => CFAttrs("mm", "snow grain effective radius", "time: point"),
     :grain_dendricity => CFAttrs("1", "snow grain dendricity", "time: point"),
     :grain_sphericity => CFAttrs("1", "snow grain sphericity", "time: point"),
-    :albedo => CFAttrs("1", "layer direct-beam broadband albedo", "time: point"),
-    :albedo_diffuse => CFAttrs("1", "layer diffuse-radiation albedo", "time: point"),
 )
 
 """

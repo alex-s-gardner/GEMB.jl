@@ -42,16 +42,6 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
 
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
-    # Extract albedo from profile output if available, otherwise use defaults
-    if haskey(out, :albedo)
-        albedo_col = parent(out[:albedo])[:, col_idx]
-        albedo_diffuse_col = parent(out[:albedo_diffuse])[:, col_idx]
-    else
-        # Fallback for output without albedo profiles
-        albedo_col = fill(0.85, m)
-        albedo_diffuse_col = fill(0.85, m)
-    end
-
     # `z_center` is intentionally omitted so the extracted profile matches the
     # output layout (a slice of it); recompute via `dz2z(profile[:dz])` if needed.
     layers = (
@@ -62,8 +52,6 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         grain_radius=DimArray(parent(out[:grain_radius])[:, col_idx], (zdim,)),
         grain_dendricity=DimArray(parent(out[:grain_dendricity])[:, col_idx], (zdim,)),
         grain_sphericity=DimArray(parent(out[:grain_sphericity])[:, col_idx], (zdim,)),
-        albedo=DimArray(albedo_col, (zdim,)),
-        albedo_diffuse=DimArray(albedo_diffuse_col, (zdim,)),
     )
 
     # Carry the CF attributes through, minus `cell_methods`: the extracted column has no

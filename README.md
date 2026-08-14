@@ -345,6 +345,16 @@ What this changes for consumers of the output:
   **`column_depth_max`** — padding is obsolete, and the column depth is now pinned exactly
   (to the depth `initialize_profile` derives from the climate, capped by `column_depth_max`)
   rather than banded within `[column_zmin, column_zmax]`.
+- **`albedo_method = :Bougamont2005` is removed, and albedo is no longer carried state.** It
+  was the only prognostic (time-decay) albedo scheme; the four remaining methods (`:None`,
+  `:GardnerSharp`, `:BrunLefebre`, `:GreuellKonzelmann`) are all diagnostic functions of the
+  current column, so `calculate_albedo` returns two scalars instead of overwriting per-cell
+  vectors, and the parameters `albedo_wet_snow_t0`, `albedo_dry_snow_t0`, and `albedo_K` are
+  gone. The per-layer `albedo` and `albedo_diffuse` profile outputs are removed, and the
+  surface time series `albedo_surface` is renamed **`albedo_broadband`**; it is now recorded
+  from the value used in that timestep's shortwave balance rather than from the post-
+  accumulation column, so it differs slightly from the old series on snowfall steps. Output
+  under the four remaining methods is otherwise unchanged.
 - **`thickness_cumulative` carries a real basal flux**, signed: mass leaves through the base
   under accumulation and enters under ablation. Read it as basal flux, not as glacier
   thickness change — the column is an Eulerian window on the firn, not a prognostic

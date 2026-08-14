@@ -257,7 +257,7 @@ end
     mp = _hc_const()
     n = 200
     args = (fill(272.0, n), fill(0.1, n), collect(range(350.0, 800.0, n)), fill(0.5, n),
-        fill(0.5, n), fill(0.5, n), fill(0.5, n), fill(0.8, n), fill(0.8, n))
+        fill(0.5, n), fill(0.5, n), fill(0.5, n))
 
     # No local may infer as Any.
     ir = code_typed(GEMB.calculate_melt,
@@ -358,6 +358,6 @@ end
         @test !any(isnan, T)
         @test all(200.0 .< T .<= GEMB.CtoK)
         @test sum(parent(output[:melt])) >= 0.0
-        @test all(0.0 .<= parent(output[:albedo_surface]) .<= 1.0)
+        @test all(0.0 .<= parent(output[:albedo_broadband]) .<= 1.0)
     end
 end

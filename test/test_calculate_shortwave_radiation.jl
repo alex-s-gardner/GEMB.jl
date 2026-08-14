@@ -32,8 +32,8 @@ end
     dz = 0.1 * ones(n)
     density = 350.0 * ones(n)
     grain_radius = 0.5 * ones(n)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -43,9 +43,9 @@ end
     cfs = _make_sw_cfs()
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
-    expected_net = (1 - albedo_surface) * 200.0
+    expected_net = (1 - albedo_broadband) * 200.0
 
     @test shortwave_flux[1] ≈ expected_net atol = 1e-6
     @test sum(shortwave_flux[2:end]) ≈ 0.0 atol = 1e-6
@@ -58,8 +58,8 @@ end
     dz = 0.1 * ones(n)
     density = 350.0 * ones(n)
     grain_radius = 0.5 * ones(n)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -69,10 +69,10 @@ end
     cfs = _make_sw_cfs()
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
     dsw_direct = 200.0 - 50.0
-    expected = (1 - albedo_surface) * dsw_direct + (1 - albedo_diffuse_surface) * 50.0
+    expected = (1 - albedo_broadband) * dsw_direct + (1 - albedo_diffuse) * 50.0
 
     @test shortwave_flux[1] ≈ expected atol = 1e-6
 end
@@ -84,8 +84,8 @@ end
     density = 350.0 * ones(n)
     density[1] = 917.0  # Ice density at top
     grain_radius = 0.5 * ones(n)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -95,9 +95,9 @@ end
     cfs = _make_sw_cfs()
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
-    expected = (1 - albedo_surface) * 200.0
+    expected = (1 - albedo_broadband) * 200.0
 
     @test shortwave_flux[1] ≈ expected atol = 1e-6
     @test sum(shortwave_flux[2:end]) ≈ 0.0 atol = 1e-6
@@ -109,8 +109,8 @@ end
     dz = 0.1 * ones(n)
     density = 350.0 * ones(n)
     grain_radius = 0.5 * ones(n)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -120,7 +120,7 @@ end
     cfs = _make_sw_cfs()
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
     # Energy must penetrate below surface
     @test shortwave_flux[2] > 0.0
@@ -143,8 +143,8 @@ end
     dz = 0.1 * ones(n_deep)
     density = 350.0 * ones(n_deep)
     grain_radius = 0.5 * ones(n_deep)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -154,10 +154,10 @@ end
     cfs = _make_sw_cfs()
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
     # Conservation: sum of absorbed flux must equal surface net flux
-    expected_total = (1 - albedo_surface) * 200.0
+    expected_total = (1 - albedo_broadband) * 200.0
     @test sum(shortwave_flux) ≈ expected_total atol = 1e-4
 
     # Top cell should absorb NIR band + penetrating UV/Vis part
@@ -173,8 +173,8 @@ end
     dz = 0.1 * ones(n)
     density = 350.0 * ones(n)
     grain_radius = 0.5 * ones(n)
-    albedo_surface = 0.7
-    albedo_diffuse_surface = 0.8
+    albedo_broadband = 0.7
+    albedo_diffuse = 0.8
 
     mp = GEMB.ModelParameters(
         density_ice=917.0,
@@ -184,7 +184,7 @@ end
     cfs = _make_sw_cfs(shortwave_downward=0.0, shortwave_downward_diffuse=0.0)
 
     shortwave_flux = GEMB.calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_surface, albedo_diffuse_surface, cfs, mp)
+        albedo_broadband, albedo_diffuse, cfs, mp)
 
     @test sum(shortwave_flux) ≈ 0.0 atol = 1e-10
 end
@@ -195,8 +195,8 @@ matlab_validation_testset("calculate_shortwave_radiation", "calculate_shortwave_
     dz = ref["dz_sw"][:]
     density = ref["density_sw"][:]
     grain_radius = ref["grain_radius_sw"][:]
-    albedo_surface = ref["albedo_surface_sw"][1]
-    albedo_diffuse_surface = ref["albedo_diffuse_surface_sw"][1]
+    albedo_broadband = ref["albedo_broadband_sw"][1]
+    albedo_diffuse = ref["albedo_diffuse_sw"][1]
 
     # Surface-only absorption
     params_surface = GEMB.ModelParameters(
@@ -215,7 +215,7 @@ matlab_validation_testset("calculate_shortwave_radiation", "calculate_shortwave_
     )
 
     swf_surface = GEMB.calculate_shortwave_radiation(
-        dz, density, grain_radius, albedo_surface, albedo_diffuse_surface,
+        dz, density, grain_radius, albedo_broadband, albedo_diffuse,
         cfs, params_surface
     )
 
@@ -229,7 +229,7 @@ matlab_validation_testset("calculate_shortwave_radiation", "calculate_shortwave_
     )
 
     swf_subsurface = GEMB.calculate_shortwave_radiation(
-        dz, density, grain_radius, albedo_surface, albedo_diffuse_surface,
+        dz, density, grain_radius, albedo_broadband, albedo_diffuse,
         cfs, params_subsurface
     )
 

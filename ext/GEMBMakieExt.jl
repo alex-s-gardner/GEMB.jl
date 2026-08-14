@@ -34,7 +34,7 @@ const _LABELS = Dict{Symbol,String}(
     :longwave_net => "LW net",
     :heat_flux_sensible => "sensible",
     :heat_flux_latent => "latent",
-    :albedo_surface => "surface albedo",
+    :albedo_broadband => "broadband albedo",
     :temperature_air => "air temperature",
     :firn_air_content => "firn air content",
     :thickness_cumulative => "cumulative Δ thickness",
@@ -48,8 +48,6 @@ const _LABELS = Dict{Symbol,String}(
     :grain_radius => "grain radius",
     :grain_dendricity => "dendricity",
     :grain_sphericity => "sphericity",
-    :albedo => "albedo",
-    :albedo_diffuse => "diffuse albedo",
 )
 _short(v::Symbol) = get(_LABELS, v, string(v))
 
@@ -121,8 +119,6 @@ const _CMAP = Dict{Symbol,Any}(
     :grain_radius => :matter,
     :grain_dendricity => :matter,
     :grain_sphericity => :matter,
-    :albedo => :ice,
-    :albedo_diffuse => :ice,
 )
 _cmap(v::Symbol) = get(_CMAP, v, :viridis)
 
@@ -139,7 +135,7 @@ const _SCALAR_GROUPS = [
         [:shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent]),
     ("Mass fluxes",
         [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation]),
-    ("Surface albedo", [:albedo_surface]),
+    ("Broadband albedo", [:albedo_broadband]),
     ("Firn air content", [:firn_air_content]),
     ("Densification", [:densification_from_compaction, :densification_from_melt]),
 ]
@@ -344,12 +340,10 @@ function GEMB.gemb_plot_output(output::DimStack;
     profile_vars = [v for v in wanted if ndims(output[v]) == 2]
     # Drop from the default profile column unless the caller asks for a variable
     # explicitly: `dz` is a grid-management diagnostic (not a physical field), and
-    # the depth-resolved albedo fields duplicate the surface-albedo time series.
+    # dendricity/sphericity are redundant with grain radius, which already represents
+    # the grain-metamorphism family.
     if variables === nothing
-        # `dz` is a grid-management diagnostic and the depth-resolved albedo fields
-        # duplicate the surface-albedo series; dendricity/sphericity are dropped by
-        # default (grain radius already represents the grain-metamorphism family).
-        default_drop = (:dz, :albedo, :albedo_diffuse, :grain_dendricity, :grain_sphericity)
+        default_drop = (:dz, :grain_dendricity, :grain_sphericity)
         profile_vars = filter(v -> v ∉ default_drop, profile_vars)
     end
     scalar_groups = [(t, [v for v in g if v in wanted]) for (t, g) in _SCALAR_GROUPS]

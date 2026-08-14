@@ -35,8 +35,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
         new_snow_method=Symbol("150kgm2"),
@@ -48,9 +46,9 @@ end
     )
     cfs = _make_accum_cfs(precipitation=0.0, temperature_air=270.0)
 
-    (t_out, dz_out, d_out, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp, false)
 
     @test dz_out == dz
@@ -68,8 +66,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     density_snow = 150.0
 
@@ -83,9 +79,9 @@ end
     )
     cfs = _make_accum_cfs(precipitation=50.0, temperature_air=260.0)
 
-    (t_out, dz_out, d_out, _, _, gdn_out, gsp_out, a_out, _, _) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, gdn_out, gsp_out, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp, false)
 
     expected_dz = 50.0 / density_snow
@@ -97,7 +93,6 @@ end
     @test d_out[1] == density_snow
     @test dz_out[1] ≈ expected_dz atol = 1e-10
     @test t_out[1] == 260.0
-    @test a_out[1] == 0.85
 
     # Default microstructure for new snow
     @test gdn_out[1] == 1.0
@@ -113,8 +108,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     density_snow = 150.0
 
@@ -131,11 +124,10 @@ end
     old_mass = density[1] * dz[1]
     old_dz1 = dz[1]
     old_t1 = t_vec[1]
-    old_a1 = albedo_in[1]
 
-    (t_out, dz_out, d_out, _, _, _, _, a_out, _, _) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp, false)
 
     # Small snow should merge, no new layer
@@ -152,49 +144,6 @@ end
     # Temperature weighting
     expected_t = (260.0 * 2.0 + old_t1 * old_mass) / new_mass
     @test t_out[1] ≈ expected_t atol = 1e-10
-
-    # Albedo: on the merge path the surface albedo is mass-weighted between the
-    # fresh-snow albedo and the existing surface albedo whenever an albedo method
-    # is active (albedo_method != :None).
-    expected_a = (mp.albedo_snow * 2.0 + old_a1 * old_mass) / new_mass
-    @test a_out[1] ≈ expected_a atol = 1e-10
-end
-
-@testset "Small snow event (albedo unchanged when albedo_method == :None)" begin
-    # Companion case to the merge test above: with albedo_method == :None the
-    # merge path leaves the surface albedo untouched, even as mass/density/
-    # temperature are still mixed.
-    n = 5
-    t_vec = 260.0 * ones(n)
-    dz = 0.1 * ones(n)
-    density = 400.0 * ones(n)
-    water = zeros(n)
-    grain_radius = 0.5 * ones(n)
-    grain_dendricity = 0.5 * ones(n)
-    grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
-
-    mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
-        column_dzmin=0.05,
-        density_ice=917.0,
-        albedo_snow=0.85,
-        albedo_method=:None,
-        rain_temperature_threshold=273.15,
-    )
-    cfs = _make_accum_cfs(precipitation=2.0, temperature_air=260.0)
-
-    old_a1 = albedo_in[1]
-
-    (_, dz_out, _, _, _, _, _, a_out, _, _) = GEMB.calculate_accumulation(
-        t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
-        cfs, mp, false)
-
-    # Still a merge (no new layer), but albedo is left unchanged.
-    @test length(dz_out) == n
-    @test a_out[1] ≈ old_a1 atol = 1e-10
 end
 
 @testset "Rain event" begin
@@ -206,8 +155,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
         new_snow_method=Symbol("150kgm2"),
@@ -228,9 +175,9 @@ end
     old_dz1 = dz[1]
     old_t1 = t_vec[1]
 
-    (t_out, dz_out, d_out, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp, false)
 
     # Rain output flag
@@ -262,8 +209,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     mp = GEMB.ModelParameters(
         new_snow_method=Symbol("150kgm2"),
@@ -276,9 +221,9 @@ end
     # Huge rain
     cfs = _make_accum_cfs(precipitation=500.0, temperature_air=275.0, wind_speed=0.0)
 
-    (_, dz_out, d_out, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, dz_out, d_out, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp, false)
 
     # Density should be capped at ice density
@@ -299,8 +244,6 @@ end
     grain_radius = 0.5 * ones(n)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
-    albedo_in = 0.7 * ones(n)
-    albedo_diffuse_in = 0.7 * ones(n)
 
     temperature_air_mean = 260.0
     precipitation_mean = 200.0
@@ -320,9 +263,9 @@ end
         albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
-    (_, _, d1, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d1, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp1, false)
     @test d1[1] == 350.0
 
@@ -335,9 +278,9 @@ end
         albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
-    (_, _, d2, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d2, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp2, false)
     @test d2[1] == 315.0
 
@@ -351,9 +294,9 @@ end
         rain_temperature_threshold=273.15,
     )
     expected_3 = (7.36e-2 + 1.06e-3 * temperature_air_mean + 6.69e-2 * precipitation_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
-    (_, _, d3, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d3, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp3, false)
     @test d3[1] ≈ expected_3 atol = 1e-5
 
@@ -367,9 +310,9 @@ end
         rain_temperature_threshold=273.15,
     )
     expected_4 = 481.0 + 4.834 * (temperature_air_mean - 273.15)
-    (_, _, d4, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d4, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, albedo_in, albedo_diffuse_in,
+        grain_dendricity, grain_sphericity,
         cfs, mp4, false)
     @test d4[1] ≈ expected_4 atol = 1e-5
 end

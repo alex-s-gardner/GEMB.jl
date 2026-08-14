@@ -1,32 +1,33 @@
 """
-    calculate_albedo(temperature, dz, density, water, grain_radius, albedo, albedo_diffuse, evaporation_condensation, melt_surface, cfs::ClimateForcingStep, mp::ModelParameters)
+    calculate_albedo(dz, density, water, grain_radius, melt_surface, cfs::ClimateForcingStep, mp::ModelParameters)
 
 Calculate snow, firn, and ice albedo using one of several methods:
 1. "GardnerSharp": function of effective grain radius (Gardner & Sharp, 2010)
 2. "BrunLefebre": function of effective grain radius (Lefebre et al., 2003)
 3. "GreuellKonzelmann": function of density and cloud amount (Greuell & Konzelmann, 1994)
-4. "Bougamont2005": exponential time decay & wetness (Bougamont & Bamber, 2005)
 
-Returns `(albedo, albedo_diffuse)` as new vectors.
+Returns `(albedo, albedo_diffuse)` as scalars — the broadband surface albedo for the
+direct-beam and for the diffuse stream.
+
+Every method here is **diagnostic**: the albedo is a function of the current column
+state alone, so nothing is carried across a timestep boundary and nothing is stored per
+cell. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
+fixed 50° effective zenith angle), which is also the only method whose consumer,
+[`calculate_shortwave_radiation`](@ref), splits the direct and diffuse streams; the
+other methods return it equal to `albedo`.
 
 # References
 - Gardner, A. S. and Sharp, M. J. (2010). J. Geophys. Res., 115, F01009.
 - Lefebre, F., et al. (2003). J. Geophys. Res., 108, 4231.
 - Greuell, W. and Konzelmann, T. (1994). Global Planet. Change, 9, 91-114.
-- Bougamont, M., et al. (2005). J. Geophys. Res., 110, F04018.
 """
-function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
+function calculate_albedo(dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
-    grain_radius::Vector{Float64}, albedo::Vector{Float64},
-    albedo_diffuse::Vector{Float64},
-    evaporation_condensation::Float64, melt_surface::Float64,
+    grain_radius::Vector{Float64}, melt_surface::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
-
-    # Note: albedo and albedo_diffuse are modified in-place (only element [1]).
 
     T_tolerance = 1e-10
     d_tolerance = 1e-11
-    water_tolerance = 1e-13
 
     # constants
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
@@ -35,14 +36,18 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
     albedo_ice_min = mp.albedo_ice     # minimum ice albedo
     albedo_snow_min = 0.65             # minimum snow albedo, from Alexander 2014
 
+    albedo = 0.0
+    albedo_diffuse = 0.0
+
     if (mp.albedo_method == :None) || ((mp.albedo_density_threshold - density[1]) < d_tolerance)
-        albedo[1] = mp.albedo_fixed
+        albedo = mp.albedo_fixed
+        albedo_diffuse = albedo
     else
         if mp.albedo_method == :GardnerSharp
-            albedo[1] = _albedo_gardner(grain_radius, dz, density,
+            albedo = _albedo_gardner(grain_radius, dz, density,
                 cfs.black_carbon_snow, cfs.black_carbon_ice,
                 cfs.solar_zenith_angle, cfs.cloud_optical_thickness)
-            albedo_diffuse[1] = _albedo_gardner(grain_radius, dz, density,
+            albedo_diffuse = _albedo_gardner(grain_radius, dz, density,
                 cfs.black_carbon_snow, cfs.black_carbon_ice,
                 50.0, cfs.cloud_optical_thickness)
 
@@ -60,45 +65,15 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
             a3 = max(0.127, 0.88 + 346.3 * gsz - 32.31 * gsz^0.5)
 
             # broadband surface albedo
-            albedo[1] = sF[1] * a1 + sF[2] * a2 + sF[3] * a3
+            albedo = sF[1] * a1 + sF[2] * a2 + sF[3] * a3
+            albedo_diffuse = albedo
 
         elseif mp.albedo_method == :GreuellKonzelmann
-            albedo[1] = mp.albedo_ice + (density[1] - mp.density_ice) *
+            albedo = mp.albedo_ice + (density[1] - mp.density_ice) *
                 (mp.albedo_snow - mp.albedo_ice) /
                 (density_fresh_snow - mp.density_ice) +
                 (0.05 * (cfs.cloud_fraction - 0.5))
-
-        elseif mp.albedo_method == :Bougamont2005
-            dt_days = cfs.dt / 86400.0   # convert from [s] to [d]
-
-            # initialize variables
-            t0 = zeros(length(albedo))
-
-            z_snow = 15.0   # 16 - 32 [mm]
-
-            # determine timescale for albedo decay
-            t0[water .> 0 + water_tolerance] .= mp.albedo_wet_snow_t0
-            TC = temperature .- CtoK
-            t0warm = abs.(TC) .* mp.albedo_K .+ mp.albedo_dry_snow_t0
-
-            t0[(abs.(water) .< water_tolerance) .& (TC .>= -10 - T_tolerance)] .=
-                t0warm[(abs.(water) .< water_tolerance) .& (TC .>= -10 - T_tolerance)]
-            t0[TC .< -10 - T_tolerance] .= 10 * mp.albedo_K + mp.albedo_dry_snow_t0
-
-            # calculate new albedo
-            d_a = (albedo .- mp.albedo_ice) ./ t0 .* dt_days
-            albedo = albedo .- d_a
-
-            # modification of albedo due to thin layer of snow or solid
-            # condensation (deposition) at the surface
-            precipitation_local = cfs.precipitation
-            if (evaporation_condensation > 0 + d_tolerance) && (TC[1] < 0 - T_tolerance)
-                precipitation_local = precipitation_local +
-                    (evaporation_condensation / density_fresh_snow) * 1000
-            end
-
-            albedo[1] = mp.albedo_snow - (mp.albedo_snow - albedo[1]) *
-                exp(-precipitation_local / z_snow)
+            albedo_diffuse = albedo
         end
 
         # If we do not have fresh snow
@@ -119,27 +94,27 @@ function calculate_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
                     (density[lice_first] - mp.density_ice) /
                     (density_phc - mp.density_ice)
 
-                albedo[1] = aice + max(albedo[1] - aice, 0.0) * (depthsnow / 0.1)
+                albedo = aice + max(albedo - aice, 0.0) * (depthsnow / 0.1)
             end
 
             if (density[1] >= density_phc - d_tolerance)
                 if (density[1] < mp.density_ice - d_tolerance)
-                    albedo[1] = albedo_ice_max + (albedo_snow_min - albedo_ice_max) *
+                    albedo = albedo_ice_max + (albedo_snow_min - albedo_ice_max) *
                         (density[1] - mp.density_ice) / (density_phc - mp.density_ice)
                 else
                     M = melt_surface + water[1]
-                    albedo[1] = max(albedo_ice_min + (albedo_ice_max - albedo_ice_min) * exp(-1.0 * (M / 200.0)), albedo_ice_min)
+                    albedo = max(albedo_ice_min + (albedo_ice_max - albedo_ice_min) * exp(-1.0 * (M / 200.0)), albedo_ice_min)
                 end
             end
         end
     end
 
     # Check for erroneous values
-    if albedo[1] > (1 + T_tolerance)
+    if albedo > (1 + T_tolerance)
         @warn "albedo > 1.0"
-    elseif albedo[1] < (0 - d_tolerance)
+    elseif albedo < (0 - d_tolerance)
         @warn "albedo is negative"
-    elseif isnan(albedo[1])
+    elseif isnan(albedo)
         error("albedo == NAN")
     end
 

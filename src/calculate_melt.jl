@@ -36,7 +36,7 @@ but the saturation alone is not.
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, rain, mp::ModelParameters, verbose::Bool)
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -46,14 +46,13 @@ Processes:
 3. Percolation: Liquid water percolates downward, refreezing in cold layers,
    being retained as pore water, or running off at impermeable ice lenses.
 
-Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, melt_total, melt_surface, runoff_total, freeze_total)`.
+Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, melt_total, melt_surface, runoff_total, freeze_total)`.
 Arrays may shrink (cells deleted when mass=0).
 """
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, albedo::Vector{Float64},
-    albedo_diffuse::Vector{Float64}, rain::Float64,
+    grain_sphericity::Vector{Float64}, rain::Float64,
     mp::ModelParameters, verbose::Bool)
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
@@ -315,7 +314,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         to_delete = findall(M .<= water_tolerance)
         if !isempty(to_delete)
             close_slot!(column_state(temperature, M, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, albedo, albedo_diffuse), to_delete)
+                grain_dendricity, grain_sphericity), to_delete)
         end
 
         # calculate new grid lengths
@@ -345,5 +344,5 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse, melt_total, melt_surface, runoff_total, freeze_total
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, melt_total, melt_surface, runoff_total, freeze_total
 end

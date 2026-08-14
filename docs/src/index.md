@@ -168,7 +168,7 @@ The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes wit
 | `longwave_net` | W m⁻² | `time: mean` | Net longwave radiation, positive toward the surface |
 | `heat_flux_sensible` | W m⁻² | `time: mean` | Sensible heat flux, positive toward the surface |
 | `heat_flux_latent` | W m⁻² | `time: mean` | Latent heat flux, positive toward the surface |
-| `albedo_surface` | 1 | `time: mean` | Broadband surface albedo |
+| `albedo_broadband` | 1 | `time: mean` | Broadband surface albedo |
 | `densification_from_compaction` | m | `time: sum` | Thickness lost to dry compaction |
 | `densification_from_melt` | m | `time: sum` | Thickness lost to melt and wet compaction |
 | `thickness_cumulative` | m | `time: mean` | Cumulative thickness change since the start of the run |
@@ -193,8 +193,6 @@ cell-centre heights with `dz2z(output[:dz])`.
 | `grain_radius` | mm | Effective grain radius |
 | `grain_dendricity` | 1 | Grain dendricity (0--1) |
 | `grain_sphericity` | 1 | Grain sphericity (0--1) |
-| `albedo` | 1 | Layer direct-beam broadband albedo |
-| `albedo_diffuse` | 1 | Layer diffuse-radiation albedo |
 
 ## Examples
 

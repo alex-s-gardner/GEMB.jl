@@ -37,10 +37,10 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   near-surface zone where most of the dynamics live. Pass a wider range (or derive it
   from the data) to see the full column.
 - `variables`: Iterable of variable name `Symbol`s to include. Defaults to every
-  variable in `output` except the profile fields `dz`, `albedo`, `albedo_diffuse`,
-  `grain_dendricity`, and `grain_sphericity`, and the densification scalar group (a
-  grid diagnostic, fields already represented by the surface-albedo/grain-radius
-  panels, and a lower-priority group); pass any of them explicitly here to include them.
+  variable in `output` except the profile fields `dz`, `grain_dendricity`, and
+  `grain_sphericity`, and the densification scalar group (a grid diagnostic, fields
+  already represented by the grain-radius panel, and a lower-priority group); pass any
+  of them explicitly here to include them.
 - `title`: Optional figure title. Defaults to `"GEMB.jl glacier firn model output"`.
 
 # Returns

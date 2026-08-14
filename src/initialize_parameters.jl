@@ -70,7 +70,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
 
     # Albedo method
-    @assert mp.albedo_method in (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann, :Bougamont2005) "Invalid albedo_method"
+    @assert mp.albedo_method in (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann) "Invalid albedo_method"
 
     # Albedo values
     @assert mp.albedo_density_threshold >= 0 "albedo_density_threshold must be >= 0"
@@ -85,11 +85,6 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.black_carbon_snow <= 2
     @assert 0 <= mp.black_carbon_ice <= 2
     @assert 0 <= mp.cloud_fraction <= 1
-
-    # Bougamont2005 parameters
-    @assert 5 <= mp.albedo_wet_snow_t0 <= 25
-    @assert 20 <= mp.albedo_dry_snow_t0 <= 40
-    @assert 2 <= mp.albedo_K <= 12
 
     # Output
     @assert mp.output_frequency in (:all, :monthly, :weekly, :daily, :last) "Invalid output_frequency"

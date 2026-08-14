@@ -25,9 +25,9 @@ annual temperature harmonic, and the net annual mass balance
 `b` as its burial rate, recording every state variable as it is buried: density
 (relaxing toward `mp.density_ice` under the run's own `mp.densification_method`),
 temperature (a damped annual wave about the latent-heat-warmed mean), grain size
-(evolved by [`calculate_grain_size`](@ref) itself) and irreducible water. Surface
-albedo comes from [`calculate_albedo`](@ref) applied to the resulting surface
-state.
+(evolved by [`calculate_grain_size`](@ref) itself) and irreducible water. No albedo
+is stored: [`calculate_albedo`](@ref) diagnoses it from the column at the start of
+every timestep, including the first.
 
 **There is no regime threshold.** The sign of `b` is the only discriminator, and
 it needs none: where `b ≤ 0` nothing is ever buried, the march terminates
@@ -51,11 +51,11 @@ derived depth.
 
 Setting **both** takes a separate early-return path
 ([`_uniform_ice_profile`](@ref)) that reproduces the MATLAB column exactly: pure
-ice, uniform mean-annual temperature, ice albedo, no march and no climate summary.
+ice, uniform mean-annual temperature, no march and no climate summary.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
-  grain_dendricity, grain_sphericity, albedo, albedo_diffuse
+  grain_dendricity, grain_sphericity
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false)
@@ -93,12 +93,6 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     grain_dendricity = constant_density ? zeros(m) : ss.grain_dendricity
     grain_sphericity = constant_density ? zeros(m) : ss.grain_sphericity
 
-    # Surface albedo from the initialized surface state rather than a binary
-    # snow/ice pick: `calculate_albedo` already transitions continuously with
-    # density and grain size, so a bare-ice column lands near `mp.albedo_ice` and a
-    # snow column near `mp.albedo_snow` without being told which it is.
-    albedo = _initial_albedo(temperature, dz, density, water, grain_radius, cs, mp)
-
     # Create Z dimension
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
@@ -113,8 +107,6 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         grain_radius=DimArray(grain_radius, (zdim,)),
         grain_dendricity=DimArray(grain_dendricity, (zdim,)),
         grain_sphericity=DimArray(grain_sphericity, (zdim,)),
-        albedo=DimArray(fill(albedo, m), (zdim,)),
-        albedo_diffuse=DimArray(fill(albedo, m), (zdim,)),
     )
 
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
@@ -128,7 +120,7 @@ end
 
 The MATLAB `model_initialize_profile` column: pure ice at a uniform temperature,
 with non-dendritic faceted ice grains (`grain_radius = 2.5` mm, the non-spherical
-cap in [`calculate_grain_size`](@ref)), ice albedo and no pore water.
+cap in [`calculate_grain_size`](@ref)) and no pore water.
 
 Reached only when both fidelity flags of [`initialize_profile`](@ref) are set.
 Kept as a separate function taking no climate-derived input so no future change to
@@ -146,8 +138,6 @@ function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
         grain_radius=DimArray(fill(GRAIN_RADIUS_ICE, m), (zdim,)),
         grain_dendricity=DimArray(zeros(m), (zdim,)),
         grain_sphericity=DimArray(zeros(m), (zdim,)),
-        albedo=DimArray(fill(mp.albedo_ice, m), (zdim,)),
-        albedo_diffuse=DimArray(fill(mp.albedo_ice, m), (zdim,)),
     )
     return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end
@@ -197,66 +187,6 @@ function _derive_column_depth(mp::ModelParameters, cs::ClimateSummary;
 
     depth = max(margin * ss.ice_depth, thermal_depths * d_thermal)
     return Float64(clamp(depth, mp.column_ztop, ceiling))
-end
-
-"""
-    _initial_albedo(temperature, dz, density, water, grain_radius, cs, mp) -> α
-
-Surface albedo of the initialized column, from [`calculate_albedo`](@ref) applied
-to the initialized surface state.
-
-This replaces a binary `mp.albedo_snow` / `mp.albedo_ice` pick with the same
-function the model uses at runtime, so the first timestep does not begin from an
-albedo the physics immediately contradicts.
-
-The seed is [`_snow_cover_albedo`](@ref) — the same continuous snow/ice blend the
-melt estimate was solved against, so it is consistent with the climate summary and
-carries no threshold. This matters for the methods that *decay from* the seed
-rather than recomputing it (`:Bougamont2005`): a seed picked on a density
-threshold would jump by `albedo_snow − albedo_ice` as a site crossed pore
-close-off, which is exactly the cliff this scheme removes. For `:GardnerSharp`
-(the default) `calculate_albedo` overwrites element `[1]` outright, so the seed is
-immaterial there.
-"""
-function _initial_albedo(temperature::Vector{Float64}, dz::Vector{Float64},
-    density::Vector{Float64}, water::Vector{Float64}, grain_radius::Vector{Float64},
-    cs::ClimateSummary, mp::ModelParameters)
-
-    seed = _snow_cover_albedo(cs.accumulation_effective, cs.melt, mp)
-    albedo = fill(seed, length(density))
-    albedo_diffuse = fill(seed, length(density))
-
-    cfs = _albedo_forcing_step(cs, mp)
-    albedo, _ = calculate_albedo(temperature, dz, density, water, grain_radius,
-        albedo, albedo_diffuse, 0.0, 0.0, cfs, mp)
-
-    return albedo[1]
-end
-
-"""
-    _albedo_forcing_step(cs::ClimateSummary, mp::ModelParameters) -> ClimateForcingStep
-
-Minimal [`ClimateForcingStep`](@ref) for the initial [`calculate_albedo`](@ref)
-call. The optical properties come from the `mp` defaults (the same values the
-forcing's `Fill`-backed layers carry when the forcing does not supply them), and
-`precipitation` is zero: there is no fresh snow event at initialization.
-"""
-function _albedo_forcing_step(cs::ClimateSummary, mp::ModelParameters)
-    return ClimateForcingStep(; dt=SECONDS_PER_YEAR,
-        temperature_air=cs.temperature_air_mean,
-        pressure_air=cs.pressure_air_mean,
-        wind_speed=cs.wind_speed_mean,
-        temperature_air_mean=cs.temperature_air_mean,
-        wind_speed_mean=cs.wind_speed_mean,
-        precipitation_mean=cs.accumulation_effective,
-        temperature_observation_height=cs.temperature_observation_height,
-        wind_observation_height=cs.wind_observation_height,
-        black_carbon_snow=mp.black_carbon_snow,
-        black_carbon_ice=mp.black_carbon_ice,
-        cloud_optical_thickness=mp.cloud_optical_thickness,
-        solar_zenith_angle=mp.solar_zenith_angle,
-        shortwave_downward_diffuse=mp.shortwave_downward_diffuse,
-        cloud_fraction=mp.cloud_fraction)
 end
 
 """

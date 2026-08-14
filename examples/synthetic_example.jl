@@ -48,7 +48,7 @@ z_center = dz2z(parent(output[:dz]))
 println("Simulation complete!")
 println("  Time steps: ", size(output[:melt], 1))
 println("  Profile layers: ", size(output[:temperature], 1))
-println("  Mean surface albedo: ", round(mean(parent(output[:albedo_surface])), digits=3))
+println("  Mean surface albedo: ", round(mean(parent(output[:albedo_broadband])), digits=3))
 println("  Total melt: ", round(sum(parent(output[:melt])), digits=2), " kg/m²")
 println("  Total runoff: ", round(sum(parent(output[:runoff])), digits=2), " kg/m²")
 

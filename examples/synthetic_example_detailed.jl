@@ -75,7 +75,7 @@ z_center = dz2z(parent(output[:dz]))
 println("\nBasic Statistics:")
 println("  Time steps: $(size(output[:melt], 1))")
 println("  Profile layers: $(size(output[:temperature], 1))")
-println("  Mean surface albedo: $(round(mean(parent(output[:albedo_surface])), digits=3))")
+println("  Mean surface albedo: $(round(mean(parent(output[:albedo_broadband])), digits=3))")
 println("  Total melt: $(round(sum(parent(output[:melt])), digits=2)) kg/m²")
 println("  Total runoff: $(round(sum(parent(output[:runoff])), digits=2)) kg/m²")
 println("  Total refreezing: $(round(sum(parent(output[:refreezing])), digits=2)) kg/m²")
@@ -84,11 +84,11 @@ println("  Total accumulation: $(round(sum(parent(output[:accumulation])), digit
 # Surface properties
 println("\nSurface Properties:")
 temp_surface = parent(output[:temperature])[1, :]
-albedo_surface = parent(output[:albedo_surface])
+albedo_broadband = parent(output[:albedo_broadband])
 println("  Mean surface temperature: $(round(mean(temp_surface), digits=2)) K")
 println("  Min surface temperature: $(round(minimum(temp_surface), digits=2)) K")
 println("  Max surface temperature: $(round(maximum(temp_surface), digits=2)) K")
-println("  Albedo range: $(round(minimum(albedo_surface), digits=3)) - $(round(maximum(albedo_surface), digits=3))")
+println("  Albedo range: $(round(minimum(albedo_broadband), digits=3)) - $(round(maximum(albedo_broadband), digits=3))")
 
 # Energy balance
 println("\nEnergy Balance:")
@@ -133,7 +133,7 @@ output_dict = Dict(
     "density" => parent(output[:density]),
     "melt" => parent(output[:melt]),
     "runoff" => parent(output[:runoff]),
-    "albedo_surface" => parent(output[:albedo_surface]),
+    "albedo_broadband" => parent(output[:albedo_broadband]),
     "thickness_cumulative" => parent(output[:thickness_cumulative]),
     "shortwave_net" => parent(output[:shortwave_net]),
     "longwave_net" => parent(output[:longwave_net])
