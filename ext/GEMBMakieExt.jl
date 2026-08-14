@@ -125,7 +125,7 @@ function _freq_word(dt_h::Real)
 end
 
 # Human-readable forcing provenance from the output stack metadata, e.g.
-# "ERA5-Land @ 72.58°N 38.46°W 3216 m, +100 m" — the elevation is the forcing's own
+# "ERA5-Land @ 72.58°N 38.46°W 3216 m, +100 m" — the elevation is the source dataset's own
 # surface and the trailing Δ is the offset applied to reach the target. Every piece is optional: a stack with
 # no provenance metadata yields "" and the banner renders as it did before.
 function _provenance_str(md)
@@ -143,16 +143,14 @@ function _provenance_str(md)
         lats = string(round(abs(lat), digits=2), "°", lat >= 0 ? "N" : "S")
         lons = string(round(abs(lon), digits=2), "°", lon >= 0 ? "E" : "W")
         coord = "$lats $lons"
-        # Surface elevation the climate forcing itself represents — what the target was
-        # lapse-rate adjusted *from*. Taken from the source grid's own elevation when the
-        # stack recorded it, otherwise target elevation minus the cumulative offset. Sits
-        # with the dataset/coordinates; the Δ that follows gives the target.
-        elev = getmd("elevation")
-        zc = getmd("elevation_reanalysis")
-        if !(zc isa Real && isfinite(zc)) && elev isa Real && isfinite(elev) &&
-           off isa Real && isfinite(off)
-            zc = elev - off
-        end
+        # Surface elevation the source dataset itself represents — what the target was
+        # lapse-rate adjusted *from*. Carried explicitly as `elevation_native` rather than
+        # derived from target-minus-offset, so a missing target can't silently poison it.
+        # Sits with the dataset/coordinates; the Δ that follows gives the target.
+        # Older outputs predate the key: fall back to `elevation` (equal to the native
+        # elevation when no adjustment was applied) and omit the field entirely otherwise.
+        zc = getmd("elevation_native")
+        zc isa Real && isfinite(zc) || (zc = getmd("elevation"))
         zc isa Real && isfinite(zc) && (coord *= " " * string(round(Int, zc), " m"))
         isempty(parts) ? push!(parts, coord) : (parts[end] *= " @ " * coord)
     end
@@ -310,7 +308,7 @@ function GEMB.gemb_plot_output(output::DimStack;
     fig = Figure(size=(1500, 200 + 175 * nrows), fontsize=14)
 
     # Header: title + traceability metadata banner.
-    _header!(fig[1, 1:2], output, times, z_center, tcols, title)
+    _header!(fig[1, 1:2], output, times, z_center, title)
 
     body = fig[2, 1:2] = GridLayout()
     left = body[1, 1] = GridLayout()   # profile heatmaps
@@ -382,7 +380,7 @@ function GEMB.gemb_plot_output(output::DimStack;
 end
 
 # Title + one-line metadata banner for traceability.
-function _header!(pos, output, times, z_center, tcols, title)
+function _header!(pos, output, times, z_center, title)
     ver = try
         string(pkgversion(GEMB))
     catch
@@ -394,7 +392,6 @@ function _header!(pos, output, times, z_center, tcols, title)
     dt_h = length(times) > 1 ?
            median(diff(Dates.value.(times))) / 3.6e6 : NaN
     freq = _freq_word(dt_h)
-    strided = length(tcols) < length(times)
     md = DimensionalData.metadata(output)
     prov = _provenance_str(md)
     spin = _spinup_str(md)
@@ -407,10 +404,9 @@ function _header!(pos, output, times, z_center, tcols, title)
         Dates.format(t0, "yyyy-mm-dd"), " → ", Dates.format(t1, "yyyy-mm-dd"),
         spin == "" ? "" : "  │  " * spin,
         budget == "" ? "" : "  │  " * budget,
-        strided ? "  │  heatmaps strided to $(length(tcols)) cols" : "",
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
     )
-    head = title == "" ? "GEMB firn model output" : title
+    head = title == "" ? "GEMB.jl glacier firn model output" : title
     Label(pos, rich(head * "\n", fontsize=20, font=:bold,
             rich(meta, fontsize=11, color=:gray40, font=:regular));
         justification=:left, halign=:left, padding=(4, 0, 6, 0))

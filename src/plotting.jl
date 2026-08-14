@@ -19,7 +19,7 @@ The figure has two columns sharing a common (linked) time axis:
 Redundant decorations are removed: x ticks and the "year" label appear only on the
 bottom panel of each column, and a header banner records provenance (GEMB version,
 forcing source, time span, sampling cadence, spinup climatology window + convergence
-— or "no spinup" — mass budget, striding, generation time).
+— or "no spinup" — mass budget, generation time).
 
 # Arguments
 - `output::DimStack`: The `DimStack` returned by [`gemb`](@ref).
@@ -36,7 +36,7 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   `grain_dendricity`, and `grain_sphericity`, and the densification scalar group (a
   grid diagnostic, fields already represented by the surface-albedo/grain-radius
   panels, and a lower-priority group); pass any of them explicitly here to include them.
-- `title`: Optional figure title. Defaults to `"GEMB firn model output"`.
+- `title`: Optional figure title. Defaults to `"GEMB.jl glacier firn model output"`.
 
 # Returns
 A Makie `Figure`.
