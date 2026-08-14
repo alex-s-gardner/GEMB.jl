@@ -9,7 +9,8 @@ using Dates
 All GEMB model configuration parameters with validation.
 Construct with keyword arguments; unspecified fields use defaults.
 
-Matches the 38 fields in MATLAB's `model_initialize_parameters.m`.
+Derived from MATLAB's `model_initialize_parameters.m`, with additional fields where
+GEMB.jl offers physics options the reference does not.
 """
 Base.@kwdef struct ModelParameters
     # --- General ---
@@ -32,12 +33,20 @@ Base.@kwdef struct ModelParameters
     # --- Thermal Conductivity ---
     thermal_conductivity_method::Symbol = :Sturm
 
+    # --- Heat Capacity ---
+    # Specific heat capacity of the load-bearing ice matrix, applied to snow, firn, and ice
+    # alike (pore air and pore water contribute nothing to this term). `:constant` uses
+    # `heat_capacity_ice` at every temperature, as MATLAB does; `:CuffeyPaterson` makes it
+    # temperature-dependent and ignores `heat_capacity_ice`. See `heat_capacity`.
+    heat_capacity_method::Symbol = :constant
+    heat_capacity_ice::Float64 = HEAT_CAPACITY_ICE_DEFAULT
+
     # --- Melt & Water ---
-    water_irreducible_saturation::Float64 = 0.07
     # `:constant` holds `water_irreducible_saturation` at every density (Colbeck, 1974, as
     # in MATLAB). `:ColeouLesaffre` makes it density-dependent and ignores
     # `water_irreducible_saturation` — see `irreducible_saturation`.
     water_irreducible_method::Symbol = :constant
+    water_irreducible_saturation::Float64 = 0.07
 
     # --- Albedo & Radiation ---
     albedo_method::Symbol = :GardnerSharp

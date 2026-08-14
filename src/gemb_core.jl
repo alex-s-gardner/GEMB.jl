@@ -33,8 +33,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     if verbose
         M = dz .* density
         M_total_initial = sum(M) + sum(water)
-        E_total_initial = sum(M .* temperature * C_ICE) +
-                          sum(water .* (LF + CtoK * C_ICE))
+        E_total_initial = column_enthalpy(mp, M, temperature, water)
         T_bottom = temperature[end]
     end
 
@@ -64,7 +63,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     dz[1] = dz[1] + evaporation_condensation / density[1]
 
     if verbose
-        E_evaporation_condensation = evaporation_condensation * temperature[1] * C_ICE
+        E_evaporation_condensation = evaporation_condensation * specific_enthalpy(mp, temperature[1])
     end
 
     # 7. Add snow/rain to top grid cell
@@ -105,7 +104,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # leaves through the base), positive under net ablation (basal accretion).
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, albedo, albedo_diffuse)
-    mass_added, trim_energy = trim_bottom!(cols, z_target)
+    mass_added, trim_energy = trim_bottom!(cols, z_target, mp)
     E_added += trim_energy
 
     if verbose
@@ -119,11 +118,11 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         end
 
         longwave_net = cfs.longwave_downward - longwave_upward
-        E_snow = (cfs.precipitation - rain) * cfs.temperature_air * C_ICE
-        E_rain = rain * (cfs.temperature_air * C_ICE + LF)
-        E_runoff = runoff * (LF + CtoK * C_ICE)
-        E_thermal = sum((dz .* density) .* temperature * C_ICE)
-        E_water = sum(water .* (LF + CtoK * C_ICE))
+        E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
+        E_rain = rain * (specific_enthalpy(mp, cfs.temperature_air) + LF)
+        E_runoff = runoff * specific_enthalpy_water(mp)
+        E_thermal = column_enthalpy(mp, M, temperature)
+        E_water = sum(water) * specific_enthalpy_water(mp)
         E_shortwave = shortwave_net * dt
         E_longwave = longwave_net * dt
         E_thf = (heat_flux_sensible + heat_flux_latent) * dt
@@ -134,7 +133,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_ghf + E_evaporation_condensation + E_added
         E_delta = E_used - E_supplied
 
-        if abs(E_delta) > 1e-3
+        if abs(E_delta) > energy_tolerance(E_total_initial)
             error("total system energy not conserved: E_delta = $(E_delta)")
         end
 

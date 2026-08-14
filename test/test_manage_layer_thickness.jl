@@ -34,13 +34,13 @@ function _layer_mp(; column_dzmin=0.05, column_dzmax=0.10, column_depth=1.0,
     )
 end
 
-# Column mass and enthalpy, for conservation assertions. Delegates to the same helper the
+# Column mass and enthalpy, for conservation assertions. Delegates to the same helpers the
 # model's own conservation checks use, so these assertions cannot drift from the definition
-# of column mass/enthalpy that `grid_ops.jl` enforces.
-_col_mass(dz, density, water) =
-    first(GEMB.column_mass_energy((; dz, density, water, temperature=zero(dz))))
-_col_energy(temperature, dz, density, water) =
-    last(GEMB.column_mass_energy((; dz, density, water, temperature)))
+# of column mass/enthalpy that `grid_ops.jl` enforces. `column_mass` needs no
+# `ModelParameters`; enthalpy does, since it honours `heat_capacity_method`.
+_col_mass(dz, density, water) = GEMB.column_mass((; dz, density, water))
+_col_energy(temperature, dz, density, water, mp=_layer_mp()) =
+    last(GEMB.column_mass_energy((; dz, density, water, temperature), mp))
 
 @testset "No action needed" begin
     temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, albedo, albedo_diffuse = _make_layer_inputs()
@@ -166,6 +166,8 @@ end
 end
 
 @testset "trim_bottom! (mass controller)" begin
+    mp = _layer_mp()
+
     # Depth pinning is signed: shrink the bottom cell when the column is too deep
     # (accumulation), grow it when too shallow (basal accretion under ablation).
 
@@ -176,14 +178,14 @@ end
             0.8 * ones(n), 0.8 * ones(n))
         z_target = 0.95           # column is 1.0 m -> trim 0.05 m off the bottom cell
 
-        mass_added, e_added = GEMB.trim_bottom!(cols, z_target)
+        mass_added, e_added = GEMB.trim_bottom!(cols, z_target, mp)
 
         @test sum(cols.dz) ≈ z_target atol = 1e-12
         @test cols.dz[n] ≈ 0.15 atol = 1e-12
         # Mass leaves through the base, so the reported delta is negative and matches the
         # thickness change exactly.
         @test mass_added ≈ -(0.05 * 400.0) atol = 1e-12
-        @test e_added ≈ -(0.05 * 400.0 * 260.0 * GEMB.C_ICE) atol = 1e-6
+        @test e_added ≈ -(0.05 * 400.0 * GEMB.specific_enthalpy(mp, 260.0)) atol = 1e-6
     end
 
     @testset "grow — ablation regime (basal accretion)" begin
@@ -193,13 +195,13 @@ end
             0.8 * ones(n), 0.8 * ones(n))
         z_target = 1.05           # column is 1.0 m -> accrete 0.05 m onto the bottom cell
 
-        mass_added, e_added = GEMB.trim_bottom!(cols, z_target)
+        mass_added, e_added = GEMB.trim_bottom!(cols, z_target, mp)
 
         @test sum(cols.dz) ≈ z_target atol = 1e-12
         @test cols.dz[n] ≈ 0.25 atol = 1e-12
         # Mass enters through the base: same magnitude, opposite sign.
         @test mass_added ≈ +(0.05 * 400.0) atol = 1e-12
-        @test e_added ≈ +(0.05 * 400.0 * 260.0 * GEMB.C_ICE) atol = 1e-6
+        @test e_added ≈ +(0.05 * 400.0 * GEMB.specific_enthalpy(mp, 260.0)) atol = 1e-6
     end
 
     @testset "pore water is carried proportionally" begin
@@ -208,7 +210,7 @@ end
             [0.0, 0.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n),
             0.8 * ones(n), 0.8 * ones(n))
         # Remove half of the bottom cell -> half of its water leaves with it.
-        mass_added, _ = GEMB.trim_bottom!(cols, 0.5)
+        mass_added, _ = GEMB.trim_bottom!(cols, 0.5, mp)
 
         @test cols.dz[n] ≈ 0.1 atol = 1e-12
         @test cols.water[n] ≈ 5.0 atol = 1e-12
@@ -221,7 +223,7 @@ end
         cols = GEMB.column_state(260.0 * ones(n), dz, 400.0 * ones(n),
             zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n),
             0.8 * ones(n), 0.8 * ones(n))
-        mass_added, e_added = GEMB.trim_bottom!(cols, 1.0)
+        mass_added, e_added = GEMB.trim_bottom!(cols, 1.0, mp)
         @test mass_added == 0.0
         @test e_added == 0.0
         @test dz == 0.25 * ones(n)
@@ -233,6 +235,6 @@ end
             zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n),
             0.8 * ones(n), 0.8 * ones(n))
         # Needs to remove 0.3 m from a 0.2 m bottom cell.
-        @test_throws ErrorException GEMB.trim_bottom!(cols, 0.7)
+        @test_throws ErrorException GEMB.trim_bottom!(cols, 0.7, mp)
     end
 end

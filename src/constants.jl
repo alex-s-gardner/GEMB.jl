@@ -2,8 +2,19 @@
 # All values match the MATLAB implementation exactly
 
 const CtoK = 273.15        # Celsius to Kelvin conversion [K]
-const C_ICE = 2102.0       # Specific heat capacity of snow/ice [J kg-1 K-1]
-const C_AIR = 1005.0       # Specific heat capacity of air [J kg-1 K-1]
+
+# Specific heat capacity of snow/firn/ice [J kg-1 K-1]. This seeds
+# `ModelParameters.heat_capacity_ice` and is *not* authoritative — the model reads
+# `heat_capacity(mp, T)`, which honours `mp.heat_capacity_method`. The MATLAB value 2102
+# is c_p at the melting point.
+const HEAT_CAPACITY_ICE_DEFAULT = 2102.0
+
+# Cuffey and Paterson (2010) eq. 9.1: c_p(T) = a + b·T, T in kelvin.
+const HEAT_CAPACITY_CUFFEY_A = 152.5
+const HEAT_CAPACITY_CUFFEY_B = 7.122
+
+const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
+
 const LF = 0.3345e6        # Latent heat of fusion [J kg-1]
 const LV = 2.495e6         # Latent heat of vaporization [J kg-1]
 const LS = 2.8295e6        # Latent heat of sublimation [J kg-1]
@@ -70,3 +81,17 @@ const WATER_TOLERANCE = 1e-13          # pore water presence
 const GDN_TOLERANCE = 1e-10            # grain dendricity / sphericity [0,1] clamps
 const E_TOLERANCE = 1e-3               # energy-conservation check [J] (verbose only)
 const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offset [K]
+
+"""
+    energy_tolerance(E_reference)
+
+Absolute tolerance [J] for a verbose-only energy-conservation check whose budget totals
+`E_reference`.
+
+`E_TOLERANCE` alone is a *relative* 1e-14 against a deep column's ~1e11 J of enthalpy, which
+only ever passed because both sides of the check were bit-identical arithmetic. Working in
+enthalpy adds real round-trip noise (~3e-6 J per deep-cell merge), so every check is
+relative-with-floor: the floor keeps small columns strict, the relative term scales with the
+budget being checked.
+"""
+@inline energy_tolerance(E_reference::Real) = max(E_TOLERANCE, 1e-12 * abs(E_reference))

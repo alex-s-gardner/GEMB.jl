@@ -67,8 +67,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     if verbose
         M = dz .* density
         M_total_initial = sum(M)
-        E_total_initial = sum(M .* temperature .* C_ICE) +
-            sum(water .* (LF + CtoK * C_ICE))
+        E_total_initial = column_enthalpy(mp, M, temperature, water)
     end
 
     # Density of fresh snow [kg m-3] (shared with initialize_profile)
@@ -114,7 +113,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 density[1] = M_surface_new / dz[1]
 
                 # adjust temperature (assume precipitation is same temp as air)
-                temperature[1] = ((cfs.temperature_air * cfs.precipitation) + (temperature[1] * M_surface)) / M_surface_new
+                temperature[1] = mix_temperature(mp, cfs.temperature_air, cfs.precipitation,
+                    temperature[1], M_surface)
 
                 # adjust albedo
                 if mp.albedo_method != :None
@@ -132,8 +132,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             M_surface_new = M_surface + cfs.precipitation
 
             # adjust temperature (liquid: must account for latent heat of fusion)
-            temperature[1] = ((cfs.precipitation * (cfs.temperature_air + LF / C_ICE)) +
-                (temperature[1] * M_surface)) / M_surface_new
+            temperature[1] = mix_temperature_liquid(mp, cfs.temperature_air, cfs.precipitation,
+                temperature[1], M_surface)
 
             # adjust grid cell density
             density[1] = M_surface_new / dz[1]
@@ -153,15 +153,16 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             M_total_final = sum(M)
             M_delta = M_total_final - M_total_initial - cfs.precipitation
 
-            E_total_final = sum(M .* temperature .* C_ICE) +
-                sum(water .* (LF + CtoK * C_ICE))
+            E_total_final = column_enthalpy(mp, M, temperature, water)
 
-            E_snow = ((cfs.precipitation - rain) * (cfs.temperature_air) * C_ICE)
-            E_rain = (rain * (cfs.temperature_air * C_ICE + LF))
+            E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
+            E_rain = rain * (specific_enthalpy(mp, cfs.temperature_air) + LF)
 
             E_delta = E_total_final - E_total_initial - E_snow - E_rain
 
-            if (abs(M_delta) > 1e-3) || (abs(E_delta) > 1e-3)
+            E_tol = energy_tolerance(E_total_initial)
+
+            if (abs(M_delta) > 1e-3) || (abs(E_delta) > E_tol)
                 error("Mass and/or energy are not conserved:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
             end
         end

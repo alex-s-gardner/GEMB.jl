@@ -35,13 +35,9 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     # calculated air density [kg/m3]
     density_air = air_density(cfs.pressure_air, cfs.temperature_air)
 
-    # thermal capacity of top grid cell [J/k]
-    TCs = density[1] * dz[1] * C_ICE
-
     # determine grid point 'center' vector size
-    # At least two cells are required: the tridiagonal solve below indexes
-    # `T_delta_sw[m-1]` and `temperature[2]`, so a single-cell column is not just
-    # degenerate but out of bounds.
+    # At least two cells are required: the solve below indexes `Q_sw[m-1]` and `A_face[m-1]`,
+    # so a single-cell column is not just degenerate but out of bounds.
     m = length(density)
     if m < 2
         error("column must have at least 2 gridcells for the thermal solve: " *
@@ -93,55 +89,65 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     K = thermal_conductivity(temperature, density, mp)
 
     ## FIND STABLE dt (allocation-free)
+    # The Von Neumann limit uses the pointwise heat capacity. Under `:CuffeyPaterson` this is
+    # conservative: c_p < 2102 everywhere below the melting point, so the limit only shrinks.
     max_safe_dt = Inf
     @inbounds for i in eachindex(dz)
-        sl = 0.5 * density[i] * C_ICE * dz[i]^2 / K[i]
+        sl = 0.5 * density[i] * heat_capacity(mp, temperature[i]) * dz[i]^2 / K[i]
         max_safe_dt = min(max_safe_dt, sl)
     end
     dt = _find_dt_divisor(max_safe_dt * 0.8, mp.dt_divisors)
 
-    ## THERMAL DIFFUSION COEFFICIENTS (fused loop - Patankar 1980, Ch. 3&4)
-    Nu = Vector{Float64}(undef, m)
-    Nd = Vector{Float64}(undef, m)
-    Np = Vector{Float64}(undef, m)
-    T_delta_sw = Vector{Float64}(undef, m)
-    Ad_penultimate = 0.0  # Ad[m-1] needed for ground heat flux
+    ## THERMAL DIFFUSION IN ENTHALPY FORM (Patankar 1980, Ch. 3&4)
+    #
+    # The prognostic is cell enthalpy H [J m-2], not temperature. The previous form folded
+    # the heat capacity into normalized coefficients (`Np`, `Nu`, `Nd`, each a conductance
+    # divided by `ρ·dz·c/dt`), which is exact only for constant c_p: with c_p(T) = a + bT,
+    # a temperature increment ΔT carries h(T+ΔT) − h(T) = ΔT·(a + b(T + ΔT/2)), so freezing
+    # c_p at the cell's start-of-substep value injects (b/2)ΔT² J kg-1 of fictitious energy
+    # every sub-step. The surface cell can swing tens of K per sub-step, which is joules per
+    # kilogram, not round-off.
+    #
+    # Diffusion is applied as one flux per interior face, added to the cell below the face
+    # and subtracted from the cell above it, so the pairwise cancellation is exact to the
+    # last bit and the column total is conserved independently of c_p.
+    #
+    # The mass is carried as its reciprocal: enthalpy → temperature is on the inner loop
+    # twice per cell per sub-step, and a division there costs more than the whole flux
+    # evaluation. `H` is *specific* enthalpy scaled by mass, so `H[i] * M_inv[i]` is the
+    # J kg-1 that the inverse map wants. The `:constant` inverse is itself a division by
+    # `c`, so that constant is folded into the same reciprocal and
+    # `temperature_from_scaled_enthalpy` becomes the identity — no division on the inner loop.
+    M_inv = Vector{Float64}(undef, m)    # 1 / (cell mass * enthalpy scale)
+    H = Vector{Float64}(undef, m)        # cell enthalpy [J m-2] — carried across sub-steps
+    Q_sw = Vector{Float64}(undef, m)     # SW energy absorbed per sub-step [J m-2]
+    A_face = Vector{Float64}(undef, m - 1)  # face conductance * dt [J m-2 K-1]
 
+    h_scale = enthalpy_temperature_scale(mp)
     @inbounds for i in 1:m
-        ap = density[i] * dz[i] * C_ICE / dt
-        if i > 1
-            Nu[i] = (1.0 / (dz[i-1] / (2 * K[i-1]) + dz[i] / (2 * K[i]))) / ap
-        else
-            Nu[i] = 0.0
-        end
-        if i < m
-            ad_i = 1.0 / (dz[i+1] / (2 * K[i+1]) + dz[i] / (2 * K[i]))
-            Nd[i] = ad_i / ap
-            if i == m - 1
-                Ad_penultimate = ad_i
-            end
-        else
-            Nd[i] = 0.0
-        end
-        Np[i] = 1.0 - Nu[i] - Nd[i]
-        T_delta_sw[i] = shortwave_flux[i] * dt / (C_ICE * density[i] * dz[i])
+        M_cell_i = density[i] * dz[i]
+        M_inv[i] = 1.0 / (M_cell_i * h_scale)
+        H[i] = M_cell_i * specific_enthalpy(mp, temperature[i])
+        Q_sw[i] = shortwave_flux[i] * dt
+    end
+    @inbounds for i in 1:m-1
+        # `dt` is fixed across sub-steps, so it is folded in here rather than multiplied per
+        # cell per sub-step. A_face is therefore joules per kelvin of face temperature drop.
+        A_face[i] = dt / (dz[i+1] / (2 * K[i+1]) + dz[i] / (2 * K[i]))
     end
 
-    # Boundary conditions
-    Nu[1] = 0.0
-    Np[1] = 1.0 - Nd[1]
-    Nu[m] = 0.0; Nd[m] = 0.0; Np[m] = 1.0
-
-    # Ensure no SW reaches bottom cell: add bottom cell's SW energy to cell above,
-    # dividing by cell m-1's thermal mass (matching original sw[m-1]+=sw[m] before T_delta conversion)
-    T_delta_sw[m-1] += shortwave_flux[m] * dt / (C_ICE * density[m-1] * dz[m-1])
-    T_delta_sw[m] = 0.0
+    # Ensure no SW reaches the bottom cell: its share is absorbed by the cell above. This
+    # keeps the Dirichlet bottom cell's enthalpy untouched for the whole solve.
+    @inbounds begin
+        Q_sw[m-1] += shortwave_flux[m] * dt
+        Q_sw[m] = 0.0
+    end
 
     # energy supplied by downward longwave radiation to the top grid cell [J]
     longwave_downward = cfs.longwave_downward * dt
 
-    # temperature change due to longwave_downward
-    T_delta_longwave_downward = longwave_downward / TCs
+    # Total SW absorbed per sub-step, for the verbose budget. Loop-invariant.
+    sw_total = verbose ? sum(shortwave_flux) * dt : 0.0
 
     ## CALCULATE ENERGY SOURCES AND DIFFUSION FOR EVERY TIME STEP [dt]
     n_steps = round(Int, cfs.dt / dt)
@@ -153,9 +159,12 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     local evaporation_condensation::Float64
 
     for _ in 1:n_steps
-        # Store initial temperature for energy conservation check
+        # Store initial column enthalpy for the energy conservation check
         if verbose
-            E_initial = sum(temperature .* (C_ICE .* density .* dz))
+            E_initial = 0.0
+            @inbounds for i in 1:m
+                E_initial += H[i]
+            end
         end
 
         # calculate temperature of snow surface
@@ -172,58 +181,56 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         # mass loss (-)/accretion(+) due to evaporation/condensation [kg]
         evaporation_condensation = heat_flux_latent / latent_heat * dt
 
-        # temperature change due to turbulent fluxes
+        # energy supplied by turbulent fluxes [J]
         thf = (heat_flux_sensible + heat_flux_latent) * dt
-        T_delta_thf = thf / TCs
 
         # upward longwave radiation
         T2 = T_surface * T_surface
         longwave_upward = -(SB * T2 * T2 * emissivity) * dt
         longwave_upward_cumulative += -longwave_upward
-        T_delta_longwave_upward = longwave_upward / TCs
 
-        # new grid point temperature.
+        # net energy delivered to the surface cell this sub-step [J]
+        Q_surface = (longwave_downward + longwave_upward) + thf
+
+        # Single fused pass: absorb this cell's source term, map it to its pre-diffusion
+        # temperature, then close out the *previous* cell, whose two faces are now both known.
         #
-        # The pre-diffusion field is the old temperature plus the SW-penetration
-        # increment (T_delta_sw, per cell) plus, for the surface cell only, the
-        # longwave/turbulent increment. Rather than materializing that field
-        # with a separate `temperature .+= T_delta_sw` full-column pass, we fold
-        # T_delta_sw into each cell's value on the fly inside the diffusion
-        # stencil below (one fewer full-column pass per sub-timestep).
-        lw_thf_1 = T_delta_longwave_downward + T_delta_longwave_upward + T_delta_thf
-
-        # temperature diffusion - single in-place pass (Patankar 1980).
-        # new T[i] = Np[i]*pre[i] + Nu[i]*pre[i-1] + Nd[i]*pre[i+1], where pre[]
-        # is the pre-diffusion field described above (all reads of the OLD
-        # field). A one-element carry holds pre[i-1] so no shifted copies are
-        # needed. The endpoints are peeled out (their stencil terms vanish via
-        # Nu[1]=0 and Nu[m]=Nd[m]=0, Np[m]=1) so the interior loop is
-        # branch-free. This is bit-identical to first doing `temperature .+=
-        # T_delta_sw; temperature[1] += lw_thf_1` and then the branched stencil:
-        # the per-cell additions and the left-to-right grouping are preserved,
-        # and T_delta_sw[m] == 0 leaves the Dirichlet bottom cell unchanged.
+        # Diffusion is conservative and explicit. F_i is the energy crossing face i (between
+        # cells i and i+1) into cell i, so cell i's net is F_i − F_{i-1}. Applying one flux per
+        # face with opposite signs makes the pairwise cancellation exact to the last bit, so
+        # the column total is conserved independently of c_p. Cell m is the Dirichlet
+        # reservoir: face m-1 supplies F_{m-1} = ghf to cell m-1 and nothing is taken from
+        # cell m, whose Q_sw is zero — `temperature[m]` is therefore left exactly as it came
+        # in rather than round-tripped through h⁻¹, which matters because the check below
+        # compares it with an exact `!=`.
+        #
+        # The pre-diffusion temperatures are carried in registers (`T_pre_prev`, `T_pre_i`) —
+        # each is read only at the two faces that bound its cell, so trailing the enthalpy
+        # update one cell behind the source pass keeps it alive exactly long enough. Two
+        # `M_inv` reads and one `A_face` read per cell, one pass, no second sweep.
         @inbounds begin
-            # surface-cell pre-diffusion value (includes SW + longwave/turbulent)
-            pre_1 = (temperature[1] + T_delta_sw[1]) + lw_thf_1
-
-            # energy flux across lower boundary, using the pre-diffusion field
-            pre_m = temperature[m] + T_delta_sw[m]
-            pre_mm1 = (m - 1 == 1) ? pre_1 : temperature[m-1] + T_delta_sw[m-1]
-            ghf = Ad_penultimate * (pre_m - pre_mm1) * dt
-            ghf_cumulative += ghf
-
-            # i = 1: Nu[1]=0, so upstream term vanishes.
-            pre_prev = pre_1
-            pre_next = temperature[2] + T_delta_sw[2]
-            temperature[1] = (Np[1] * pre_1) + (Nd[1] * pre_next)
-            # interior cells 2..m-1: no boundary branches.
-            for i in 2:m-1
-                pre_i = pre_next
-                pre_next = temperature[i+1] + T_delta_sw[i+1]
-                temperature[i] = (Np[i] * pre_i) + (Nu[i] * pre_prev) + (Nd[i] * pre_next)
-                pre_prev = pre_i
+            H[1] += Q_sw[1] + Q_surface
+            T_pre_prev = temperature_from_scaled_enthalpy(mp, H[1] * M_inv[1])
+            F_prev = 0.0
+            for i in 1:m-2
+                H[i+1] += Q_sw[i+1]
+                T_pre_i = temperature_from_scaled_enthalpy(mp, H[i+1] * M_inv[i+1])
+                F = A_face[i] * (T_pre_i - T_pre_prev)
+                H[i] += F - F_prev
+                F_prev = F
+                T_pre_prev = T_pre_i
             end
-            # i = m: Nu[m]=Nd[m]=0, Np[m]=1, T_delta_sw[m]=0 → cell m unchanged (Dirichlet).
+
+            # Face m-1 draws on the fixed bottom cell, so its temperature is used directly.
+            ghf = A_face[m-1] * (temperature[m] - T_pre_prev)
+            ghf_cumulative += ghf
+            H[m-1] += ghf - F_prev
+
+            # `temperature[1]` is the only cell read again before the next sub-step (surface
+            # fluxes, the emissivity switch, and the verbose diagnostic), so it is the only one
+            # reconstructed here. The interior is recovered once after the sub-step loop
+            # instead of being rewritten `n_steps` times and read by nobody.
+            temperature[1] = temperature_from_scaled_enthalpy(mp, H[1] * M_inv[1])
         end
 
         # calculate cumulative evaporation (+)/condensation(-)
@@ -240,12 +247,15 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
         # CHECK FOR ENERGY CONSERVATION
         if verbose
-            E_used = sum(temperature .* (C_ICE .* density .* dz)) - E_initial
-            sw_total = sum(shortwave_flux) * dt
+            E_final = 0.0
+            @inbounds for i in 1:m
+                E_final += H[i]
+            end
+            E_used = E_final - E_initial
             E_supplied = sw_total + longwave_downward + longwave_upward + thf + ghf
             E_delta = E_used - E_supplied
 
-            E_tolerance = 1e-3
+            E_tolerance = energy_tolerance(E_initial)
             if (abs(E_delta) > E_tolerance) || isnan(E_delta)
                 @error "inputs" temperature[1] water_surface grain_radius[1] sum(shortwave_flux) cfs.longwave_downward cfs.temperature_air cfs.wind_speed cfs.vapor_pressure cfs.pressure_air
                 @error "internals" sw_total longwave_downward longwave_upward thf ghf
@@ -256,6 +266,12 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
                 error("temperature of bottom grid cell changed inside of thermal function: original = $(T_bottom) K, updated = $(temperature[end]) K")
             end
         end
+    end
+
+    # Recover the interior temperatures from the prognostic enthalpy. Cell 1 is already current
+    # (the sub-step loop needs it) and cell m is the untouched Dirichlet reservoir.
+    @inbounds for i in 2:m-1
+        temperature[i] = temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
     end
 
     heat_flux_latent_out = lhf_cumulative / cfs.dt    # J -> W/m2

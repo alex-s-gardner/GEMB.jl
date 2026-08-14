@@ -94,7 +94,7 @@ where only `T_surface` changes. Numerically identical to the inline form.
     coefHQ = logHQ - PhiHz + PhiHzQ
 
     # Sensible Heat Flux [W m-2]
-    heat_flux_sensible = density_air * C * C_AIR * (cfs.temperature_air - T_surface) * pressure_factor
+    heat_flux_sensible = density_air * C * HEAT_CAPACITY_AIR * (cfs.temperature_air - T_surface) * pressure_factor
     heat_flux_sensible = heat_flux_sensible / (coefM * coefHT)
 
     # Latent Heat Flux [W m-2]

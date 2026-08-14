@@ -358,7 +358,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # would pass every step and still accumulate over a multi-decade run. These run-level
     # accumulators are never reset by the output interval, so they close the budget across
     # the entire run. Reported once at the end rather than per timestep.
-    run_mass_initial = verbose ? first(column_mass_energy(state)) : 0.0
+    run_mass_initial = verbose ? column_mass(state) : 0.0
     run_precipitation = 0.0
     run_runoff = 0.0
     run_ec = 0.0
@@ -516,7 +516,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # across a run of arbitrary length, where floating-point summation error grows with the
     # number of steps.
     if verbose
-        run_mass_final = first(column_mass_energy(state))
+        run_mass_final = column_mass(state)
         supplied = run_precipitation + run_ec + run_mass_added - run_runoff
         residual = (run_mass_final - run_mass_initial) - supplied
         turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +

@@ -162,7 +162,7 @@ after warmup:
 | Implementation | Total runtime | Speedup vs MATLAB |
 |---|---|---|
 | MATLAB (R2024b) | 98.8 s | 1× |
-| Julia (current) | **4.9 s** | **~20×** |
+| Julia (current) | **5.7 s** | **~17×** |
 
 Both were re-benchmarked on the same machine with the same protocol
 (`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
@@ -185,7 +185,7 @@ compiled native code.
 
 ## Differences from MATLAB Version
 
-GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Julia idioms:
+GEMB.jl embraces Julia idioms and deviates from the MATLAB implementation where justified:
 
 - **DimensionalData.jl:** All arrays use explicit dimension labels (`Ti`, `Z`) instead of implicit ordering
 - **Immutable Parameters:** `ModelParameters` is immutable; create new instance for modifications
@@ -240,6 +240,20 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   (Coléou and Lesaffre 1998 eq. 3 via Langen et al. 2017 eq. 4), matching the Community Firn
   Model. Retention is zero at and above `DENSITY_PORE_CLOSEOFF`, as in CFM. Default
   `:constant` is unchanged and bit-identical.
+- **Added `heat_capacity_method = :CuffeyPaterson`** — temperature-dependent specific heat,
+  `c_p(T) = 152.5 + 7.122 T` (Cuffey and Paterson 2010 eq. 9.1). MATLAB uses the constant
+  2102 J kg⁻¹ K⁻¹, its value at the melting point, which overstates the cold content of firn
+  at 240 K by 12.9% and at 210 K by 27.5%. Default `:constant` reproduces the MATLAB value.
+- **Internal energy is the enthalpy integral `∫c_p dT`, not `M·T·c_p`.** The latter is valid
+  only for constant `c_p`; under `:CuffeyPaterson` it overstates enthalpy by `(b/2)T²`, which
+  is 0.79·`LF` at the melting point. Cell mixing, the thermal solver, and every energy budget
+  now work in enthalpy. For the default `:constant` the two forms are algebraically identical,
+  so the change is arithmetic reordering (~1e-13 per operation); the 75-cycle spinup is not
+  converged and amplifies this to ~0.3% in melt-related whole-run totals, so the synthetic
+  regression pins were re-centered. Absolute column enthalpy is not comparable between the two
+  methods (574 061 vs 307 385 J kg⁻¹ at 273.15 K), so reported thermal energy shifts when
+  switching. The enthalpy solver costs ~17% more wall-clock than the constant-`c_p` form it
+  replaced (4.9 s to 5.7 s on the 107-model-year benchmark); allocations fell.
 
 ### Fixed-length vertical grid
 

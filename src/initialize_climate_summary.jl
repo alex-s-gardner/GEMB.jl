@@ -30,7 +30,7 @@ relative to any model integration.
 - `temperature_air_mean`: mean annual air temperature.
 - `temperature_amplitude`, `temperature_phase`: amplitude [K] and phase [rad] of
   the fitted annual cycle, `T(t) = T̄ + A·cos(ωt − φ)`.
-- `latent_warming`: `LF·refreeze/(C_ICE·accumulation_effective)`, the mean
+- `latent_warming`: `LF·refreeze/(c_p·accumulation_effective)`, the mean
   warming from refreezing latent heat.
 
 # Other means
@@ -197,7 +197,17 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     # because it also rains, which inverts the scheme's only regime discriminator.
     balance = accumulation + refreeze - melt
     A_eff = accumulation + refreeze
-    latent_warming = A_eff > 0.0 ? LF * refreeze / (C_ICE * A_eff) : 0.0
+    # Mean warming from refreezing one year of liquid water into the effective accumulation.
+    # Under `:constant` this is the reference's `LF·R/(c·A_eff)`, evaluated in that grouping.
+    # Under `:CuffeyPaterson` the same energy buys more warming in cold firn, so it is applied
+    # as an enthalpy increment about the mean temperature rather than divided by a fixed `c`.
+    latent_warming = if A_eff <= 0.0
+        0.0
+    elseif mp.heat_capacity_method === :constant
+        LF * refreeze / (mp.heat_capacity_ice * A_eff)
+    else
+        add_energy_temperature(mp, T_mean, A_eff, LF * refreeze) - T_mean
+    end
 
     return ClimateSummary(accumulation, rainfall, melt, refreeze, balance, A_eff,
         T_mean, T_amplitude, T_phase, latent_warming,
@@ -222,7 +232,7 @@ function _albedo_residual(α::Float64, T_air::Vector{Float64}, wind::Vector{Floa
 
     melt = _seb_annual_melt(T_air, wind, pressure, sw, lw, vapor,
         α, dt, per_year, zT_obs, zW_obs, mp)
-    refreeze = _cold_content_refreeze(melt, rainfall, accumulation, T_mean)
+    refreeze = _cold_content_refreeze(melt, rainfall, accumulation, T_mean, mp)
     g = _snow_cover_albedo(accumulation + refreeze, melt, mp) - α
     return g, melt, refreeze
 end
@@ -284,22 +294,28 @@ initialization jump discontinuously as a site crosses `b = 0`.
 end
 
 """
-    _cold_content_refreeze(melt, rainfall, accumulation, T_mean) -> R [kg m-2 yr-1]
+    _cold_content_refreeze(melt, rainfall, accumulation, T_mean, mp) -> R [kg m-2 yr-1]
 
 Annual refreeze, limited by both the available liquid water and the cold content
 of one annual accumulation layer:
 
-    R = min(melt + rainfall, C_ICE·(273.15 − T̄)·accumulation / LF)
+    R = min(melt + rainfall, accumulation·(h(273.15) − h(T̄)) / LF)
 
 The second term is the standard Pfeffer-style retention capacity: the energy
 needed to warm one year's accumulation to the melt point, expressed as a mass of
-refrozen water. A temperate column (`T̄ ≥ 273.15`) has no cold content and
+refrozen water. Under `:constant` the enthalpy difference is `c_p·(273.15 − T̄)`,
+the reference's form. A temperate column (`T̄ ≥ 273.15`) has no cold content and
 refreezes nothing.
 """
 @inline function _cold_content_refreeze(melt::Real, rainfall::Real,
-    accumulation::Real, T_mean::Real)
+    accumulation::Real, T_mean::Real, mp::ModelParameters)
     available = Float64(melt) + Float64(rainfall)
-    capacity = C_ICE * max(CtoK - Float64(T_mean), 0.0) * Float64(accumulation) / LF
+    capacity = if mp.heat_capacity_method === :constant
+        # Grouped as the reference groups it, so the default path is bit-identical.
+        mp.heat_capacity_ice * max(CtoK - Float64(T_mean), 0.0) * Float64(accumulation) / LF
+    else
+        cold_content_mass(mp, min(Float64(T_mean), CtoK), Float64(accumulation))
+    end
     return min(available, capacity)
 end
 

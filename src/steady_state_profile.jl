@@ -290,7 +290,7 @@ The damping depth `d = sqrt(2K/(ρ·c_p·ω))` uses the local density's own ther
 conductivity from [`thermal_conductivity`](@ref), so the wave decays through a
 physically consistent column rather than a nominal one. `ω = 2π/yr`.
 
-`ΔT_latent = LF·R/(C_ICE·A_eff)` is self-limiting: at the cold-content cap it
+`ΔT_latent = LF·R/(c_p·A_eff)` is self-limiting: at the cold-content cap it
 equals `(273.15 − T̄)·accumulation/A_eff`, which is strictly less than the gap to
 the melt point. The `min(·, CtoK)` clamp is therefore belt-and-braces, and also
 guards the ablation case where the mean itself is above freezing.
@@ -323,7 +323,7 @@ construction.
 @inline function thermal_damping_depth(T::Real, ρ::Real, mp::ModelParameters)
     K = thermal_conductivity(T, ρ, mp)
     ω = 2π / SECONDS_PER_YEAR                       # [rad s-1]
-    return sqrt(2 * K / (Float64(ρ) * C_ICE * ω))
+    return sqrt(2 * K / (Float64(ρ) * heat_capacity(mp, T) * ω))
 end
 
 """
@@ -334,17 +334,18 @@ a cold cell. Uses the same expression as [`calculate_melt`](@ref),
 `(ρᵢ − ρ)·S·(M/ρ)` with `M = ρ·dz`, so initialization and runtime agree on what
 "irreducible" means and the first timestep has no water to redistribute.
 
-Two gates that `calculate_melt` does not apply are added here, because this seeds a
-column rather than routing water through an existing one: a cold cell holds
-nothing, and a cell at or past pore close-off
+Two gates are added here, because this seeds a column rather than routing water through
+an existing one: a cold cell holds nothing, and a cell at or past pore close-off
 (`DENSITY_PORE_CLOSEOFF`) has no *connected* pore space to hold water in, so it
-starts dry rather than with the small amount `(ρᵢ − ρ)` alone would imply.
+starts dry rather than with the small amount `(ρᵢ − ρ)` alone would imply. Under
+`water_irreducible_method = :ColeouLesaffre` [`calculate_melt`](@ref) applies the
+close-off gate too; under `:constant` it does not.
 """
 @inline function _irreducible_water(T::Real, ρ::Real, dz::Real, mp::ModelParameters)
     T < CtoK - T_TOLERANCE && return 0.0
     ρ >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return 0.0   # no connected pore space
     M = Float64(ρ) * Float64(dz)
-    return (mp.density_ice - Float64(ρ)) * mp.water_irreducible_saturation * (M / Float64(ρ))
+    return (mp.density_ice - Float64(ρ)) * irreducible_saturation(mp, Float64(ρ)) * (M / Float64(ρ))
 end
 
 """

@@ -65,7 +65,14 @@ using GEMB_ClimateForcing
     # This is evaluation-order sensitivity in the regridding, not a conservation
     # problem — the per-timestep mass/energy checks run under `verbose=true` and the
     # whole-run budget closes to ~1e-11 kg m-2 on both platforms.
-    @test mean_albedo ≈ 0.821798 atol=3e-3       # ~0.37% relative
-    @test total_melt ≈ 11398.551015 atol=120.0  # ~1.1% relative
-    @test total_runoff ≈ 5017.057989 atol=120.0 # ~2.4% relative
+    # Re-centered when internal energy became the enthalpy integral ∫c_p dT rather than
+    # M·T·c_p. For the default :constant heat capacity the two are algebraically identical,
+    # so the shift is arithmetic reordering only (~1e-13 per operation) — but the 75-cycle
+    # spinup is not converged and amplifies it to ~0.3% here. The previous values
+    # (0.821798 / 11398.551015 / 5017.057989) still fell inside these atols; they are
+    # re-centered so the tolerance budget stays available for the cross-platform spread it
+    # was sized for rather than being half-consumed by this change.
+    @test mean_albedo ≈ 0.822103 atol=3e-3       # ~0.37% relative
+    @test total_melt ≈ 11368.809855 atol=120.0  # ~1.1% relative
+    @test total_runoff ≈ 4997.438019 atol=120.0 # ~2.4% relative
 end
