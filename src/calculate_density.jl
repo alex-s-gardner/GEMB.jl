@@ -130,7 +130,18 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         # model overshoots ρᵢ by ~1e-3 is what that clamp absorbs.
         #
         # Below 550 the law is exactly `_hl_c0` — see the identity noted on `_barnola_f`.
-        load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
+        #
+        # The 550 handover is a rate discontinuity, and a large one. Herron-Langway stage 1 is
+        # accumulation-driven and depth-independent, while pressure sintering scales as σ³, so
+        # the ratio across 550 depends entirely on the overburden the cell carries. On a 250 K
+        # column at 300 kg m-2 yr-1 the sintering rate is ~1.3e4x slower than Herron-Langway
+        # just above 550 at 1 m depth, ~17x slower at 5 m, and overtakes it at ~13 m. This is
+        # the paper's own construction — "From the surface to ρ = 0.55 g cm-3 the Herron and
+        # Langway (1980) model was used" — not a defect here: their columns reach 550 at a depth
+        # where the two rates are comparable. On a column whose 550 horizon sits much shallower
+        # than that (a high-accumulation or wind-slab site) densification effectively stalls at
+        # 550 until enough load accumulates. `:Barnola1991` is not the scheme to use there.
+        load = 0.0      # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
         @inbounds for i in 1:m
             d0 = density[i]
             dz0 = dz[i]
@@ -158,8 +169,11 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 # mean grafting another paper's law onto this one's calibration, so it belongs
                 # in a `:Goujon2003` scheme rather than as a correction to this branch.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
+                # `σ*σ*σ` rather than `σ^BARNOLA_N`: the latter routes through `pow` for a
+                # non-`Integer` exponent. `BARNOLA_N` documents the exponent and is pinned by
+                # the test suite; the two must be kept in step.
                 dρ_dt = d0 * BARNOLA_A0 * exp(-BARNOLA_Q / (temperature[i] * R_GAS)) *
-                        _barnola_f(d0, density_ice) * σ^BARNOLA_N     # [kg m-3 s-1]
+                        _barnola_f(d0, density_ice) * σ * σ * σ        # [kg m-3 s-1]
                 d = d0 + dρ_dt * cfs.dt
                 if d > density_ice - d_tolerance
                     d = density_ice
@@ -425,8 +439,36 @@ GEMB's default 910, so the gap at any other `density_ice` measures the mismatch 
 configured value and the fit's. At the default 910 the rate steps *down* by 14% crossing 800,
 which is a discontinuity in `dρ/dt` but not in ρ, and is small against the factor-5 error the
 alternative would introduce deeper in the column.
+
+The sign of that step is not fixed: it is downward below the fit's ~920 and upward above it
+(+7.6% at 925, +49.5% at 950). See [`BARNOLA_MIN_DENSITY_ICE`](@ref) for why the low side is gated
+and the high side is not.
 """
 const BARNOLA_CLOSEOFF = 800.0
+
+"""
+    BARNOLA_MIN_DENSITY_ICE
+
+Lowest `mp.density_ice` [kg m-3] that `:Barnola1991` accepts, enforced in
+`validate_parameters`. The rest of the model permits `[800, 950]`.
+
+The gate exists because `BARNOLA_CLOSEOFF` is an absolute density while the polynomial
+branch below it carries no `density_ice`. As the configured ice density falls toward 800 the
+handover moves into firn whose true porosity is nearly zero, and the polynomial — which
+cannot be rescaled, its coefficients being fitted against the fit's own ρᵢ ≈ 920 — overstates
+`f` there: by 5.9x at ρ = 700 and 15.9x at ρ = 799.9 for `density_ice = 820`. At exactly 800
+the polynomial covers the entire column, `f` never reaches 0, and the scheme loses the
+self-limiting behaviour that motivates it, leaving only the ice-density clamp.
+
+900 admits GEMB's default 910 (a -14% step at the handover) and the common 917 (-4%) while
+refusing the range where the law degrades: the step is -27% at 900 and -94% at 820.
+
+Deliberately one-sided. Above ~920 the step inverts rather than growing without bound
+(+7.6% at 925, +49.5% at 950) and the polynomial stays inside its fitted porosity range, so
+those configurations are merely inconsistent with the fit rather than unphysical. They are
+documented on [`BARNOLA_CLOSEOFF`](@ref) instead of rejected.
+"""
+const BARNOLA_MIN_DENSITY_ICE = 900.0
 
 """
     _barnola_f(ρ, density_ice) -> f [-]
@@ -435,7 +477,7 @@ Densification factor of Barnola et al. (1991), the geometric term in their eq. 2
 
     dρ/dt = ρ · A0 · exp(-Q/RT) · f(ρ) · ΔPⁿ
 
-Two regimes, meeting at [`BARNOLA_CLOSEOFF`]:
+Two regimes, meeting at [`BARNOLA_CLOSEOFF`](@ref):
 
   - Open pores, `ρ <= 800`: the paper's eq. 3, `fe(ρ)`, an empirical fit
     `log10 f = α(ρ/1000)³ + β(ρ/1000)² + δ(ρ/1000) + γ` "empirically deduced for the
@@ -448,7 +490,7 @@ Two regimes, meeting at [`BARNOLA_CLOSEOFF`]:
 
 `ρᵢ` is `mp.density_ice`, so the closed-pore branch follows the configured ice density.
 The polynomial branch cannot: its coefficients were fitted with a fixed ice density (~920
-kg m-3; see [`BARNOLA_CLOSEOFF`]), and rescaling them is not something the paper licenses.
+kg m-3; see [`BARNOLA_CLOSEOFF`](@ref)), and rescaling them is not something the paper licenses.
 
 Below `DENSITY_STAGE_TRANSITION` the scheme does not use this factor at all — it uses
 Herron & Langway stage 1, matching the paper ("from the surface to ρ = 0.55 g cm-3 the
@@ -474,6 +516,11 @@ linear accumulation dependence already inside `_hl_c0`.
         # `porosity -> 0` as ρ -> ρᵢ; the cube of the cube-root difference vanishes with it,
         # and the ratio tends to 9/16 · porosity^(1/3) · ... -> 0. Guard the exact endpoint,
         # where both numerator and denominator are 0.
+        #
+        # Reaching this branch at all requires `density_ice > BARNOLA_CLOSEOFF`, which
+        # `BARNOLA_MIN_DENSITY_ICE` guarantees for `:Barnola1991`. Without that gate a
+        # configured ice density at or below 800 would send every cell down the polynomial
+        # branch instead, and `f` would never vanish.
         porosity <= 0.0 && return 0.0
         return (3.0 / 16.0) * porosity / (1.0 - cbrt(porosity))^3
     end

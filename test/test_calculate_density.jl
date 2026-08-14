@@ -969,12 +969,31 @@ end
     @test poly(900.0) / closed(900.0, ρ_i) > 4.0
 
     # f vanishes with porosity, so the law self-limits as ρ → ρ_i without needing the clamp.
-    @test GEMB._barnola_f(ρ_i, ρ_i) == 0.0
-    @test GEMB._barnola_f(ρ_i - 1e-3, ρ_i) > 0.0
-    @test GEMB._barnola_f(ρ_i - 1e-3, ρ_i) < 1e-5
-    # Monotone decreasing in the closed-pore regime.
-    fs = [GEMB._barnola_f(ρ, ρ_i) for ρ in 810.0:10.0:900.0]
-    @test all(diff(fs) .< 0)
+    # Swept over `density_ice` rather than pinned at the default: the property holds only
+    # because `BARNOLA_MIN_DENSITY_ICE` keeps the handover strictly below ρ_i, so the
+    # closed-pore branch is the one reached near ρ_i. Testing a single value hid that.
+    for ρi in (GEMB.BARNOLA_MIN_DENSITY_ICE, 910.0, 917.0, 920.0, 950.0)
+        @test GEMB._barnola_f(ρi, ρi) == 0.0
+        @test GEMB._barnola_f(ρi - 1e-3, ρi) > 0.0
+        @test GEMB._barnola_f(ρi - 1e-3, ρi) < 1e-5
+        # Monotone decreasing in the closed-pore regime.
+        fs = [GEMB._barnola_f(ρ, ρi) for ρ in 810.0:10.0:(ρi-10.0)]
+        @test all(diff(fs) .< 0)
+    end
+    # Below the gate the property fails: at ρ_i = 800 the handover coincides with ρ_i, the
+    # polynomial covers the whole column, and `f` never reaches 0. This is what the
+    # `:Barnola1991` validator gate exists to exclude.
+    @test GEMB._barnola_f(800.0, 800.0) > 0.2
+    @test_throws AssertionError initialize_parameters(densification_method=:Barnola1991,
+        density_ice=800.0)
+    @test_throws AssertionError initialize_parameters(densification_method=:Barnola1991,
+        density_ice=GEMB.BARNOLA_MIN_DENSITY_ICE - 1.0)
+    # The gate is specific to `:Barnola1991`; the rest of the model still accepts 800.
+    @test initialize_parameters(densification_method=:Arthern,
+        density_ice=800.0).density_ice == 800.0
+    @test initialize_parameters(densification_method=:Barnola1991,
+        density_ice=GEMB.BARNOLA_MIN_DENSITY_ICE).density_ice ==
+          GEMB.BARNOLA_MIN_DENSITY_ICE
     # The closed-pore branch follows the configured ice density; the fitted one cannot.
     @test GEMB._barnola_f(850.0, 917.0) != GEMB._barnola_f(850.0, 910.0)
     @test GEMB._barnola_f(700.0, 917.0) == GEMB._barnola_f(700.0, 910.0)
@@ -987,6 +1006,32 @@ end
     # the rate would jump by (1e5/σ)² below the threshold — ~41x at the 15 kPa a shallow column
     # actually sees, against coefficients calibrated to reproduce observed profiles with n = 3.
     @test (1.0e5 / 1.55e4)^2 > 40.0
+end
+
+@testset "Barnola1991 handover at 550 is depth-dependent" begin
+    # The 550 boundary joins a depth-independent accumulation-driven rate to a σ³ one, so the
+    # step across it is set by the overburden, not by the densities. Pinned because the sign of
+    # the step reverses with depth and a future change to the stress integral would move the
+    # crossover silently. See the comment on the `:Barnola1991` branch.
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:Barnola1991)
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, precipitation_mean=300.0,
+        temperature_air_mean=250.0)
+
+    function rate_at(depth, ρ)
+        dz = [depth, 0.1]
+        dens = [530.0, ρ]
+        _, d = GEMB.calculate_density(fill(250.0, 2), dz, dens, fill(1.0, 2), zeros(2), cfs, mp)
+        return (d[2] - ρ) / cfs.dt
+    end
+    ratio(depth) = rate_at(depth, 550.1) / rate_at(depth, 549.9)
+
+    # Sintering is far slower than Herron-Langway in the top metre, and faster deep.
+    @test ratio(1.0) < 1e-3
+    @test ratio(5.0) < 0.1
+    @test ratio(20.0) > 1.0
+    # Monotone in depth, so there is exactly one crossover.
+    rs = [ratio(z) for z in (0.5, 1.0, 2.0, 5.0, 10.0, 20.0)]
+    @test all(diff(rs) .> 0)
 end
 
 @testset "Barnola1991 stage 1 is exactly Herron-Langway" begin

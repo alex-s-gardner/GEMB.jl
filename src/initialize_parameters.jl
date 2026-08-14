@@ -32,6 +32,18 @@ function validate_parameters(mp::ModelParameters)
     # Density of ice
     @assert 800 <= mp.density_ice <= 950 "density_ice must be in [800, 950]"
 
+    # `:Barnola1991` carries a narrower `density_ice` range than the rest of the model. Its
+    # `f(ρ)` switches from a fitted polynomial to a closed-pore form at `BARNOLA_CLOSEOFF`
+    # (800), and only the closed-pore branch scales with `density_ice`: the polynomial's
+    # coefficients were fitted against the fit's own ice density of ~920 and cannot be
+    # rescaled. Below ~900 the two branches diverge badly at the handover (-27% at 900, -94%
+    # at 820) and the polynomial is applied to cells whose true porosity is nearly zero,
+    # overstating the rate by up to ~16x; at 800 the polynomial covers the whole column and
+    # `f` never vanishes, so the scheme loses the self-limiting property it exists to provide.
+    if mp.densification_method === :Barnola1991
+        @assert mp.density_ice >= BARNOLA_MIN_DENSITY_ICE "densification_method=:Barnola1991 requires density_ice >= $(BARNOLA_MIN_DENSITY_ICE) (its f(ρ) polynomial was fitted against an ice density of ~920 kg m-3 and cannot be rescaled); got $(mp.density_ice)"
+    end
+
     # Rain temperature threshold
     @assert 270.15 <= mp.rain_temperature_threshold <= 276.15 "rain_temperature_threshold must be in [270.15, 276.15]"
 

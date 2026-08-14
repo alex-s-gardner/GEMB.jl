@@ -261,7 +261,11 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   mechanistically rather than extrapolating a snow/firn fit: `f(ρ)` is a polynomial fitted to
   Pimienta and Duval (1987) below 800 kg m⁻³ and the analytic isolated-spherical-pore form
   `(3/16)(1−ρ/ρᵢ)/(1−(1−ρ/ρᵢ)^⅓)³` above, which vanishes with porosity, so the law
-  self-limits as ρ → ρᵢ instead of being driven to zero by a `(ρᵢ−ρ)` factor. Overburden is
+  self-limits as ρ → ρᵢ instead of being driven to zero by a `(ρᵢ−ρ)` factor. That
+  self-limiting holds only while the closed-pore branch is reached at all: the 800 kg m⁻³
+  handover is absolute while the polynomial carries no `ρᵢ`, so `:Barnola1991` requires
+  `density_ice >= 900` (enforced in `validate_parameters`), against `[800, 950]` elsewhere.
+  Overburden is
   the same `Σ(ρdz + water)·g` integral `:ArthernB` uses, at the cell midpoint as for
   `:Crocus`. Integrated with forward Euler on `dρ/dt`. Stage 1 is bit-for-bit
   `:HerronLangway`, sharing one kernel; the steady-state initial guess falls back to
@@ -278,8 +282,11 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   (ii) only the closed-pore branch scales with `density_ice`, and the branches meet in value
   at ρᵢ = 919.96 and in slope at 920.06 against the paper's stated C¹ matching, so the fit
   assumes ρᵢ ≈ 920 and at GEMB's default 910 the rate steps down 14% crossing 800 kg m⁻³ (a
-  discontinuity in `dρ/dt`, not in ρ). Calibrated over −14 to −57 °C and 2.2–65 g cm⁻² yr⁻¹;
-  no liquid-water term.
+  discontinuity in `dρ/dt`, not in ρ). The 550 kg m⁻³ handover is also a rate discontinuity, by
+  construction in the paper: it joins a depth-independent accumulation-driven rate to a σ³ one,
+  so on a 250 K, 300 kg m⁻² yr⁻¹ column sintering is ~1.3e4× slower than Herron–Langway just
+  above 550 at 1 m depth and overtakes it only near 13 m. Calibrated over −14 to −57 °C and
+  2.2–65 g cm⁻² yr⁻¹; no liquid-water term.
 - **`water_irreducible_saturation` now applies during percolation.** MATLAB declares a local
   `0.07` that overrides the documented parameter at every percolation retention site; only
   the pre-percolation squeeze read the parameter. Changes output wherever
