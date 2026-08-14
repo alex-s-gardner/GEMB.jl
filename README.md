@@ -10,7 +10,7 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance (GEMB, 
 
 GEMB is a column model (no horizontal communication) of intermediate complexity, prioritizing computational efficiency to accommodate the multi-millennial spin-ups required for initializing deep firn columns. It is used for interpreting satellite altimetry data, firn studies, surface mass balance inversion from satellite data, ice core studies, uncertainty quantification and model exploration in cryosphere research. A complete description of GEMB can be found in [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
 
-This Julia implementation maintains fidelity to the original MATLAB version while leveraging Julia's performance, type system, and modern ecosystem including DimensionalData.jl for labeled arrays.
+This Julia implementation began as a translation of the original MATLAB version and leverages Julia's performance, type system, and modern ecosystem including DimensionalData.jl for labeled arrays. It now deviates from the MATLAB version where the physics warranted it; those deviations are listed under [Differences from MATLAB Version](#differences-from-matlab-version).
 
 ## Key Capabilities
 
@@ -167,9 +167,10 @@ after warmup:
 Both were re-benchmarked on the same machine with the same protocol
 (`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
 
-The Julia hot loop has been tuned for low allocations and type stability. The individual
-physics functions remain numerically faithful to the MATLAB reference and the full
-MATLAB-validation test suite passes (~1e-12 relative tolerance per module).
+The Julia hot loop has been tuned for low allocations and type stability. The
+MATLAB-validation test suite passes (~1e-12 relative tolerance per module) for every
+physics function except where a deviation is documented under
+[Physics deviations](#physics-deviations).
 
 Whole-column output is **not** bit-identical to the MATLAB reference, and cannot be: the
 fixed-length vertical grid (see below) merges and splits cells at depth to hold the cell
@@ -194,6 +195,11 @@ GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Jul
 - **Fixed-length vertical grid:** the column holds a constant cell count and a constant total
   depth for the whole run, rather than growing and shrinking as cells are added and removed
   (see below)
+
+### Physics deviations
+
+Changes that alter model output relative to the MATLAB reference. Upstream issue numbers
+refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
 
 ### Fixed-length vertical grid
 
@@ -250,7 +256,8 @@ Schlegel, N.-J., & Gardner, A. (2025). Output from the Glacier Energy and Mass B
 ## Contributing
 
 Contributions are welcome! Please:
-1. Maintain fidelity to the MATLAB implementation for physics functions
+1. Deviate from the MATLAB implementation only where physically justified, and document the
+   deviation under [Physics deviations](#physics-deviations)
 2. Add tests that validate against MATLAB reference data
 3. Follow Julia style guidelines
 4. Update documentation for new features
