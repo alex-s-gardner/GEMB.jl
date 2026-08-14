@@ -15,6 +15,14 @@ const VON_KARMAN = 0.4     # Von Karman constant [-]
 
 const SECONDS_PER_YEAR = 365.25 * 86400.0  # Seconds in a (Julian) year [s]
 
+# Year length assumed by the densification rate coefficients, in days. Deliberately 365, not
+# `SECONDS_PER_YEAR / 86400` (365.25): every densification scheme's `c` is applied as
+# `c / DAYS_PER_YEAR_DENSIFICATION * dt` with `dt` in days, so any scheme published with SI
+# per-second coefficients must be converted against *this* value for the two to cancel.
+# Changing it rescales every densification rate by 0.07%; it is also ~0.07% of the offset
+# against the Community Firn Model, which uses a 365.25-day year.
+const DAYS_PER_YEAR_DENSIFICATION = 365.0
+
 # Snow/firn state values shared by the accumulation physics and the steady-state
 # initial guess, so a freshly initialized column and freshly fallen snow agree.
 const RE_NEW_SNOW = 0.05   # New snow effective grain radius [mm]
@@ -23,6 +31,13 @@ const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
 const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+
+# Density separating the two densification stages [kg m-3]. Every scheme in
+# `calculate_density` switches rate coefficients here: it is the transition from
+# grain-settling-dominated to creep-dominated compaction, and all the published two-stage
+# coefficient pairs (Herron & Langway, Arthern, Ligtenberg, Simonsen, GSFC) are fitted
+# against this same split.
+const DENSITY_STAGE_TRANSITION = 550.0
 
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one

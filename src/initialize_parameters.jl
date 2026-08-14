@@ -15,7 +15,7 @@ end
 
 function validate_parameters(mp::ModelParameters)
     # Densification method
-    @assert mp.densification_method in (:HerronLangway, :Arthern, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, Ligtenberg"
+    @assert mp.densification_method in (:HerronLangway, :Arthern, :ArthernB, :GSFC2020, :Simonsen2013, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, ArthernB, GSFC2020, Simonsen2013, Ligtenberg"
 
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,

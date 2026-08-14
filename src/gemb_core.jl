@@ -94,7 +94,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)
 
-    dz, density = calculate_density(temperature, dz, density, grain_radius, cfs, mp)
+    dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp)
 
     densification_from_compaction = densification_from_compaction - sum(dz)
 

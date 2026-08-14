@@ -205,6 +205,31 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   mass deficit by 1000 rather than `density_ice`, which yields metres of water equivalent —
   9.0% lower for `density_ice = 910`. Affects the `firn_air_content` output only
   (upstream [#198](https://github.com/alex-s-gardner/GEMB/issues/198)).
+- **`:ArthernB` densification is corrected and selectable.** MATLAB omits gravity and the
+  per-second-to-per-year conversion from Arthern et al. (2010) eq. B1 — a combined factor of
+  ~3.1e8, leaving the scheme inert — and applies the overlying cell's density to the whole
+  overlying depth rather than integrating `Σ(ρⱼdzⱼ + waterⱼ)g`. Corrected here and validated
+  against the Community Firn Model's `Arthern2010T` to 1e-8. MATLAB marks the scheme
+  "DO NOT USE"; it is now a permitted `densification_method`
+  (upstream [#200](https://github.com/alex-s-gardner/GEMB/issues/200)). The steady-state
+  initial guess falls back to `:Arthern`, which the spinup then relaxes. `:LiZwally` and
+  `:Helsen` remain gated.
+- **Added `densification_method = :GSFC2020`** — Medley et al. (2022) GSFC-FDM v1.2.1
+  eq. 18, the recalibrated successor to `:Arthern`: the same `dρ/dt = c(ρᵢ−ρ)` form with the
+  mean accumulation raised to a fitted exponent (α₀ = 0.91, α₁ = 0.644) and a per-stage
+  activation energy (59500 and 56870 J mol⁻¹ against Arthern's single 60000). Not present in
+  MATLAB. Cross-checked against the Community Firn Model's `GSFC2020` to the 0.102% `g`
+  offset. Because α ≠ 1 the accumulation units are load-bearing rather than absorbed into a
+  prefactor: `precipitation_mean` is kg m⁻² yr⁻¹, which is the convention the exponents were
+  fitted against.
+- **Added `densification_method = :Simonsen2013`** — Simonsen et al. (2013), `:Arthern`'s form
+  and activation energies retuned for Greenland: a constant factor 0.8 below 550 kg m⁻³, and
+  1.25·γ above with `γ = 61.7/√A · exp(−3800/RT̄)`, where γ scales the second stage only. Not
+  present in MATLAB. The form follows Lundin et al. (2017) FirnMICE eqs. A36–A37; that paper
+  publishes no numeric tuning scalars, so the values 0.8 and 1.25 are the Community Firn
+  Model's, against which the implementation is cross-checked to the 0.102% `g` offset. As for
+  `:GSFC2020`, the accumulation units are load-bearing (`γ ∝ A^−1/2`): `precipitation_mean` is
+  kg m⁻² yr⁻¹.
 
 ### Fixed-length vertical grid
 
