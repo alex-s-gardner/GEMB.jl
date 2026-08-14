@@ -103,7 +103,14 @@ end
     # On: the budget must still close (this is the test that catches an incomplete wiring —
     # omitting `mass_lateral` from either check makes `gemb` error), the grid invariants
     # must hold, and the column must genuinely thin.
-    mp = initialize_parameters(output_frequency=:monthly, horizontal_strain_rate=5e-3)
+    #
+    # `2e-2 yr-1` rather than a more typical rate because the firn-air comparison below has
+    # to clear this run's chaotic noise floor: a 1e-14 relative perturbation to a single
+    # cell's initial temperature moves summed `firn_air_content` by ~0.7 m, so bit-level
+    # rounding differences between platforms are not small here. At 2e-2 the strain signal
+    # is ~12 m, a ~17x margin; at 5e-3 it is ~1.9 m and the ordering flips between x86 and
+    # arm64. This is a test-robustness bound, not a physical one.
+    mp = initialize_parameters(output_frequency=:monthly, horizontal_strain_rate=2e-2)
     out = gemb(profile, cf, mp; verbose=true)
     @test all(>(0.0), out[:strain_thinning])
     @test sum(out[:strain_thinning]) > sum(out0[:strain_thinning])
@@ -119,7 +126,7 @@ end
     @test sum(out[:firn_air_content]) < sum(out0[:firn_air_content])
 
     # Convergence has the opposite sign in both the diagnostic and the air content.
-    mp_con = initialize_parameters(output_frequency=:monthly, horizontal_strain_rate=-5e-3)
+    mp_con = initialize_parameters(output_frequency=:monthly, horizontal_strain_rate=-2e-2)
     out_con = gemb(profile, cf, mp_con; verbose=true)
     @test all(<(0.0), out_con[:strain_thinning])
     @test sum(out_con[:firn_air_content]) > sum(out0[:firn_air_content])
