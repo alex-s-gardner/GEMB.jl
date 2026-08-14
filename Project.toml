@@ -1,6 +1,6 @@
 name = "GEMB"
 uuid = "658e70de-abe2-4db6-8b40-f6dcda98d853"
-version = "1.0.2"
+version = "1.1.0"
 authors = ["Alex Gardner <alex.s.gardner@jpl.nasa.gov> and contributors"]
 
 [deps]

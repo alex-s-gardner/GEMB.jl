@@ -39,7 +39,7 @@ include("test_utils.jl")
         include("test_calculate_grain_size.jl")
     end
     @testset "Manage Layers" begin
-        include("test_manage_layers.jl")
+        include("test_manage_layer_thickness.jl")
     end
     @testset "GEMB Core" begin
         include("test_gemb_core.jl")
@@ -50,6 +50,9 @@ include("test_utils.jl")
     @testset "GEMB Spinup" begin
         include("test_gemb_spinup.jl")
     end
+    @testset "Ablation Regime" begin
+        include("test_ablation_regime.jl")
+    end
     @testset "GEMB_ClimateForcing Integration" begin
         # Verify simulate → convert → run model end-to-end
         ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
@@ -57,7 +60,7 @@ include("test_utils.jl")
         cf = GEMB.initialize_forcing(ds)
         @test cf isa GEMB.ClimateForcing
         mp = GEMB.ModelParameters()
-        profile = GEMB.initialize_profile(mp, cf)
+        profile, mp = GEMB.initialize_profile(mp, cf)
         @test length(profile.dz) > 0
     end
     @testset "Grid Utilities" begin

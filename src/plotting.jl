@@ -12,12 +12,19 @@ The figure has two columns sharing a common (linked) time axis:
   field and color limits are clipped to robust (2–98%) percentiles for maximum
   contrast. Long runs are strided in time so the raster stays a sensible width.
 - **Right — scalar fields.** 1-D variables are grouped by physical theme and shared
-  unit (energy fluxes, mass fluxes, densification, …) and overplotted as time series
-  on a common axis, with a legend when a panel holds more than one series.
+  unit (air temperature, energy fluxes, mass fluxes, …) and overplotted as time series
+  on a common axis, with a legend when a panel holds more than one series. Air
+  temperature is placed first (top), aligned with the temperature profile heatmap.
+
+Axis, colorbar, and legend labels take their units from each layer's CF metadata (see
+[`GEMB_CF_ATTRIBUTES`](@ref)) rather than from a hard-coded table, so a panel cannot
+disagree with the data it draws. Fields stored in kelvin are converted to °C for
+display; everything else is shown in its stored units.
 
 Redundant decorations are removed: x ticks and the "year" label appear only on the
 bottom panel of each column, and a header banner records provenance (GEMB version,
-time span, sampling cadence, max depth, striding, generation time).
+forcing source, time span, sampling cadence, spinup climatology window + convergence
+— or "no spinup" — mass budget, generation time).
 
 # Arguments
 - `output::DimStack`: The `DimStack` returned by [`gemb`](@ref).
@@ -30,10 +37,11 @@ time span, sampling cadence, max depth, striding, generation time).
   near-surface zone where most of the dynamics live. Pass a wider range (or derive it
   from the data) to see the full column.
 - `variables`: Iterable of variable name `Symbol`s to include. Defaults to every
-  variable in `output` except the profile fields `dz`, `albedo`, and `albedo_diffuse`
-  (a grid diagnostic and two fields already represented by the surface-albedo series);
-  pass any of them explicitly here to include them.
-- `title`: Optional figure title. Defaults to `"GEMB diagnostic output"`.
+  variable in `output` except the profile fields `dz`, `albedo`, `albedo_diffuse`,
+  `grain_dendricity`, and `grain_sphericity`, and the densification scalar group (a
+  grid diagnostic, fields already represented by the surface-albedo/grain-radius
+  panels, and a lower-priority group); pass any of them explicitly here to include them.
+- `title`: Optional figure title. Defaults to `"GEMB.jl glacier firn model output"`.
 
 # Returns
 A Makie `Figure`.

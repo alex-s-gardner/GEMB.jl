@@ -15,6 +15,9 @@ include("types.jl")
 # Utility functions
 include("utilities.jl")
 
+# CF attribute table for output variables (consulted when building output stacks)
+include("cf_metadata.jl")
+
 # Initialization
 include("initialize_parameters.jl")
 include("initialize_forcing.jl")
@@ -26,6 +29,10 @@ include("thermal_conductivity.jl")
 include("turbulent_heat_flux.jl")
 include("densification_lookup.jl")
 
+# Shared vertical-grid primitives (used by the accumulation / melt / layer-management
+# modules below, so it must be included before them)
+include("grid_ops.jl")
+
 # Core physics modules
 include("calculate_grain_size.jl")
 include("calculate_albedo.jl")
@@ -34,7 +41,7 @@ include("calculate_temperature.jl")
 include("calculate_accumulation.jl")
 include("calculate_melt.jl")
 include("calculate_density.jl")
-include("manage_layers.jl")
+include("manage_layer_thickness.jl")
 
 # Integration
 include("gemb_core.jl")
@@ -49,15 +56,16 @@ include("interpolation.jl")
 include("plotting.jl")
 
 # Re-export DimensionalData essentials
-using DimensionalData: DimArray, DimStack, Ti, Z, dims
-export DimArray, DimStack, Ti, Z
+using DimensionalData: DimArray, DimStack, Ti, Z, dims, metadata
+export DimArray, DimStack, Ti, Z, metadata
 
 # Exports
 export ModelParameters, ClimateForcing, ClimateForcingStep
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output
-export dz2z, surface_timeseries, fast_divisors, decyear2datenum
+export dz2z, surface_timeseries, fast_divisors, decyear2datenum, datetime2decyear
+export CFAttrs, GEMB_CF_ATTRIBUTES, GEMB_CF_GLOBAL_ATTRIBUTES, cf_attributes
 export herron_langway_steady_state, annual_pdd_melt, fresh_snow_density
 
 end

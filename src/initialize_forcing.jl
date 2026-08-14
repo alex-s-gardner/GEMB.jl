@@ -42,7 +42,13 @@ function initialize_forcing(
     cloud_optical_thickness::Real=0.0,
     solar_zenith_angle::Real=0.0,
     shortwave_downward_diffuse::Real=0.0,
-    cloud_fraction::Real=0.1
+    cloud_fraction::Real=0.1,
+    dataset::AbstractString="",
+    latitude::Real=NaN,
+    longitude::Real=NaN,
+    elevation::Real=NaN,
+    elevation_native::Real=NaN,
+    elevation_offset::Real=0.0
 )
     # Validate input sizes
     n = length(time)
@@ -116,7 +122,13 @@ function initialize_forcing(
         Float64(wind_speed_mean),
         Float64(precipitation_mean),
         Float64(temperature_observation_height),
-        Float64(wind_observation_height)
+        Float64(wind_observation_height);
+        dataset=dataset,
+        latitude=latitude,
+        longitude=longitude,
+        elevation=elevation,
+        elevation_native=elevation_native,
+        elevation_offset=elevation_offset,
     )
 end
 
@@ -165,7 +177,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = initialize_forcing(ds)
 
 mp = initialize_parameters()
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 """
@@ -242,6 +254,20 @@ function initialize_forcing(stack::DimStack)
     shortwave_downward_diffuse = get(meta, "shortwave_downward_diffuse", 0.0)
     cloud_fraction = get(meta, "cloud_fraction", 0.1)
 
+    # Provenance metadata (optional): source name, cell coordinates, the absolute
+    # target `elevation` (m), the source dataset's own `elevation_native` (m, written as
+    # `elevation_reanalysis` by `climate_adjust_for_elevation`), and any elevation
+    # adjustment applied upstream. Absent for hand-built stacks, so default gracefully.
+    # `elevation_offset` supersedes the older `delta_elevation` key that
+    # `climate_adjust_for_elevation` used to write.
+    dataset = get(meta, "dataset", "")
+    latitude = get(meta, "latitude", NaN)
+    longitude = get(meta, "longitude", NaN)
+    elevation = get(meta, "elevation", NaN)
+    elevation_offset = get(meta, "elevation_offset", get(meta, "delta_elevation", 0.0))
+    # An unadjusted stack's `elevation` IS its native elevation (no offset applied yet).
+    elevation_native = get(meta, "elevation_reanalysis", elevation)
+
     # Delegate to the vector method, which applies GEMB's validation logic
     return initialize_forcing(
         time,
@@ -262,6 +288,12 @@ function initialize_forcing(stack::DimStack)
         cloud_optical_thickness = cloud_optical_thickness,
         solar_zenith_angle = solar_zenith_angle,
         shortwave_downward_diffuse = shortwave_downward_diffuse,
-        cloud_fraction = cloud_fraction
+        cloud_fraction = cloud_fraction,
+        dataset = dataset,
+        latitude = latitude,
+        longitude = longitude,
+        elevation = elevation,
+        elevation_native = elevation_native,
+        elevation_offset = elevation_offset
     )
 end

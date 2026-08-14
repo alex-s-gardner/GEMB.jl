@@ -36,33 +36,40 @@ end
 Extract profile at a specific column index from the output DimStack.
 """
 function _extract_profile_at_index(out::DimStack, col_idx::Int)
-    # Extract column, removing NaN padding
-    temp_col = parent(out[:temperature])[:, col_idx]
-    valid = .!isnan.(temp_col)
-    m = sum(valid)
+    # Profile output is top-justified with a fixed row count, so every row is a real cell
+    # and the whole column is taken as-is.
+    m = size(parent(out[:temperature]), 1)
 
-    zdim = Z(1:m)
+    zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
     # Extract albedo from profile output if available, otherwise use defaults
     if haskey(out, :albedo)
-        albedo_col = parent(out[:albedo])[valid, col_idx]
-        albedo_diffuse_col = parent(out[:albedo_diffuse])[valid, col_idx]
+        albedo_col = parent(out[:albedo])[:, col_idx]
+        albedo_diffuse_col = parent(out[:albedo_diffuse])[:, col_idx]
     else
         # Fallback for output without albedo profiles
         albedo_col = fill(0.85, m)
         albedo_diffuse_col = fill(0.85, m)
     end
 
-    return DimStack((
-        z_center=DimArray(dz2z(parent(out[:dz])[valid, col_idx]), (zdim,)),
-        dz=DimArray(parent(out[:dz])[valid, col_idx], (zdim,)),
-        temperature=DimArray(parent(out[:temperature])[valid, col_idx], (zdim,)),
-        density=DimArray(parent(out[:density])[valid, col_idx], (zdim,)),
-        water=DimArray(parent(out[:water])[valid, col_idx], (zdim,)),
-        grain_radius=DimArray(parent(out[:grain_radius])[valid, col_idx], (zdim,)),
-        grain_dendricity=DimArray(parent(out[:grain_dendricity])[valid, col_idx], (zdim,)),
-        grain_sphericity=DimArray(parent(out[:grain_sphericity])[valid, col_idx], (zdim,)),
+    # `z_center` is intentionally omitted so the extracted profile matches the
+    # output layout (a slice of it); recompute via `dz2z(profile[:dz])` if needed.
+    layers = (
+        dz=DimArray(parent(out[:dz])[:, col_idx], (zdim,)),
+        temperature=DimArray(parent(out[:temperature])[:, col_idx], (zdim,)),
+        density=DimArray(parent(out[:density])[:, col_idx], (zdim,)),
+        water=DimArray(parent(out[:water])[:, col_idx], (zdim,)),
+        grain_radius=DimArray(parent(out[:grain_radius])[:, col_idx], (zdim,)),
+        grain_dendricity=DimArray(parent(out[:grain_dendricity])[:, col_idx], (zdim,)),
+        grain_sphericity=DimArray(parent(out[:grain_sphericity])[:, col_idx], (zdim,)),
         albedo=DimArray(albedo_col, (zdim,)),
         albedo_diffuse=DimArray(albedo_diffuse_col, (zdim,)),
-    ))
+    )
+
+    # Carry the CF attributes through, minus `cell_methods`: the extracted column has no
+    # `Ti` dimension, so an interval reduction referencing a `time` coordinate that isn't
+    # there would be wrong. Stack-level metadata is deliberately left unset — `gemb_spinup`
+    # owns that slot (`rebuild(profile; metadata=prov)` in `spinup.jl`), and `rebuild`
+    # preserves the layer metadata set here.
+    return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end

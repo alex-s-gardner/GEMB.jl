@@ -81,6 +81,28 @@ by `GEMB_ClimateForcing`. See the
 [GEMB_ClimateForcing documentation](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl)
 for details.
 
+## Output Metadata
+
+The `gemb` output stack is self-describing: each layer carries CF-style attributes and the
+stack carries CF global attributes. These are the table and accessors behind that.
+
+```@docs
+GEMB_CF_ATTRIBUTES
+CFAttrs
+cf_attributes
+GEMB_CF_GLOBAL_ATTRIBUTES
+```
+
+The helpers that turn that table into `DimStack` keyword arguments — useful if you are
+building your own stack of GEMB fields, or writing the output to NetCDF:
+
+```@docs
+cf_layermetadata
+cf_time_attributes
+cf_layer_index_attributes
+cf_height_attributes
+```
+
 ## Utilities
 
 ```@docs

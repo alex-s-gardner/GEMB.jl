@@ -6,6 +6,24 @@ Matches MATLAB's `gemb.m`.
 
 Returns a DimStack containing time series of surface flux (monolevel)
 and vertical profiles at the specified output frequency.
+
+# Provenance
+The output metadata records where the forcing came from (`dataset`, `latitude`,
+`longitude`, `elevation_offset`) and how the initial column was prepared. If
+`profile` was produced by [`gemb_spinup`](@ref), its `spinup_*` / `climatology_*`
+provenance is copied onto the output and `spinup_performed => true` is set. If
+`profile` came straight from [`initialize_profile`](@ref) (no spinup), the output
+records `spinup_performed => false`, so the run is unambiguous about having
+started from an un-spun-up column.
+
+# Metadata
+Every output layer carries CF-style attributes — `units`, `long_name`, the interval
+reduction as `cell_methods` (`time: sum` / `time: mean` / `time: point`), and a
+`standard_name` where a CF standard name matches the quantity exactly — and the stack
+carries `Conventions = "CF-1.11"` alongside the provenance above. See
+[`GEMB_CF_ATTRIBUTES`](@ref) for the table and [`cf_attributes`](@ref) to read one
+layer's attributes. Conformance is at the attribute level: GEMB.jl ships no NetCDF
+writer, so the attributes are there for whichever writer or plotting code consumes them.
 """
 function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters; verbose::Bool=false)
     # Get time information
@@ -37,7 +55,13 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
         climate_forcing.temperature_observation_height,
-        climate_forcing.wind_observation_height,
+        climate_forcing.wind_observation_height;
+        dataset=climate_forcing.dataset,
+        latitude=climate_forcing.latitude,
+        longitude=climate_forcing.longitude,
+        elevation=climate_forcing.elevation,
+        elevation_native=climate_forcing.elevation_native,
+        elevation_offset=climate_forcing.elevation_offset,
     )
 
     # Pre-compute dt_divisors for thermal sub-stepping
@@ -61,19 +85,40 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         melt_surface = 0.0,
     )
 
-    # Compute output times
-    output_times = Set(_compute_output_times(times, mp.output_frequency))
-    out_time = sort(collect(output_times))
+    # Compute output times. `_compute_output_times` already returns a sorted, unique
+    # subset of `times`, so it becomes the output time axis directly; the `Set` is kept
+    # only for O(1) membership testing inside the time loop below.
+    out_time = _compute_output_times(times, mp.output_frequency)
+    output_times = Set(out_time)
     n_outputs = length(out_time)
-    column_length = length(state.dz)
-    profile_size = column_length + mp.output_padding
 
-    # Create output time coordinate and dimensions
-    ti_dim = Ti(out_time)
-    z_dim = Z(1:profile_size)
+    # Period-based frequencies emit only *complete* days/weeks/months. A forcing record
+    # shorter than one period therefore yields no output at all; warn rather than
+    # silently returning empty arrays.
+    if n_outputs == 0
+        @warn "gemb: output_frequency=:$(mp.output_frequency) produced no output times — " *
+              "the forcing record ($(length(times)) steps, $(times[1]) to $(times[end])) " *
+              "does not span a complete $(mp.output_frequency == :monthly ? "month" :
+                                          mp.output_frequency == :weekly ? "week" : "day"). " *
+              "Returning empty output."
+    end
+    # The column now holds a fixed cell count and a fixed total depth for the whole run
+    # (enforced each timestep by the two controllers in `grid_ops.jl`), so the profile
+    # output is sized exactly to the column — no padding, no NaN rows, and no possibility
+    # of overflow.
+    profile_size = length(state.dz)
+    z_target = sum(state.dz)
+    _assert_grid_feasible(state.dz, z_target, mp)
 
-    # Initialize output as DimStack with NaN-filled arrays
-    output = DimStack((
+    # Create output time coordinate and dimensions. `Z` is a bare 1-based cell index,
+    # not a height, so its attributes say so rather than claiming a vertical coordinate.
+    ti_dim = Ti(out_time; metadata=cf_time_attributes())
+    z_dim = Z(1:profile_size; metadata=cf_layer_index_attributes())
+
+    # Initialize output as NaN-filled arrays. Held as a NamedTuple first so the CF
+    # attribute table can be indexed by the same keys in the same order, which is what
+    # `cf_layermetadata` relies on.
+    layers = (
         # Monolevel outputs
         melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         runoff=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -93,6 +138,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         # Forcing summary outputs
         temperature_air=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         precipitation=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        rain=DimArray(fill(NaN, n_outputs), (ti_dim,)),
 
         # Profile outputs (2D: vertical × time)
         temperature=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
@@ -104,7 +150,31 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         albedo_diffuse=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-    ))
+    )
+
+    output = DimStack(layers;
+        # Per-layer CF attributes: units, long_name, the interval reduction
+        # (`cell_methods`), and a standard_name only where a CF standard name matches
+        # GEMB's quantity exactly. See `cf_metadata.jl`.
+        layermetadata=cf_layermetadata(layers),
+        # CF global attributes, then forcing provenance so downstream consumers
+        # (e.g. `gemb_plot_output`) can report where the forcing came from, plus
+        # spinup/climatology provenance from the initial profile (or a flag noting
+        # the run started from an un-spun-up profile). Globals go first so a
+        # run-specific key would win on any collision.
+        metadata=merge(
+            GEMB_CF_GLOBAL_ATTRIBUTES,
+            Dict{String,Any}(
+                "dataset" => climate_forcing.dataset,
+                "latitude" => climate_forcing.latitude,
+                "longitude" => climate_forcing.longitude,
+                "elevation" => climate_forcing.elevation,
+                "elevation_native" => climate_forcing.elevation_native,
+                "elevation_offset" => climate_forcing.elevation_offset,
+            ),
+            _profile_provenance(profile),
+        ),
+    )
 
     # Run the time loop through a function barrier. ClimateForcing's fields are
     # typed `::DimArray` (a UnionAll, not a concrete type), so indexing them
@@ -113,7 +183,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     # barrier specializes on their real element/dimension types and the inner
     # loop becomes fully type-stable.
     _gemb_time_loop!(output, state, model_parameters, mp, verbose,
-        times, output_times, profile_size, Float64(dt_int),
+        times, output_times, profile_size, z_target, Float64(dt_int),
         parent(climate_forcing.temperature_air),
         parent(climate_forcing.pressure_air),
         parent(climate_forcing.precipitation),
@@ -138,17 +208,89 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
 end
 
 """
+    _assert_grid_feasible(dz, z_target, mp)
+
+Check at startup that the column the two grid controllers are being handed is one they can
+actually hold: at least two cells (the thermal solve indexes `temperature[2]`), all
+thicknesses positive and finite, a positive target depth, and — the substantive check —
+that `z_target` lies inside `[Σdzmin_i, Σdzmax_i]`, the depth range the `N` cells can span
+at their band limits.
+
+That last condition is what makes the two controllers compatible. The count controller
+holds the cell count at `N` while keeping cells inside their bands; the mass controller
+holds total depth at `z_target`. If `z_target` fell outside the band-limited range, no
+admissible `N`-cell grid would have the required depth and the two controllers would fight
+indefinitely — the count controller pushing cells toward their bands, the mass controller
+pulling total depth away from what those bands permit.
+
+Stable only because [`column_bands!`](@ref) references each cell's band to its **depth** (see
+there for why). The range then holds steady over a run — measured on the default grid, `Σdzmin`
+118–127 m and `Σdzmax` 355–382 m against a 254.6 m target — so the check can be trusted rather
+than rejecting legitimate configurations after the first cycle.
+"""
+function _assert_grid_feasible(dz::Vector{Float64}, z_target::Float64, mp::ModelParameters)
+    n = length(dz)
+    if n < 2
+        error("gemb: the column has $n cell(s); at least 2 are required (the thermal " *
+              "solve differences adjacent cells). Check column_depth / column_dztop.")
+    end
+    if !all(d -> isfinite(d) && d > 0.0, dz)
+        error("gemb: the initial column contains a non-positive or non-finite cell " *
+              "thickness. Every dz must be finite and > 0.")
+    end
+    if !(isfinite(z_target) && z_target > 0.0)
+        error("gemb: the fixed column depth must be finite and positive, got $z_target m.")
+    end
+
+    dzmin = Vector{Float64}(undef, n)
+    dzmax = Vector{Float64}(undef, n)
+    column_bands!(dzmin, dzmax, dz, mp)
+    z_lo = sum(dzmin)
+    z_hi = sum(dzmax)
+    if !(z_lo - D_TOLERANCE <= z_target <= z_hi + D_TOLERANCE)
+        error("gemb: the fixed column depth ($(z_target) m) is outside the range $n cells " *
+              "can span at their band limits ([$(z_lo), $(z_hi)] m), so no admissible " *
+              "grid has the required depth and the count and depth controllers cannot " *
+              "both be satisfied. Adjust column_depth / column_dzmin / column_dzmax / " *
+              "column_ztop / column_zy.")
+    end
+    return nothing
+end
+
+# Extract spinup / climatology provenance from the initial `profile` for stamping
+# onto the `gemb` output. `gemb_spinup` attaches a NamedTuple of `spinup_*` /
+# `climatology_*` keys; a profile straight from `initialize_profile` (no spinup)
+# carries `NoMetadata`. In that case record `spinup_performed => false` so the
+# output is unambiguous about having started from an un-spun-up column.
+function _profile_provenance(profile::DimStack)
+    md = DD.metadata(profile)
+    if md isa DD.Dimensions.Lookups.NoMetadata || isempty(keys(md))
+        return Dict{String,Any}("spinup_performed" => false)
+    end
+    prov = Dict{String,Any}("spinup_performed" => true)
+    for k in keys(md)
+        prov[String(k)] = md[k]
+    end
+    return prov
+end
+
+"""
     _gemb_time_loop!(output, state, model_parameters, mp, verbose, times,
-                     output_times, profile_size, dt_f, <forcing arrays/scalars>)
+                     output_times, profile_size, z_target, dt_f, <forcing arrays/scalars>)
 
 Function-barrier inner loop for [`gemb`](@ref). Receives the forcing series as
 concrete arrays (already unwrapped with `parent`) so the compiler specializes on
 their true types, eliminating the per-timestep runtime dispatch that indexing
 the `::DimArray`-typed `ClimateForcing` fields would otherwise incur. Mutates
-`output` in place; numerically identical to the previous inline loop.
+`output` in place.
+
+`profile_size` doubles as the fixed cell count and the profile output row count;
+`z_target` is the fixed total column depth. Both are passed to every `gemb_core` call and
+hold at every timestep boundary.
 """
 function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
-    times::Vector{DateTime}, output_times, profile_size::Int, dt_f::Float64,
+    times::Vector{DateTime}, output_times, profile_size::Int, z_target::Float64,
+    dt_f::Float64,
     f_temperature_air::AbstractVector, f_pressure_air::AbstractVector,
     f_precipitation::AbstractVector, f_wind_speed::AbstractVector,
     f_shortwave_downward::AbstractVector, f_longwave_downward::AbstractVector,
@@ -176,6 +318,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_thick = parent(output[:thickness_cumulative])
     out_ta = parent(output[:temperature_air])
     out_precip = parent(output[:precipitation])
+    out_rain = parent(output[:rain])
     out_vpl = parent(output[:valid_profile_length])
     out_temperature = parent(output[:temperature])
     out_dz = parent(output[:dz])
@@ -210,6 +353,17 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_count = 0
     thickness_added_total = 0.0
 
+    # Whole-run mass budget (verbose only). `gemb_core` checks the budget every timestep,
+    # but only against that timestep's own terms — a bias far below the per-step tolerance
+    # would pass every step and still accumulate over a multi-decade run. These run-level
+    # accumulators are never reset by the output interval, so they close the budget across
+    # the entire run. Reported once at the end rather than per timestep.
+    run_mass_initial = verbose ? first(column_mass_energy(state)) : 0.0
+    run_precipitation = 0.0
+    run_runoff = 0.0
+    run_ec = 0.0
+    run_mass_added = 0.0
+
     # Output writes occur in chronological order, matching the sorted output
     # time axis, so a single advancing index tracks the output column.
     oi = 0
@@ -237,8 +391,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             f_shortwave_downward_diffuse[i],
             f_cloud_fraction[i])
 
-        # Run physics for single timestep
-        state, flux = gemb_core(state, forcing_step, model_parameters, verbose)
+        # Run physics for single timestep, holding the column at its fixed cell count
+        # and fixed total depth.
+        state, flux = gemb_core(state, forcing_step, model_parameters, verbose;
+            n_target=profile_size, z_target=z_target)
 
         # Sum total thickness
         thickness_added_total += flux.mass_added / density_ice
@@ -268,6 +424,13 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_precipitation += forcing_step.precipitation
         cum_count += 1
 
+        if verbose
+            run_precipitation += forcing_step.precipitation
+            run_runoff += flux.runoff
+            run_ec += state.evaporation_condensation
+            run_mass_added += flux.mass_added
+        end
+
         # Store output at designated intervals
         t = times[i]
         if t in output_times
@@ -294,28 +457,32 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 # Forcing summary
                 out_ta[oi] = cum_temperature_air / cum_count
                 out_precip[oi] = cum_precipitation
+                out_rain[oi] = cum_rain
             end
 
-            # Profile data (stored from bottom up, matching MATLAB convention)
+            # Profile data. The column is a fixed `profile_size` cells (guaranteed by the
+            # grid controllers), so rows map one-to-one onto cells with the surface at row
+            # 1 and no padding. Consumers can index rows directly instead of scanning for
+            # the first non-NaN row.
             m = length(state.dz)
             @inbounds out_vpl[oi] = m
 
-            if m > profile_size
-                error("Column length ($m) exceeds output array size ($profile_size). Increase output_padding.")
+            if m != profile_size
+                error("Column length ($m) does not match the fixed profile size " *
+                      "($profile_size). The grid controllers in manage_layer_thickness / " *
+                      "trim_bottom! should make this impossible.")
             end
 
-            offset = profile_size - m
             @inbounds for k in 1:m
-                r = offset + k
-                out_temperature[r, oi] = state.temperature[k]
-                out_dz[r, oi] = state.dz[k]
-                out_density[r, oi] = state.density[k]
-                out_water[r, oi] = state.water[k]
-                out_grain_radius[r, oi] = state.grain_radius[k]
-                out_grain_dendricity[r, oi] = state.grain_dendricity[k]
-                out_grain_sphericity[r, oi] = state.grain_sphericity[k]
-                out_albedo[r, oi] = state.albedo[k]
-                out_albedo_diffuse[r, oi] = state.albedo_diffuse[k]
+                out_temperature[k, oi] = state.temperature[k]
+                out_dz[k, oi] = state.dz[k]
+                out_density[k, oi] = state.density[k]
+                out_water[k, oi] = state.water[k]
+                out_grain_radius[k, oi] = state.grain_radius[k]
+                out_grain_dendricity[k, oi] = state.grain_dendricity[k]
+                out_grain_sphericity[k, oi] = state.grain_sphericity[k]
+                out_albedo[k, oi] = state.albedo[k]
+                out_albedo_diffuse[k, oi] = state.albedo_diffuse[k]
             end
 
             # Reset accumulators
@@ -340,6 +507,29 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         end
     end
 
+    # Whole-run mass budget. Everything that entered the column (precipitation, basal flux,
+    # condensation) minus everything that left (runoff, evaporation) must equal the change
+    # in column mass. Tolerance scales with the total mass turned over: the per-step 1e-3
+    # absolute check in `gemb_core` is the strict one, and this looks for accumulated bias
+    # across a run of arbitrary length, where floating-point summation error grows with the
+    # number of steps.
+    if verbose
+        run_mass_final = first(column_mass_energy(state))
+        supplied = run_precipitation + run_ec + run_mass_added - run_runoff
+        residual = (run_mass_final - run_mass_initial) - supplied
+        turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +
+                   abs(run_mass_added) + abs(run_mass_initial)
+        tol = max(1e-6, 1e-9 * turnover)
+        if abs(residual) > tol
+            error("gemb: whole-run mass budget does not close: residual = $(residual) " *
+                  "kg m-2 (tolerance $(tol)). Column mass changed by " *
+                  "$(run_mass_final - run_mass_initial); sources supplied $(supplied) " *
+                  "(precipitation $(run_precipitation), basal $(run_mass_added), " *
+                  "evap/cond $(run_ec), runoff $(run_runoff)).")
+        end
+        @info "GEMB whole-run mass budget closed" residual basal_flux=run_mass_added
+    end
+
     return output
 end
 
@@ -347,19 +537,21 @@ end
 Compute output times based on output frequency.
 Returns the last timestep of each day/month, all timesteps, or just the final one.
 
-For `:daily`/`:monthly`, a timestep is emitted when the next timestep falls in a
-different day/month. The final timestep is compared against a synthetic successor
-(`times[end] + dt`) rather than emitted unconditionally, so a trailing *partial*
-period (e.g. a lone midnight boundary step belonging to a new day) is not saved —
-only complete days/months are written. This matches MATLAB's `gemb.m` output
+For `:daily`/`:weekly`/`:monthly`, a timestep is emitted when the next timestep
+falls in a different day/week/month. The final timestep is compared against a
+synthetic successor (`times[end] + dt`) rather than emitted unconditionally, so a
+trailing *partial* period (e.g. a lone midnight boundary step belonging to a new
+day) is not saved — only complete days/weeks/months are written. Weeks are grouped
+by Monday-anchored calendar week (`floor(Date, Week)`). This matches MATLAB's `gemb.m` output
 indexing (which appends `dates(end) + (dates(end)-dates(end-1))` before diffing).
 """
 function _compute_output_times(times::Vector{DateTime}, frequency::Symbol)
     frequency == :all && return times
     frequency == :last && return [times[end]]
     groupfn = frequency == :daily ? Date :
+              frequency == :weekly ? (t -> floor(Date(t), Week)) :
               frequency == :monthly ? (t -> (year(t), month(t))) :
-              error("output_frequency must be one of: :all, :daily, :monthly, :last")
+              error("output_frequency must be one of: :all, :daily, :weekly, :monthly, :last")
     n = length(times)
     n == 1 && return copy(times)
     # Synthetic successor for the final step (uniform time axis assumed).

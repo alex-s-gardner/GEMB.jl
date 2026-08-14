@@ -45,8 +45,8 @@ params = initialize_parameters()
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
 forcing = initialize_forcing(ds)
 
-# 3. Initialize the vertical profile
-profile = initialize_profile(params, forcing)
+# 3. Initialize the vertical profile (returns possibly depth-adjusted params)
+profile, params = initialize_profile(params, forcing)
 
 # 4. Run the model
 output = gemb(profile, forcing, params)
@@ -162,15 +162,22 @@ after warmup:
 | Implementation | Total runtime | Speedup vs MATLAB |
 |---|---|---|
 | MATLAB (R2024b) | 98.8 s | 1× |
-| Julia (current) | **7.0 s** | **~14×** |
+| Julia (current) | **4.9 s** | **~20×** |
 
 Both were re-benchmarked on the same machine with the same protocol
 (`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
 
-The Julia hot loop has been tuned for low allocations and type stability while remaining
-numerically faithful to the MATLAB reference: outputs are bit-identical to the original
-vectorized implementation (max relative difference ~3e-16 across all output fields), and the
-full MATLAB-validation test suite passes.
+The Julia hot loop has been tuned for low allocations and type stability. The individual
+physics functions remain numerically faithful to the MATLAB reference and the full
+MATLAB-validation test suite passes (~1e-12 relative tolerance per module).
+
+Whole-column output is **not** bit-identical to the MATLAB reference, and cannot be: the
+fixed-length vertical grid (see below) merges and splits cells at depth to hold the cell
+count constant, which changes the deep discretization. Integrated surface quantities agree
+closely with the pre-refactor Julia results — melt −0.17%, runoff +0.26%, refreeze −0.50%,
+net shortwave −0.31%, surface albedo +0.01%, and latent heat flux +0.79% over the 107
+model-year benchmark — but a cell-by-cell comparison against MATLAB will differ at depth by
+more than floating-point rounding.
 
 The first call to any function includes JIT compilation overhead; subsequent calls use
 compiled native code.
@@ -184,6 +191,34 @@ GEMB.jl maintains high fidelity to the MATLAB implementation while embracing Jul
 - **Multiple Dispatch:** Physics functions use multiple dispatch for type-based specialization
 - **Broadcasting:** Uses Julia's `.` broadcasting syntax instead of implicit array operations
 - **Module System:** Organized as a proper Julia package with explicit exports
+- **Fixed-length vertical grid:** the column holds a constant cell count and a constant total
+  depth for the whole run, rather than growing and shrinking as cells are added and removed
+  (see below)
+
+### Fixed-length vertical grid
+
+MATLAB GEMB lets the column length float: cells are pushed and popped as snow accumulates,
+melts out, splits, and merges. GEMB.jl pins both the cell count and the total column depth via
+two independent controllers — count is restored by exactly conservative merge/split operations
+at depth, and depth by a continuous signed adjustment to the bottom cell, the model's only
+basal mass and energy flux. Mass and energy are conserved throughout (checked every timestep
+under `verbose=true`; the whole-run budget closes to ~1e-11 kg m⁻²).
+
+What this changes for consumers of the output:
+
+- **Profile arrays are sized exactly to the column** and are **top-justified** — the surface
+  is always row 1. They were previously overpadded (default 1000 extra rows) and
+  bottom-justified, so the surface row moved between timesteps and validity had to be
+  recovered by scanning for `NaN`. Neither is needed now; `valid_profile_length` is retained
+  and constant.
+- **`output_padding` and `column_zmin` are removed**, and `column_zmax` is renamed
+  **`column_depth`** — padding is obsolete, and depth is now pinned exactly rather than
+  banded within `[column_zmin, column_zmax]`.
+- **`thickness_cumulative` carries a real basal flux**, signed: mass leaves through the base
+  under accumulation and enters under ablation. Read it as basal flux, not as glacier
+  thickness change — the column is an Eulerian window on the firn, not a prognostic
+  ice-thickness model. For thickness change, use the surface terms
+  (`precipitation - runoff + evaporation_condensation`).
 
 ## Prerequisites
 

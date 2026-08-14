@@ -33,7 +33,7 @@ using Dates
         )
 
         # Initialize profile
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
 
         # Run spinup with 3 cycles (fast test)
         output = gemb_spinup(profile, forcing, params; max_iterations=3, verbose=false)
@@ -74,7 +74,7 @@ using Dates
         )
 
         # Run with different numbers of cycles
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         output_3 = gemb_spinup(profile, forcing, params; max_iterations=3)
         output_5 = gemb_spinup(profile, forcing, params; max_iterations=5)
 
@@ -116,7 +116,7 @@ using Dates
             wind_observation_height = 10.0
         )
 
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         spunup_profile = gemb_spinup(profile, forcing, params; max_iterations=3)
 
         # Check profile has required fields
@@ -182,7 +182,7 @@ using Dates
             fill(100.0, n), fill(200.0, n), fill(100.0, n);
             temperature_air_mean=278.15, wind_speed_mean=5.0, precipitation_mean=365.25)
         mp = initialize_parameters()
-        prof = initialize_profile(mp, cf)
+        prof, _ = initialize_profile(mp, cf)
 
         @test all(parent(prof[:density]) .== mp.density_ice)
         @test all(parent(prof[:temperature]) .<= 273.15 + 1e-9)
@@ -202,8 +202,10 @@ using Dates
         mp = initialize_parameters(densification_method=:HerronLangway,
                                    output_frequency=:last)
 
-        prof_ss  = initialize_profile(mp, cf)                     # steady-state (default)
-        prof_ice = initialize_profile(mp, cf; steady_state=false) # legacy all-ice
+        prof_ss, _  = initialize_profile(mp, cf)                     # steady-state (default)
+        # depth_autoadjust=false so the all-ice column keeps the same deep grid as
+        # the steady-state column for a fair same-depth convergence comparison.
+        prof_ice, _ = initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false) # legacy all-ice
 
         # Steady-state start is a graded firn column, not pure ice.
         d_ss = parent(prof_ss[:density])
@@ -212,34 +214,102 @@ using Dates
         @test all(parent(prof_ice[:density]) .== mp.density_ice)
 
         # Both converge to the same depth-averaged density; steady-state faster.
-        function spin_cycles(prof0, thr, depth; maxit=120)
+        #
+        # Convergence is measured as distance to the common equilibrium, not as the first
+        # cycle where the change between consecutive cycles falls below a threshold. The
+        # consecutive-delta proxy is not a convergence measure here: with multi-year
+        # forcing the column settles into a small seasonal limit cycle, so once both
+        # starts are in the asymptotic tail their per-cycle deltas are indistinguishable
+        # regardless of how much sooner one of them arrived.
+        function spin_trajectory(prof0, depth; maxit=20)
             prof = prof0
-            prev = nothing
-            cycles = maxit
-            for c in 1:maxit
+            rho_avg = Float64[]
+            for _ in 1:maxit
                 prof = gemb_profile(gemb(prof, cf, mp; verbose=false))
-                zc = -parent(prof[:z_center])
-                rho = Float64.(parent(prof[:density]))
+                zc = -GEMB.dz2z(prof[:dz])
+                rho = prof[:density]
                 idx = zc .<= depth
-                a = sum(rho[idx]) / count(idx)
-                if prev !== nothing && abs(a - prev) < thr
-                    cycles = c
-                    break
-                end
-                prev = a
+                push!(rho_avg, sum(rho[idx]) / count(idx))
             end
-            zc = -parent(prof[:z_center]); rho = Float64.(parent(prof[:density]))
-            idx = zc .<= depth
-            return sum(rho[idx]) / count(idx), cycles
+            return rho_avg
         end
 
-        ρ_ss,  c_ss  = spin_cycles(prof_ss,  0.2, 40.0)
-        ρ_ice, c_ice = spin_cycles(prof_ice, 0.2, 40.0)
+        # 40 cycles, not 20: the all-ice start has to densify ~410 kg m-3 of gap away, and at
+        # cycle 20 it is still en route (gap 23 kg m-3, closing to 8.5 by cycle 30 and 1.7 by
+        # cycle 60). Sampling before the slower trajectory has arrived tests the *rate* of
+        # convergence, not the claim being made here, which is that both starts reach a
+        # common equilibrium.
+        traj_ss  = spin_trajectory(prof_ss,  40.0; maxit=40)
+        traj_ice = spin_trajectory(prof_ice, 40.0; maxit=40)
+        ρ_eq = traj_ss[end]
 
-        # Same equilibrium (loose tolerance: early-exit thresholds differ slightly).
-        @test isapprox(ρ_ss, ρ_ice; atol=20.0)
-        # Steady-state initialization converges in far fewer cycles.
-        @test c_ss < c_ice
+        # Same equilibrium from either start.
+        @test isapprox(traj_ss[end], traj_ice[end]; atol=20.0)
+
+        # Steady-state initialization starts far closer to equilibrium and reaches it in
+        # fewer cycles. (Observed: initial gap ~14 vs ~338 kg m-3; 1 cycle vs 4 to get
+        # within 20 kg m-3.)
+        @test abs(traj_ss[1] - ρ_eq) < abs(traj_ice[1] - ρ_eq)
+        cycles_within(traj, tol) = something(findfirst(a -> abs(a - ρ_eq) < tol, traj),
+                                             length(traj) + 1)
+        @test cycles_within(traj_ss, 20.0) < cycles_within(traj_ice, 20.0)
+    end
+
+    @testset "Climatology provenance" begin
+        # Multi-year forcing so forcing_climatology has complete years to average.
+        n = 365 * 3
+        time = DateTime(1950, 1, 1) .+ Day.(0:n-1)
+        cf = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+
+        window = (DateTime(1950, 1, 1), DateTime(1952, 12, 31))
+        clim = forcing_climatology(cf, window)
+        m = DimensionalData.metadata(clim)
+
+        # Requested window is recorded verbatim.
+        @test m[:climatology_window_start] == window[1]
+        @test m[:climatology_window_stop] == window[2]
+        # Three complete non-leap years averaged.
+        @test m[:climatology_n_years] == 3
+        @test m[:climatology_steps_per_year] == 365
+        # Accessible via the cf.<field> interface too.
+        @test clim.climatology_n_years == 3
+
+        # No-window form falls back to the extent of the averaged years.
+        clim2 = forcing_climatology(cf)
+        m2 = DimensionalData.metadata(clim2)
+        @test m2[:climatology_n_years] == 3
+        @test m2[:climatology_window_start] isa DateTime
+    end
+
+    @testset "Spinup provenance" begin
+        n = 365
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        params = initialize_parameters(output_frequency=:last)
+        profile, params = initialize_profile(params, forcing)
+
+        # No convergence check → runs the full max_iterations, converged=false.
+        prof_max = gemb_spinup(profile, forcing, params; max_iterations=3)
+        pm = DimensionalData.metadata(prof_max)
+        @test pm[:spinup_cycles] == 3
+        @test pm[:spinup_converged] == false
+        @test pm[:spinup_max_iterations] == 3
+        @test isnan(pm[:spinup_final_delta_density])
+
+        # Loose tolerance → converges early, before max_iterations.
+        prof_conv = gemb_spinup(profile, forcing, params;
+                                max_iterations=50, convergence_delta_density=1e3)
+        pc = DimensionalData.metadata(prof_conv)
+        @test pc[:spinup_converged] == true
+        @test pc[:spinup_cycles] < 50
+        @test pc[:spinup_convergence_delta_density] == 1e3
+        @test isfinite(pc[:spinup_final_delta_density])
     end
 
     @testset "Spinup with zero accumulation" begin
@@ -267,7 +337,7 @@ using Dates
         )
 
         # Should still work, just won't grow
-        profile = initialize_profile(params, forcing)
+        profile, params = initialize_profile(params, forcing)
         output = gemb_spinup(profile, forcing, params; max_iterations=2)
 
         @test output isa DimStack

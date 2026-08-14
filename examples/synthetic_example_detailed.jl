@@ -29,9 +29,10 @@ mp = initialize_parameters(output_frequency=:daily)
 println("   Output frequency: $(mp.output_frequency)")
 println("   Densification model: $(mp.densification_model)")
 
-# Initialize a column:
+# Initialize a column. Returns (profile, mp); with depth_autoadjust=true (default)
+# an inferred-ice column gets shallower limits in the returned mp — rebind it.
 println("\n3. Initializing profile...")
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 println("   Initial layers: $(length(profile.dz))")
 println("   Initial column height: $(sum(profile.dz)) m")
 println("   Initial mean temperature: $(round(mean(profile.temperature), digits=2)) K")
@@ -42,11 +43,17 @@ println("\n4. Creating climatology...")
 cf_climatology = forcing_climatology(cf)
 println("   Climatology length: $(length(cf_climatology.temperature_air)) steps")
 
-# Spin up a profile for 75 years of average forcing:
-println("\n5. Running spinup (75 years)...")
-mp_spinup = initialize_parameters(output_frequency=:last)
-profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; max_iterations=75)
-println("   Spinup complete!")
+# Spin up a profile for up to 75 years of average forcing (exits early on convergence).
+# gemb_spinup internally forces output_frequency=:last, so pass the mp returned by
+# initialize_profile (with any depth_autoadjust'd column limits) rather than a separate
+# :last params object.
+println("\n5. Running spinup (up to 75 years)...")
+profile_spunup = gemb_spinup(profile, cf_climatology, mp;
+                             max_iterations=75, convergence_delta_density=0.01)
+# Provenance recorded on the spun-up profile (see DimensionalData.metadata):
+prov = metadata(profile_spunup)
+println("   Spinup complete! $(prov[:spinup_cycles]) cycles, converged=$(prov[:spinup_converged])")
+println("   Climatology years averaged: $(prov[:climatology_n_years])")
 println("   Post-spinup layers: $(length(profile_spunup.dz))")
 println("   Post-spinup column height: $(round(sum(profile_spunup.dz), digits=2)) m")
 println("   Post-spinup mean temperature: $(round(mean(profile_spunup.temperature), digits=2)) K")

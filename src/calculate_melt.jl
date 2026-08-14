@@ -264,18 +264,13 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # calculate runoff_total
         runoff_total = sum(runoff) + flux_dn[Xi]
 
-        # delete all cells with zero mass
+        # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
+        # cell mass immediately below, so it is excluded from the shift here and the
+        # column state is assembled with `M` standing in for it.
         to_delete = findall(M .<= water_tolerance)
         if !isempty(to_delete)
-            deleteat!(M, to_delete)
-            deleteat!(water, to_delete)
-            deleteat!(density, to_delete)
-            deleteat!(temperature, to_delete)
-            deleteat!(albedo, to_delete)
-            deleteat!(grain_radius, to_delete)
-            deleteat!(grain_dendricity, to_delete)
-            deleteat!(grain_sphericity, to_delete)
-            deleteat!(albedo_diffuse, to_delete)
+            close_slot!(column_state(temperature, M, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, albedo, albedo_diffuse), to_delete)
         end
 
         # calculate new grid lengths

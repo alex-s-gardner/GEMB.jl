@@ -15,7 +15,8 @@ using GEMB: DimArray, Ti
         wind_observation_height=10.0)
 
     # steady_state=false → legacy pure-ice init, matching MATLAB fidelity here.
-    profile = GEMB.initialize_profile(mp, cf; steady_state=false)
+    # depth_autoadjust=false keeps the configured column limits for grid validation.
+    profile, _ = GEMB.initialize_profile(mp, cf; steady_state=false, depth_autoadjust=false)
 
     # Check that profile has expected fields
     @test haskey(profile, :temperature)
@@ -39,14 +40,14 @@ using GEMB: DimArray, Ti
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
     @test all(dz[1:n_top] .≈ mp.column_dztop)
 
-    # Total depth should be at or slightly above column_zmax
+    # Total depth should be at or slightly above column_depth
     # (last cell extends past boundary in MATLAB implementation)
-    @test sum(dz) >= mp.column_zmax
-    @test sum(dz) < mp.column_zmax + dz[end] + 1e-10
+    @test sum(dz) >= mp.column_depth
+    @test sum(dz) < mp.column_depth + dz[end] + 1e-10
 end
 
 @testset "Grid stretching" begin
-    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_zmax=50.0, column_zy=1.10)
+    mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_depth=50.0, column_zy=1.10)
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
     cf = GEMB.initialize_forcing(times,
@@ -56,7 +57,7 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile = GEMB.initialize_profile(mp, cf)
+    profile, _ = GEMB.initialize_profile(mp, cf; depth_autoadjust=false)
     dz = collect(profile[:dz])
 
     n_top = round(Int, mp.column_ztop / mp.column_dztop)
@@ -79,9 +80,10 @@ end
         precipitation_mean=200.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
 
-    profile = GEMB.initialize_profile(mp, cf)
-    z_center = collect(profile[:z_center])
+    profile, _ = GEMB.initialize_profile(mp, cf; depth_autoadjust=false)
+    # z_center is no longer stored on the profile; recompute it from dz.
     dz = collect(profile[:dz])
+    z_center = GEMB.dz2z(dz)
 
     # First center should be at -dz[1]/2
     @test z_center[1] ≈ -dz[1] / 2 atol = 1e-12
@@ -102,8 +104,8 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     params = GEMB.initialize_parameters()
     ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
     forcing = GEMB.initialize_forcing(ds)
-    profile = GEMB.initialize_profile(params, forcing)
-    
+    profile, _ = GEMB.initialize_profile(params, forcing; depth_autoadjust=false)
+
     # Validate number of layers
     n_layers_julia = length(profile.dz)
     n_layers_matlab = Int(ref["n_layers_init"][1])

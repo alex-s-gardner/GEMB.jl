@@ -28,3 +28,4 @@ PERFORMANCE_COMPARISON.md
 test/test_optimization_validation.jl
 .claude/settings.local.json
 test/Manifest.toml
+bench/Manifest.toml

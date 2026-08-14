@@ -44,7 +44,7 @@ ds = simulate_climate_forcing("test_1", 3)
 cf = GEMB.initialize_forcing(ds)   # convert to ClimateForcing
 
 # Initialize the firn column profile
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 
 # Run GEMB
 output = gemb(profile, cf, mp)
@@ -74,7 +74,7 @@ cf = GEMB.initialize_forcing(forcing_data)
 
 # Run GEMB
 mp = initialize_parameters(output_frequency=:daily)
-profile = initialize_profile(mp, cf)
+profile, mp = initialize_profile(mp, cf)
 output = gemb(profile, cf, mp)
 ```
 
@@ -99,17 +99,26 @@ cf = GEMB.initialize_forcing(ds)
 cf_clim = forcing_climatology(cf)
 
 # Initialize the column and spin up
-profile = initialize_profile(mp, cf)
-spun_up_profile = gemb_spinup(profile, cf_clim, mp, 5)
+profile, mp = initialize_profile(mp, cf_clim)
+spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=5,
+                              convergence_delta_density=0.01)
+
+# The spun-up profile carries provenance: which climatology years were averaged
+# and how the spinup converged (`metadata` is re-exported from DimensionalData).
+metadata(spun_up_profile)   # (spinup_cycles=…, spinup_converged=…, climatology_n_years=…, …)
 
 # Now run with transient forcing
 mp_run = initialize_parameters(output_frequency=:daily)
 output = gemb(spun_up_profile, cf, mp_run)
+
+# That provenance propagates onto the output. A profile run without spinup
+# instead records `spinup_performed => false`.
+metadata(output)
 ```
 
 ## Model Architecture
 
-After climate forcing, model parameters, and the initial state of the column are defined, the `gemb` function calls `gemb_core` for each time step of the climate forcing. At each time step, `gemb_core` calls a series of physics functions that update the column grain size, albedo, shortwave radiation, temperature, accumulation, meltwater, and density. The `manage_layers` function adjusts the depth and number of vertical layers to ensure layer thicknesses remain within configured bounds.
+After climate forcing, model parameters, and the initial state of the column are defined, the `gemb` function calls `gemb_core` for each time step of the climate forcing. At each time step, `gemb_core` calls a series of physics functions that update the column grain size, albedo, shortwave radiation, temperature, accumulation, meltwater, and density. The `manage_layer_thickness` function merges and splits layers to keep thicknesses within their configured bounds and to hold the layer count fixed; total column depth is pinned separately at the end of each time step.
 
 ### Physics Modules
 
@@ -122,42 +131,59 @@ After climate forcing, model parameters, and the initial state of the column are
 | `calculate_accumulation` | Precipitation and deposition added to the column |
 | `calculate_melt` | Meltwater production, pore water content, grid adjustment |
 | `calculate_density` | Snow/firn densification |
-| `manage_layers` | Layer splitting and merging to maintain grid constraints |
+| `manage_layer_thickness` | Layer splitting and merging to maintain grid constraints |
 
 ## Output Variables
 
-The output `DimStack` contains monolevel (1D time series) and profile (2D depth-time) variables:
+The output `DimStack` contains monolevel (1D time series) and profile (2D depth-time) variables.
+
+Every layer carries CF-style metadata — `units`, `long_name`, `cell_methods`, and a
+`standard_name` where a CF standard name applies exactly — and the stack carries
+`Conventions = "CF-1.11"` alongside the run's provenance. The `cell_methods` column below
+is that attribute: it records how each value was reduced over the output interval, which
+is the difference between a per-interval total, a per-interval average, and a snapshot.
+The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes with
+[`cf_attributes`](@ref).
 
 ### Monolevel Outputs (dimensions: `Ti`)
 
-| Variable | Units | Description |
-|----------|-------|-------------|
-| `melt` | kg m⁻² | Melt mass |
-| `runoff` | kg m⁻² | Runoff mass |
-| `refreeze` | kg m⁻² | Refrozen mass |
-| `evaporation_condensation` | kg m⁻² | Evaporation (+) or condensation (-) |
-| `shortwave_net` | W m⁻² | Net shortwave radiation |
-| `longwave_net` | W m⁻² | Net longwave radiation |
-| `heat_flux_sensible` | W m⁻² | Sensible heat flux |
-| `heat_flux_latent` | W m⁻² | Latent heat flux |
-| `albedo_surface` | fraction | Surface albedo |
-| `densification_from_compaction` | m | Compaction from densification |
-| `densification_from_melt` | m | Compaction from melt |
-| `thickness_cumulative` | m | Cumulative thickness change |
-| `firn_air_content` | m | Total air height in the firn column |
-| `valid_profile_length` | integer | Number of active vertical levels |
+| Variable | Units | `cell_methods` | Description |
+|----------|-------|----------------|-------------|
+| `melt` | kg m⁻² | `time: sum` | Melt mass produced, including bare-ice melt |
+| `runoff` | kg m⁻² | `time: sum` | Meltwater leaving the column |
+| `refreeze` | kg m⁻² | `time: sum` | Meltwater refrozen within the column |
+| `evaporation_condensation` | kg m⁻² | `time: sum` | Net vapour mass exchange: condensation/deposition (+, mass gain) or evaporation/sublimation (−) |
+| `shortwave_net` | W m⁻² | `time: mean` | Net shortwave radiation, positive toward the surface |
+| `longwave_net` | W m⁻² | `time: mean` | Net longwave radiation, positive toward the surface |
+| `heat_flux_sensible` | W m⁻² | `time: mean` | Sensible heat flux, positive toward the surface |
+| `heat_flux_latent` | W m⁻² | `time: mean` | Latent heat flux, positive toward the surface |
+| `albedo_surface` | 1 | `time: mean` | Broadband surface albedo |
+| `densification_from_compaction` | m | `time: sum` | Thickness lost to dry compaction |
+| `densification_from_melt` | m | `time: sum` | Thickness lost to melt and wet compaction |
+| `thickness_cumulative` | m | `time: mean` | Cumulative thickness change since the start of the run |
+| `firn_air_content` | m | `time: mean` | Total air height in the firn column |
+| `valid_profile_length` | 1 | `time: point` | Number of active vertical levels |
+| `temperature_air` | K | `time: mean` | Near-surface air temperature (forcing summary) |
+| `precipitation` | kg m⁻² | `time: sum` | Total precipitation (forcing summary) |
+| `rain` | kg m⁻² | `time: sum` | Liquid fraction of precipitation; snowfall is `precipitation - rain` |
 
 ### Profile Outputs (dimensions: `Z x Ti`)
 
+All profile fields are instantaneous snapshots at the output time (`cell_methods = "time: point"`),
+top-justified with the surface at row 1. `Z` is a 1-based cell index, not a depth — recover
+cell-centre heights with `dz2z(output[:dz])`.
+
 | Variable | Units | Description |
 |----------|-------|-------------|
-| `temperature` | K | Column temperature |
+| `temperature` | K | Layer temperature |
 | `dz` | m | Layer thickness |
-| `density` | kg m⁻³ | Column density |
-| `water` | kg m⁻² | Pore water content |
+| `density` | kg m⁻³ | Layer bulk density |
+| `water` | kg m⁻² | Layer liquid (pore) water content |
 | `grain_radius` | mm | Effective grain radius |
-| `grain_dendricity` | fraction | Grain dendricity (0--1) |
-| `grain_sphericity` | fraction | Grain sphericity (0--1) |
+| `grain_dendricity` | 1 | Grain dendricity (0--1) |
+| `grain_sphericity` | 1 | Grain sphericity (0--1) |
+| `albedo` | 1 | Layer direct-beam broadband albedo |
+| `albedo_diffuse` | 1 | Layer diffuse-radiation albedo |
 
 ## Examples
 
