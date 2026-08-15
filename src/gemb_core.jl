@@ -152,7 +152,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         M_delta = M_total_final - M_total_initial + runoff - cfs.precipitation -
                   evaporation_condensation - mass_added - mass_lateral
 
-        if abs(M_delta) > 1e-3
+        if abs(M_delta) > M_TOLERANCE
             error("total system mass not conserved: M_delta = $(M_delta)")
         end
 
@@ -176,7 +176,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
             error("total system energy not conserved: E_delta = $(E_delta)")
         end
 
-        if abs(temperature[end] - T_bottom) > 1e-3
+        if abs(temperature[end] - T_bottom) > T_BOTTOM_TOLERANCE
             error("temperature of bottom grid cell changed")
         end
 
@@ -197,7 +197,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
               "cell count.")
     end
     z_err = sum(dz) - z_target
-    if abs(z_err) > 1e-9
+    if abs(z_err) > Z_TOLERANCE
         error("gemb_core: column depth not conserved: Σdz - z_target = $(z_err) m " *
               "(target $(z_target) m). The mass controller (trim_bottom!) did not pin the " *
               "fixed column depth.")

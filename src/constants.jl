@@ -80,7 +80,15 @@ const W_TOLERANCE = 1e-13              # surface (top-cell) water presence
 const WATER_TOLERANCE = 1e-13          # pore water presence
 const GDN_TOLERANCE = 1e-10            # grain dendricity / sphericity [0,1] clamps
 const E_TOLERANCE = 1e-3               # energy-conservation check [J] (verbose only)
+const M_TOLERANCE = 1e-3               # mass-conservation check [kg m-2] (verbose only)
+const Z_TOLERANCE = 1e-9               # column-depth conservation check [m]
+const T_BOTTOM_TOLERANCE = 1e-3        # Dirichlet bottom-cell drift check [K] (verbose only)
 const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offset [K]
+
+# Smallest stable sub-timestep the thermal solver will accept without warning [s]. Below
+# this, the Von Neumann stability limit has collapsed, which in practice means a near-zero
+# `dz` cell rather than a genuinely stiff column.
+const DT_MIN_WARN = 1e-4
 
 # Diagnostic threshold, not a branch tolerance: how far above irreducible a cell must be for
 # `aquifer_diagnostics` to call it saturated. Deliberately loose, and expressed as a fraction

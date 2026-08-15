@@ -22,7 +22,7 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
     albedo_diffuse::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    d_tolerance = 1e-11
+    d_tolerance = D_TOLERANCE
 
     # Initialize variables
     m = length(density)

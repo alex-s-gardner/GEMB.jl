@@ -144,9 +144,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
-    T_tolerance = 1e-10
-    d_tolerance = 1e-11
-    water_tolerance = 1e-13
+    T_tolerance = T_TOLERANCE
+    d_tolerance = D_TOLERANCE
+    water_tolerance = WATER_TOLERANCE
 
     # The density-based impermeability criterion. Both default to the MATLAB values
     # (`DENSITY_PORE_CLOSEOFF` = 830 and 0.1 m) — see `ModelParameters` for why they are
@@ -484,7 +484,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         E_tol = energy_tolerance(E_total_initial)
 
-        if (abs(M_delta) > 1e-3) || (abs(E_delta) > E_tol)
+        if (abs(M_delta) > M_TOLERANCE) || (abs(E_delta) > E_tol)
             error("Mass and/or energy are not conserved in melt equations:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
         end
 
@@ -552,8 +552,8 @@ function pond_blocked_water!(M::Vector{Float64}, density::Vector{Float64},
     # why this is summed rather than treated as a separate case.
     mp.runoff_method === :instantaneous && return flux_dn[Xi]
 
-    water_tolerance = 1e-13
-    d_tolerance = 1e-11
+    water_tolerance = WATER_TOLERANCE
+    d_tolerance = D_TOLERANCE
     d_phc = mp.impermeable_density
 
     # Pool the blocked water. Each contribution left its cell at that cell's outflow age,
@@ -625,7 +625,7 @@ column scanned is the one the profile output records at that timestamp.
 function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
     mp::ModelParameters)
 
-    d_tolerance = 1e-11
+    d_tolerance = D_TOLERANCE
     # Solid ice is dense enough to count whatever `impermeable_density` is set to: the
     # criterion may legitimately exceed `density_ice` (the validator allows up to 917 so that
     # lowering `density_ice` does not reject the default), and in that configuration every
