@@ -12,7 +12,6 @@ Methods: `150kgm2` → 150; `350kgm2` → 350; `:Fausto` → 315; `:Kaspers` and
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     precip_mean::Real, wind_speed_mean::Real)
-    T_tolerance = T_TOLERANCE
     if mp.new_snow_method == Symbol("150kgm2")
         return 150.0
     elseif mp.new_snow_method == Symbol("350kgm2")
@@ -20,7 +19,7 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     elseif mp.new_snow_method == :Fausto
         return 315.0
     elseif mp.new_snow_method == :Kaspers
-        return (7.36e-2 + 1.06e-3 * min(T_air_mean, CtoK - T_tolerance) +
+        return (7.36e-2 + 1.06e-3 * min(T_air_mean, CtoK - T_TOLERANCE) +
                 6.69e-2 * precip_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
     elseif mp.new_snow_method == :KuipersMunneke
         return 481.0 + 4.834 * (T_air_mean - CtoK)
@@ -61,9 +60,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     # snow is deep enough to warrant its own layer.
 
     # Define tolerances
-    T_tolerance = T_TOLERANCE
-    d_tolerance = D_TOLERANCE
-    gdn_tolerance = GDN_TOLERANCE
 
     # Specify constants (shared with the steady-state initial guess, so a freshly
     # initialized column and freshly fallen snow agree by construction)
@@ -85,7 +81,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
         # From Vionnet et al., 2012 (Crocus): wind-dependent grain properties.
         gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
         gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)
-        re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, gdn_tolerance)
+        re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, GDN_TOLERANCE)
     end
 
     M_surface = dz[1] * density[1]
@@ -95,14 +91,14 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
     if cfs.precipitation > 0
         # if snow
-        if cfs.temperature_air <= (mp.rain_temperature_threshold + T_tolerance)
+        if cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE)
             z_snow = cfs.precipitation / density_new_snow          # depth of snow
             dfall = gdn_new_snow
             sfall = gsp_new_snow
             refall = re_new_snow
 
             # if snow depth is greater than specified min dz, new cell created
-            if z_snow > mp.column_dzmin + d_tolerance
+            if z_snow > mp.column_dzmin + D_TOLERANCE
                 cols = column_state(temperature, dz, density, water, grain_radius,
                     grain_dendricity, grain_sphericity, age)
                 open_slot!(cols, 1)
@@ -132,7 +128,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
                 grain_dendricity[1] = dfall
                 grain_sphericity[1] = sfall
-                grain_radius[1] = max(0.1 * (grain_dendricity[1] / 0.99 + (1.0 - 1.0 * grain_dendricity[1] / 0.99) * (grain_sphericity[1] / 0.99 * 3.0 + (1.0 - grain_sphericity[1] / 0.99) * 4.0)) / 2, gdn_tolerance)
+                grain_radius[1] = max(0.1 * (grain_dendricity[1] / 0.99 + (1.0 - 1.0 * grain_dendricity[1] / 0.99) * (grain_sphericity[1] / 0.99 * 3.0 + (1.0 - grain_sphericity[1] / 0.99) * 4.0)) / 2, GDN_TOLERANCE)
             end
 
         else
@@ -152,7 +148,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             density[1] = M_surface_new / dz[1]
 
             # if density > the density of ice
-            if density[1] > mp.density_ice - d_tolerance
+            if density[1] > mp.density_ice - D_TOLERANCE
                 density[1] = mp.density_ice
                 dz[1] = M_surface_new / density[1]
             end

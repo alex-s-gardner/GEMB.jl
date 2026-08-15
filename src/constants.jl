@@ -15,6 +15,13 @@ const HEAT_CAPACITY_CUFFEY_B = 7.122
 
 const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
 
+# Specific heat capacity of liquid water [J kg-1 K-1]. Currently unreferenced: it is intended
+# for the sensible heat of *above-freezing* liquid entering the column — i.e. rain. Pore water
+# in GEMB is carried strictly at the melting point (see `specific_enthalpy_water`), so it would
+# not appear in the percolation or refreeze budgets; `heat_capacity(mp, T)` remains the
+# ice-matrix value everywhere else. Value from the Community Firn Model (`solver.py`, `c_liq`).
+const HEAT_CAPACITY_WATER = 4219.9
+
 const LF = 0.3345e6        # Latent heat of fusion [J kg-1]
 const LV = 2.495e6         # Latent heat of vaporization [J kg-1]
 const LS = 2.8295e6        # Latent heat of sublimation [J kg-1]
@@ -42,6 +49,20 @@ const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
 const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+
+# Activation energy for grain growth [J mol-1], Arthern et al. (2010). Sets the
+# `exp(Eg/(R·T_mean))` grain-growth factor in the accumulation-driven densification schemes
+# (`_arthern_scaled_c`, `_gsfc2020_c` in `calculate_density`). Named rather than restated at
+# each site so a densification scheme's assumed grain growth cannot drift from the others'.
+const GRAIN_GROWTH_EG = 42400.0
+# Grain-growth rate coefficient [m2 s-1], Arthern et al. (2010): dr²/dt = kgr·exp(-Eg/RT).
+# Currently unreferenced: it belongs to the Arthern grain law itself, which
+# `calculate_grain_size` does not yet implement (that module uses Marbouty/Brun).
+const GRAIN_GROWTH_KGR = 1.3e-7
+# Density above which Marbouty's (1980) temperature-gradient growth law returns zero [kg m-3],
+# i.e. the ceiling of its calibration range. Read by the `H` coefficient in `_marbouty_Q`,
+# which ramps to zero across [150, this].
+const DENSITY_MARBOUTY_MAX = 400.0
 
 # Density separating the two densification stages [kg m-3]. Every scheme in
 # `calculate_density` switches rate coefficients here: it is the transition from

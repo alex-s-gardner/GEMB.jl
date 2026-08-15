@@ -144,10 +144,6 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
-    T_tolerance = T_TOLERANCE
-    d_tolerance = D_TOLERANCE
-    water_tolerance = WATER_TOLERANCE
-
     # The density-based impermeability criterion. Both default to the MATLAB values
     # (`DENSITY_PORE_CLOSEOFF` = 830 and 0.1 m) — see `ModelParameters` for why they are
     # tunable and what range the literature supports.
@@ -184,7 +180,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     ## REFREEZE PORE WATER
 
-    if sum(water) > water_tolerance
+    if sum(water) > WATER_TOLERANCE
         # Fused per-cell refreeze: freeze pore water and update snow/ice
         # properties. Numerically identical (same per-element ops and
         # left-to-right ordering) to the previous broadcast chain, but computes
@@ -210,12 +206,12 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             water[i] = water[i] - wd
             M[i] = M[i] + wd
             density[i] = M[i] / dz_orig[i]
-            if M[i] > water_tolerance
+            if M[i] > WATER_TOLERANCE
                 temperature[i] = refreeze_temperature(mp, temperature[i], M[i], wd)
             end
 
             # if pore water froze in ice then adjust density and dz thickness
-            if density[i] > mp.density_ice - d_tolerance
+            if density[i] > mp.density_ice - D_TOLERANCE
                 density[i] = mp.density_ice
             end
             dz[i] = M[i] / density[i]
@@ -238,16 +234,16 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     fill!(water_delta, 0.0)
 
     # run melt algorithm if there is melt water or excess pore water
-    if (sum(T_excess) > T_tolerance) || (sum(water_excess) > water_tolerance)
+    if (sum(T_excess) > T_TOLERANCE) || (sum(water_excess) > WATER_TOLERANCE)
 
         # Check to see if thermal energy exceeds energy to melt entire cell.
         # `T_excess`/`T_surplus` stay in kelvin: the branch tests below compare against
-        # `T_tolerance`, a kelvin tolerance, so moving them to joules would rescale those
+        # `T_TOLERANCE`, a kelvin tolerance, so moving them to joules would rescale those
         # thresholds by ~c_p. The surplus *energy* is computed from them per cell.
         T_full_melt = full_melt_excess_temperature(mp)
         T_surplus = max.(0.0, T_excess .- T_full_melt)
 
-        if sum(T_surplus) > T_tolerance
+        if sum(T_surplus) > T_TOLERANCE
             # calculate surplus energy. Built into a concretely-typed vector rather than a
             # comprehension: the comprehension infers as `Vector{Any}`, which then makes
             # `T_surplus` itself infer as `Any` through the shared loop below and boxes every
@@ -258,7 +254,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
             i = 1
 
-            while (sum(E_surplus) > T_tolerance) && (i < (m + 1))
+            while (sum(E_surplus) > T_TOLERANCE) && (i < (m + 1))
                 if i < m
                     # use surplus energy to increase the temperature of lower cell
                     temperature[i+1] = add_energy_temperature(mp, temperature[i+1], M[i+1],
@@ -296,7 +292,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             melt[i] = mi
             melt_sum += mi
             freeze_max[i] = cold_content_mass(mp, temperature[i], density[i], dz[i])
-            if mi > water_tolerance || water_excess[i] > water_tolerance
+            if mi > WATER_TOLERANCE || water_excess[i] > WATER_TOLERANCE
                 X = i
             end
         end
@@ -324,7 +320,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         for i in 1:m
             # calculate total melt water entering cell
             melt_input = melt[i] + flux_dn[i]
-            if abs(melt_input) > water_tolerance
+            if abs(melt_input) > WATER_TOLERANCE
                 i_wet = i
             end
 
@@ -335,11 +331,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
             ice_depth = 0.0
             # If this grid cell's density exceeds the pore closeoff density:
-            if density[i] >= d_phc - d_tolerance
+            if density[i] >= d_phc - D_TOLERANCE
                 for l in i:m
-                    if density[l] >= d_phc - d_tolerance
+                    if density[l] >= d_phc - D_TOLERANCE
                         ice_depth += dz[l]
-                        if ice_depth > ice_layer_dzmin + d_tolerance
+                        if ice_depth > ice_layer_dzmin + D_TOLERANCE
                             break
                         end
                     else
@@ -349,12 +345,12 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
 
             # break loop if there is no meltwater and if depth is > mw_depth
-            if abs(melt_input) < water_tolerance && i > X
+            if abs(melt_input) < WATER_TOLERANCE && i > X
                 break
 
             # if reaches impermeable ice layer all liquid water runs off
-            elseif (density[i] >= (mp.density_ice - d_tolerance)) ||
-                   ((density[i] >= d_phc - d_tolerance) && (ice_depth > ice_layer_dzmin + d_tolerance))
+            elseif (density[i] >= (mp.density_ice - D_TOLERANCE)) ||
+                   ((density[i] >= d_phc - D_TOLERANCE) && (ice_depth > ice_layer_dzmin + D_TOLERANCE))
 
                 M[i] = M[i] - melt[i]
                 water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
@@ -362,7 +358,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                 runoff[i] = max(0.0, melt_input - water_delta[i])
 
             # check if no energy to refreeze meltwater
-            elseif abs(freeze_max[i]) < d_tolerance
+            elseif abs(freeze_max[i]) < D_TOLERANCE
 
                 M[i] = M[i] - melt[i]
                 water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
@@ -385,7 +381,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                 water_delta[i] = max(min(melt_input - freeze1, water_irr - water[i]), -1 * water[i])
                 freeze2 = 0.0
 
-                if water_delta[i] < 0.0 - water_tolerance
+                if water_delta[i] < 0.0 - WATER_TOLERANCE
                     d_max = (mp.density_ice - density[i]) * dz_0
                     freeze2_max = min(d_max, freeze_max[i] - freeze1)
                     freeze2 = min(-1.0 * water_delta[i], freeze2_max)
@@ -396,13 +392,13 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                 freeze[i] = freeze[i] + freeze1 + freeze2
                 flux_dn[i+1] = max(0.0, melt_input - freeze1 - water_delta[i])
 
-                if M[i] > water_tolerance
+                if M[i] > WATER_TOLERANCE
                     temperature[i] = refreeze_temperature(mp, temperature[i], M[i],
                         freeze1 + freeze2)
                 end
 
                 # check if an ice layer forms
-                if abs(density[i] - mp.density_ice) < d_tolerance
+                if abs(density[i] - mp.density_ice) < D_TOLERANCE
                     runoff[i] = flux_dn[i+1]
                     flux_dn[i+1] = 0.0
                 end
@@ -425,14 +421,14 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             # rather than derived from an assumed balance, so the mean stays bounded.
             S_new = M[i] + water[i] + water_delta[i]
             A_new = A_entry + A_in - (runoff[i] + flux_dn[i+1]) * pool_age
-            age[i] = S_new > water_tolerance ? max(0.0, A_new / S_new) : 0.0
+            age[i] = S_new > WATER_TOLERANCE ? max(0.0, A_new / S_new) : 0.0
 
             Xi = Xi + 1
         end
 
         # Check for negative pore water
         if verbose
-            if any(water .< 0.0 - water_tolerance)
+            if any(water .< 0.0 - WATER_TOLERANCE)
                 error("Negative pore water generated in melt equations.")
             end
         end
@@ -460,7 +456,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
         # column state is assembled with `M` standing in for it.
-        to_delete = findall(M .<= water_tolerance)
+        to_delete = findall(M .<= WATER_TOLERANCE)
         if !isempty(to_delete)
             close_slot!(column_state(temperature, M, density, water, grain_radius,
                 grain_dendricity, grain_sphericity, age), to_delete)
@@ -488,7 +484,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             error("Mass and/or energy are not conserved in melt equations:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
         end
 
-        if any(water .< 0.0 - water_tolerance)
+        if any(water .< 0.0 - WATER_TOLERANCE)
             error("Negative pore water generated in melt equations.")
         end
     end
@@ -552,8 +548,6 @@ function pond_blocked_water!(M::Vector{Float64}, density::Vector{Float64},
     # why this is summed rather than treated as a separate case.
     mp.runoff_method === :instantaneous && return flux_dn[Xi]
 
-    water_tolerance = WATER_TOLERANCE
-    d_tolerance = D_TOLERANCE
     d_phc = mp.impermeable_density
 
     # Pool the blocked water. Each contribution left its cell at that cell's outflow age,
@@ -562,32 +556,32 @@ function pond_blocked_water!(M::Vector{Float64}, density::Vector{Float64},
     blocked_age = 0.0
     i_start = 0
     @inbounds for i in eachindex(runoff)
-        if runoff[i] > water_tolerance
+        if runoff[i] > WATER_TOLERANCE
             blocked_age = mix_age(blocked_age, blocked, flux_age[i+1], runoff[i])
             blocked += runoff[i]
             runoff[i] = 0.0
             i_start = i
         end
     end
-    if flux_dn[Xi] > water_tolerance
+    if flux_dn[Xi] > WATER_TOLERANCE
         blocked_age = mix_age(blocked_age, blocked, flux_age[Xi], flux_dn[Xi])
         blocked += flux_dn[Xi]
         i_start = max(i_start, Xi - 1)
     end
 
-    blocked <= water_tolerance && return blocked
+    blocked <= WATER_TOLERANCE && return blocked
     i_start = min(i_start, length(M))
 
     # Fill upward from the deepest contributing cell. Water blocked at a shallow barrier never
     # reached a deeper one, so a single upward sweep from the deepest source covers every
     # barrier that received water this timestep.
     @inbounds for i in i_start:-1:1
-        blocked <= water_tolerance && break
-        density[i] >= d_phc - d_tolerance && continue
+        blocked <= WATER_TOLERANCE && break
+        density[i] >= d_phc - D_TOLERANCE && continue
 
         dz_i = M[i] / density[i]
         room = pore_capacity(mp, density[i], dz_i) - (water[i] + water_delta[i])
-        room <= water_tolerance && continue
+        room <= WATER_TOLERANCE && continue
 
         add = min(blocked, room)
         # Mass already in the cell, matrix and pore water together, which is what `age` is
@@ -625,7 +619,6 @@ column scanned is the one the profile output records at that timestamp.
 function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
     mp::ModelParameters)
 
-    d_tolerance = D_TOLERANCE
     # Solid ice is dense enough to count whatever `impermeable_density` is set to: the
     # criterion may legitimately exceed `density_ice` (the validator allows up to 917 so that
     # lowering `density_ice` does not reject the default), and in that configuration every
@@ -642,7 +635,7 @@ function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
     z = 0.0          # depth to the top of cell i
 
     @inbounds for i in eachindex(dz)
-        if density[i] >= d_phc - d_tolerance
+        if density[i] >= d_phc - D_TOLERANCE
             thickness += dz[i]
             if run_dz == 0.0
                 z_top = z
@@ -651,8 +644,8 @@ function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
             # First qualifying run wins; keep scanning for `thickness` but never overwrite.
             # A cell at `density_ice` blocks on its own, however thin, matching the
             # unconditional clause in `calculate_melt`.
-            if isnan(depth) && (run_dz > dzmin + d_tolerance ||
-                                density[i] >= mp.density_ice - d_tolerance)
+            if isnan(depth) && (run_dz > dzmin + D_TOLERANCE ||
+                                density[i] >= mp.density_ice - D_TOLERANCE)
                 depth = z_top
             end
         else

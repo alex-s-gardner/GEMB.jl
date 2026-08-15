@@ -136,8 +136,7 @@ end
     # Continuous into ice by construction, so it is not short-circuited below.
     method == _K_CALONNE2019 && return _thermal_conductivity_calonne2019(T, ρ)
 
-    d_tolerance = D_TOLERANCE
-    if ρ < density_ice - d_tolerance
+    if ρ < density_ice - D_TOLERANCE
         method == _K_STURM && return 0.138 - 1.01e-3 * ρ + 3.233e-6 * ρ^2
         method == _K_CALONNE && return 0.024 - 1.23e-4 * ρ + 2.5e-6 * ρ^2
         return _thermal_conductivity_marchenko2019(ρ)

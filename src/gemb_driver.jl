@@ -182,27 +182,26 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         ),
     )
 
-    # Run the time loop through a function barrier. ClimateForcing's fields are
-    # typed `::DimArray` (a UnionAll, not a concrete type), so indexing them
-    # directly infers to `Any` and dispatches at runtime on every timestep. By
-    # passing the underlying concrete arrays (via `parent`) as arguments, the
-    # barrier specializes on their real element/dimension types and the inner
-    # loop becomes fully type-stable.
+    # Run the time loop through a function barrier so it specializes on the concrete
+    # forcing types rather than re-dispatching each timestep. The layers are passed
+    # as-is: `ClimateForcing` is a `DimStack`, so `climate_forcing.temperature_air`
+    # already infers to a concrete `DimVector`, and integer-indexing one is free
+    # (measured indistinguishable from the bare `Vector`).
     _gemb_time_loop!(output, state, model_parameters, mp, verbose,
         times, output_times, profile_size, z_target, Float64(dt_int),
-        parent(climate_forcing.temperature_air),
-        parent(climate_forcing.pressure_air),
-        parent(climate_forcing.precipitation),
-        parent(climate_forcing.wind_speed),
-        parent(climate_forcing.shortwave_downward),
-        parent(climate_forcing.longwave_downward),
-        parent(climate_forcing.vapor_pressure),
-        parent(climate_forcing.black_carbon_snow),
-        parent(climate_forcing.black_carbon_ice),
-        parent(climate_forcing.cloud_optical_thickness),
-        parent(climate_forcing.solar_zenith_angle),
-        parent(climate_forcing.shortwave_downward_diffuse),
-        parent(climate_forcing.cloud_fraction),
+        climate_forcing.temperature_air,
+        climate_forcing.pressure_air,
+        climate_forcing.precipitation,
+        climate_forcing.wind_speed,
+        climate_forcing.shortwave_downward,
+        climate_forcing.longwave_downward,
+        climate_forcing.vapor_pressure,
+        climate_forcing.black_carbon_snow,
+        climate_forcing.black_carbon_ice,
+        climate_forcing.cloud_optical_thickness,
+        climate_forcing.solar_zenith_angle,
+        climate_forcing.shortwave_downward_diffuse,
+        climate_forcing.cloud_fraction,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
@@ -285,10 +284,8 @@ end
                      output_times, profile_size, z_target, dt_f, <forcing arrays/scalars>)
 
 Function-barrier inner loop for [`gemb`](@ref). Receives the forcing series as
-concrete arrays (already unwrapped with `parent`) so the compiler specializes on
-their true types, eliminating the per-timestep runtime dispatch that indexing
-the `::DimArray`-typed `ClimateForcing` fields would otherwise incur. Mutates
-`output` in place.
+arguments so the compiler specializes on their concrete types instead of
+re-dispatching every timestep. Mutates `output` in place.
 
 `profile_size` doubles as the fixed cell count and the profile output row count;
 `z_target` is the fixed total column depth. Both are passed to every `gemb_core` call and

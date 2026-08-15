@@ -26,9 +26,6 @@ function calculate_albedo(dz::Vector{Float64},
     grain_radius::Vector{Float64}, melt_surface::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    T_tolerance = T_TOLERANCE
-    d_tolerance = D_TOLERANCE
-
     # constants
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
     density_phc = DENSITY_PORE_CLOSEOFF  # Pore closeoff density
@@ -39,7 +36,7 @@ function calculate_albedo(dz::Vector{Float64},
     albedo = 0.0
     albedo_diffuse = 0.0
 
-    if (mp.albedo_method == :None) || ((mp.albedo_density_threshold - density[1]) < d_tolerance)
+    if (mp.albedo_method == :None) || ((mp.albedo_density_threshold - density[1]) < D_TOLERANCE)
         albedo = mp.albedo_fixed
         albedo_diffuse = albedo
     else
@@ -78,17 +75,17 @@ function calculate_albedo(dz::Vector{Float64},
 
         # If we do not have fresh snow
         if (mp.albedo_method == :GardnerSharp || mp.albedo_method == :BrunLefebre) &&
-           ((mp.albedo_density_threshold - density[1]) >= d_tolerance)
+           ((mp.albedo_density_threshold - density[1]) >= D_TOLERANCE)
 
             # In a snow layer < 10cm, account for mix of ice and snow
-            lice_first = something(findfirst(d -> d >= density_phc - d_tolerance, density), length(density) + 1)
+            lice_first = something(findfirst(d -> d >= density_phc - D_TOLERANCE, density), length(density) + 1)
             depthsnow = 0.0
             @inbounds @simd for i in 1:(lice_first-1)
                 depthsnow += dz[i]
             end
 
-            if (depthsnow <= (0.1 + d_tolerance)) && (lice_first <= length(density)) &&
-               (density[lice_first] >= (density_phc - d_tolerance))
+            if (depthsnow <= (0.1 + D_TOLERANCE)) && (lice_first <= length(density)) &&
+               (density[lice_first] >= (density_phc - D_TOLERANCE))
 
                 aice = albedo_ice_max + (albedo_snow_min - albedo_ice_max) *
                     (density[lice_first] - mp.density_ice) /
@@ -97,8 +94,8 @@ function calculate_albedo(dz::Vector{Float64},
                 albedo = aice + max(albedo - aice, 0.0) * (depthsnow / 0.1)
             end
 
-            if (density[1] >= density_phc - d_tolerance)
-                if (density[1] < mp.density_ice - d_tolerance)
+            if (density[1] >= density_phc - D_TOLERANCE)
+                if (density[1] < mp.density_ice - D_TOLERANCE)
                     albedo = albedo_ice_max + (albedo_snow_min - albedo_ice_max) *
                         (density[1] - mp.density_ice) / (density_phc - mp.density_ice)
                 else
@@ -110,9 +107,9 @@ function calculate_albedo(dz::Vector{Float64},
     end
 
     # Check for erroneous values
-    if albedo > (1 + T_tolerance)
+    if albedo > (1 + T_TOLERANCE)
         @warn "albedo > 1.0"
-    elseif albedo < (0 - d_tolerance)
+    elseif albedo < (0 - D_TOLERANCE)
         @warn "albedo is negative"
     elseif isnan(albedo)
         error("albedo == NAN")
@@ -132,8 +129,6 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, c1::Float64, c2::Float64,
     SZA::Float64, t::Float64)
 
-    d_tolerance = D_TOLERANCE
-
     # convert effective radius to specific surface area [cm2 g-1]
     S1 = 3.0 / (0.091 * grain_radius[1])
 
@@ -149,7 +144,7 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
         -(c1^0.55) / (0.16 + 0.6 * S1^0.5 + (1.8 * c1^0.6) * (S1^(-0.25))))
 
     # Two layer albedo parameterization
-    lice_first = something(findfirst(d -> d >= DENSITY_PORE_CLOSEOFF - d_tolerance, density),
+    lice_first = something(findfirst(d -> d >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE, density),
         length(density) + 1)
     z1 = 0.0
     @inbounds @simd for i in 1:(lice_first-1)
@@ -157,7 +152,7 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
     end
 
     m = length(density)
-    if (m > 0) && (lice_first <= m) && (z1 > d_tolerance)
+    if (m > 0) && (lice_first <= m) && (z1 > D_TOLERANCE)
         # determine albedo values for bottom layer
         S2 = 3.0 / (0.091 * grain_radius[lice_first])
 

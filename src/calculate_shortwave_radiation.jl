@@ -22,14 +22,12 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
     albedo_diffuse::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    d_tolerance = D_TOLERANCE
-
     # Initialize variables
     m = length(density)
     shortwave_flux = zeros(m)
 
     if (!mp.shortwave_subsurface_absorption) ||
-       ((mp.density_ice - density[1]) < d_tolerance)
+       ((mp.density_ice - density[1]) < D_TOLERANCE)
         # all sw radiation is absorbed by the top grid cell
 
         if mp.albedo_method == :GardnerSharp

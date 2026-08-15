@@ -27,11 +27,6 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     # Note: temperature is modified in-place by the thermal solver.
 
-    d_tolerance = D_TOLERANCE
-    # Not `T_TOLERANCE`: the only temperature comparison here is the emissivity melt switch,
-    # which MATLAB offsets by 1e-4 K, not by the 1e-10 branch tolerance.
-    T_tolerance = T_MELT_SWITCH_TOLERANCE
-    W_tolerance = W_TOLERANCE
     ds = density[1]      # density of top grid cell
 
     # calculated air density [kg/m3]
@@ -58,9 +53,9 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     end
 
     ## SURFACE ROUGHNESS (Bougamont, 2005)
-    if (ds < (mp.density_ice - d_tolerance)) && (water_surface < W_tolerance)
+    if (ds < (mp.density_ice - D_TOLERANCE)) && (water_surface < W_TOLERANCE)
         z0 = Z0_SNOW_DRY   # 0.12 mm for dry snow
-    elseif ds >= (mp.density_ice - d_tolerance)
+    elseif ds >= (mp.density_ice - D_TOLERANCE)
         z0 = Z0_ICE        # 3.2 mm for ice
     else
         z0 = Z0_SNOW_WET   # 1.3 mm for wet snow
@@ -238,9 +233,10 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         # calculate cumulative evaporation (+)/condensation(-)
         EC_cumulative += evaporation_condensation
 
-        # emissivity melt switch check
+        # Emissivity melt switch check. Offset by `T_MELT_SWITCH_TOLERANCE` (1e-4 K), not
+        # the 1e-10 `T_TOLERANCE` used for branch boundaries elsewhere.
         if emissivity_melt_switch
-            if temperature[1] < (CtoK - T_tolerance)
+            if temperature[1] < (CtoK - T_MELT_SWITCH_TOLERANCE)
                 emissivity = mp.emissivity
             else
                 emissivity = mp.emissivity_grain_radius_large
@@ -292,20 +288,19 @@ Initialize emissivity based on surface grain radius and model parameters.
 Returns `(emissivity, emissivity_melt_switch)`.
 """
 function _emissivity_initialize(grain_radius_surface::Float64, mp::ModelParameters)
-    gdn_tolerance = GDN_TOLERANCE
 
     if mp.emissivity_method == :uniform
         emissivity = mp.emissivity
         emissivity_melt_switch = false
     elseif mp.emissivity_method == :grain_radius_threshold
-        if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + gdn_tolerance)
+        if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + GDN_TOLERANCE)
             emissivity = mp.emissivity
         else
             emissivity = mp.emissivity_grain_radius_large
         end
         emissivity_melt_switch = false
     elseif mp.emissivity_method == :grain_radius_w_threshold
-        if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + gdn_tolerance)
+        if grain_radius_surface <= (mp.emissivity_grain_radius_threshold + GDN_TOLERANCE)
             emissivity = mp.emissivity
             emissivity_melt_switch = true
         else
