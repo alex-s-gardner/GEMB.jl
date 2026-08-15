@@ -201,6 +201,18 @@ GEMB.jl embraces Julia idioms and deviates from the MATLAB implementation where 
 Changes that alter model output relative to the MATLAB reference. Upstream issue numbers
 refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
 
+- **Grain metamorphism runs unconditionally**, where MATLAB skips it unless `albedo_method` is
+  `:GardnerSharp` or `:BrunLefebre`. That gate is a performance optimization — grains coarsen
+  regardless of the albedo scheme — but it covers only two of the four schemes that read
+  `grain_radius`: `:ArthernB`/`:Crocus`/`:CrocusPure` densification and the
+  `:grain_radius_threshold`/`:grain_radius_w_threshold` emissivity methods read it too, and
+  select independently of `albedo_method`. Those configurations ran with `grain_radius` frozen
+  at its initial profile, silently. Since `:ArthernB` compaction goes as `1/r²` and grains only
+  coarsen, the frozen radius is always too small and compaction always too fast: over 32 years
+  of synthetic forcing, final mean column density is 671.5 rather than 877.7 kg m⁻³. Skipping
+  the work costs 11% on the runs that can skip it and silently re-breaks whenever a consumer is
+  added, so it is simply always done. Defaults are unaffected — grain growth already ran under
+  `:GardnerSharp` (upstream [#202](https://github.com/alex-s-gardner/GEMB/issues/202)).
 - **`firn_air_content` is metres of air**, `Σ dz (1 − ρ/ρ_ice)`. MATLAB normalizes the same
   mass deficit by 1000 rather than `density_ice`, which yields metres of water equivalent —
   9.0% lower for `density_ice = 910`. Affects the `firn_air_content` output only
