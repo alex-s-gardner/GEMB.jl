@@ -47,8 +47,6 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    d_tolerance = D_TOLERANCE
-
     # specify constants
     dt = cfs.dt / 86400.0   # convert from [s] to [d]
 
@@ -66,9 +64,9 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         # Rate coefficients `_hl_c0`/`_hl_c1` are shared with `steady_state_density`.
         @inbounds for i in 1:m
             T = temperature[i]
-            c = density[i] <= DENSITY_STAGE_TRANSITION + d_tolerance ?
+            c = density[i] <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ?
                 _hl_c0(T, pm) : _hl_c1(T, pm)
-            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
         end
 
     elseif method == :Arthern || method == :Simonsen2013 || method == :Ligtenberg
@@ -78,7 +76,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         p = DensificationCoeffs(mp, pm, tam)
         @inbounds for i in 1:m
             c = _arthern_scaled_c(density[i], temperature[i], tam, p.precip_force, p.k0, p.k1)
-            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
         end
 
     elseif method == :ArthernB
@@ -105,9 +103,9 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             gr = grain_radius[i] / 1000          # [mm] -> [m]
             obp = load * GRAVITY                 # overburden stress [Pa]
             H = exp((-60000.0 / (T * R_GAS))) * obp / gr^2
-            c = (d0 <= DENSITY_STAGE_TRANSITION + d_tolerance ? 9.2e-9 : 3.7e-9) *
+            c = (d0 <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? 9.2e-9 : 3.7e-9) *
                 kc_per_year * H
-            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
             # accumulate the load using this cell's original density
             load += d0 * dz[i] + water[i]
         end
@@ -146,11 +144,10 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             d0 = density[i]
             dz0 = dz[i]
             self_load = d0 * dz0 + water[i]
-            if d0 <= DENSITY_STAGE_TRANSITION + d_tolerance
+            if d0 <= DENSITY_STAGE_TRANSITION + D_TOLERANCE
                 # Herron & Langway stage 1, shared with `:HerronLangway` so the two can
                 # never drift.
-                _densify_cell!(density, dz, dz_out, i, _hl_c0(temperature[i], pm), dt,
-                    density_ice, d_tolerance)
+                _densify_cell!(density, dz, dz_out, i, _hl_c0(temperature[i], pm), dt, density_ice)
             else
                 # Cell-midpoint overburden, the same convention `:Crocus` uses: the load of
                 # everything above plus half this cell's own weight.
@@ -175,7 +172,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 dρ_dt = d0 * BARNOLA_A0 * exp(-BARNOLA_Q / (temperature[i] * R_GAS)) *
                         _barnola_f(d0, density_ice) * σ * σ * σ        # [kg m-3 s-1]
                 d = d0 + dρ_dt * cfs.dt
-                if d > density_ice - d_tolerance
+                if d > density_ice - D_TOLERANCE
                     d = density_ice
                 end
                 density[i] = d
@@ -206,9 +203,9 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             d0 = density[i]
             dz0 = dz[i]
             self_load = d0 * dz0 + water[i]
-            if hybrid && d0 >= CROCUS_HYBRID_DENSITY - d_tolerance
+            if hybrid && d0 >= CROCUS_HYBRID_DENSITY - D_TOLERANCE
                 c = _gsfc2020_c(d0, temperature[i], tam, p.k0, p.k1)
-                _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+                _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
             else
                 # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
                 # midpoint: the paper states the half-own-weight rule for the uppermost
@@ -219,7 +216,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
                 dz_new = dz0 * exp(-σ / η * dt_seconds)
                 d = d0 * dz0 / dz_new
-                if d > density_ice - d_tolerance
+                if d > density_ice - D_TOLERANCE
                     d = density_ice
                     dz_new = d0 * dz0 / d
                 end
@@ -235,7 +232,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         p = DensificationCoeffs(mp, pm, tam)
         @inbounds for i in 1:m
             c = _gsfc2020_c(density[i], temperature[i], tam, p.k0, p.k1)
-            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
         end
 
     elseif method == :LiZwally || method == :Helsen
@@ -245,7 +242,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             max(139.21 - 0.542 * tam, 1.0) : max(76.138 - 0.28965 * tam, 1.0))
         @inbounds for i in 1:m
             c = base * max(CtoK - temperature[i], 1.0)^(-2.061)
-            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice, d_tolerance)
+            _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
         end
 
     else
@@ -256,20 +253,19 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
 end
 
 """
-    _densify_cell!(density, dz_in, dz_out, i, c, dt, density_ice, d_tolerance)
+    _densify_cell!(density, dz_in, dz_out, i, c, dt, density_ice)
 
 Apply the densification increment for cell `i` given rate coefficient `c`:
 update `density[i]` in place, clamp it to the density of ice, and write the
 mass-conserving new grid-cell length to `dz_out[i]`.
 """
 @inline function _densify_cell!(density::Vector{Float64}, dz_in::Vector{Float64},
-    dz_out::Vector{Float64}, i::Int, c::Float64, dt::Float64,
-    density_ice::Float64, d_tolerance::Float64)
+    dz_out::Vector{Float64}, i::Int, c::Float64, dt::Float64, density_ice::Float64)
     @inbounds begin
         d0 = density[i]
         mass = d0 * dz_in[i]
         d = d0 + (c * (density_ice - d0) / DAYS_PER_YEAR_DENSIFICATION * dt)
-        if d > density_ice - d_tolerance
+        if d > density_ice - D_TOLERANCE
             d = density_ice
         end
         density[i] = d
@@ -310,7 +306,7 @@ end
 # activation energies, so it keeps its own kernel below.
 @inline function _arthern_scaled_c(ρ::Float64, T::Float64, tam::Float64,
     precip_force::Float64, k0::Float64, k1::Float64)
-    H = exp((-60000.0 / (T * R_GAS)) + (42400.0 / (tam * R_GAS))) * precip_force
+    H = exp((-60000.0 / (T * R_GAS)) + (GRAIN_GROWTH_EG / (tam * R_GAS))) * precip_force
     return ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? k0 * (0.07 * H) : k1 * (0.03 * H)
 end
 
@@ -331,7 +327,7 @@ end
 # dependence. CFM converts to kg m-2 yr-1 for both schemes, which is the convention followed.
 @inline function _gsfc2020_c(ρ::Float64, T::Float64, tam::Float64,
     A_pow_g_0::Float64, A_pow_g_1::Float64)
-    grain_growth = 42400.0 / (tam * R_GAS)
+    grain_growth = GRAIN_GROWTH_EG / (tam * R_GAS)
     return if ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE
         0.07 * A_pow_g_0 * exp(-59500.0 / (T * R_GAS) + grain_growth)
     else
