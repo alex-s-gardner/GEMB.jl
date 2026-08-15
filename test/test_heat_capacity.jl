@@ -257,7 +257,7 @@ end
     mp = _hc_const()
     n = 200
     args = (fill(272.0, n), fill(0.1, n), collect(range(350.0, 800.0, n)), fill(0.5, n),
-        fill(0.5, n), fill(0.5, n), fill(0.5, n))
+        fill(0.5, n), fill(0.5, n), fill(0.5, n), zeros(n))
 
     # No local may infer as Any.
     ir = code_typed(GEMB.calculate_melt,

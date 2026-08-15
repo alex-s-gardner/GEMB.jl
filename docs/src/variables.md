@@ -3,6 +3,7 @@ Below is a list of variables used by GEMB.
 
 | Variable                              | Units             | Description                                                                                                                                      |
 | ------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| age                                   | d                 | Mass-weighted mean age, in decimal days, of all mass in a cell (ice/firn matrix plus pore water), measured from column initialization. Snowfall, rain and vapour deposition enter at age 0; meltwater carries the age of the firn it melted from. Accumulates across gemb\_spinup cycles, so for a spun-up run the epoch is the start of spinup.        |
 | albedo\_broadband                     | fraction          | Time series of broadband surface albedo (model output).                                                                                          |
 | albedo\_density\_threshold            | kg m<sup>-3</sup> | Density threshold below which albedo\_method is applied (Default Inf).                                                                          |
 | albedo\_fixed                         | fraction          | Fixed albedo used if albedo\_method="None" or density > threshold.                                                                              |

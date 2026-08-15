@@ -54,6 +54,9 @@ include("test_utils.jl")
     @testset "GEMB Spinup" begin
         include("test_gemb_spinup.jl")
     end
+    @testset "Age" begin
+        include("test_age.jl")
+    end
     @testset "Ablation Regime" begin
         include("test_ablation_regime.jl")
     end

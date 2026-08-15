@@ -29,7 +29,7 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
 end
 
 """
-    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Add precipitation and deposition to the model column.
 
@@ -38,9 +38,14 @@ Snow is added as a new layer (if depth > dzmin) or merged into the top cell.
 Rain is added by increasing the mass and temperature of the top grid cell,
 with temperature adjusted to account for latent heat of fusion.
 
-Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain)`.
-Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the extra cell
-is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s count controller.
+Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+age, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the
+extra cell is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s count
+controller.
+
+This is the model's principal age source. All three paths add mass at age 0: a fresh cell is
+set to 0 outright, and the two merge-into-cell-1 paths dilute `age[1]` by the arriving mass
+via [`dilute_age`](@ref).
 
 Albedo is absent: it is diagnosed from the column at the top of the *next* timestep (see
 [`calculate_albedo`](@ref)), which reads the fresh-snow grain size and density this
@@ -49,7 +54,7 @@ function sets, so new snow brightens the surface without an albedo being stored 
 function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64},
+    grain_sphericity::Vector{Float64}, age::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
     # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
@@ -84,6 +89,9 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     M_surface = dz[1] * density[1]
+    # Total mass of the surface cell, the weight for the age dilutions below. Captured here,
+    # before any branch mutates `dz[1]` or `density[1]`.
+    S_surface = M_surface + water[1]
 
     if cfs.precipitation > 0
         # if snow
@@ -96,7 +104,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             # if snow depth is greater than specified min dz, new cell created
             if z_snow > mp.column_dzmin + d_tolerance
                 cols = column_state(temperature, dz, density, water, grain_radius,
-                    grain_dendricity, grain_sphericity)
+                    grain_dendricity, grain_sphericity, age)
                 open_slot!(cols, 1)
                 @inbounds begin
                     temperature[1] = cfs.temperature_air
@@ -106,6 +114,9 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                     grain_radius[1] = refall
                     grain_dendricity[1] = dfall
                     grain_sphericity[1] = sfall
+                    # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
+                    # its age.
+                    age[1] = 0.0
                 end
             else
                 # if snow depth is less than specified minimum dz
@@ -116,6 +127,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 # adjust temperature (assume precipitation is same temp as air)
                 temperature[1] = mix_temperature(mp, cfs.temperature_air, cfs.precipitation,
                     temperature[1], M_surface)
+
+                age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
 
                 grain_dendricity[1] = dfall
                 grain_sphericity[1] = sfall
@@ -130,6 +143,10 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             # adjust temperature (liquid: must account for latent heat of fusion)
             temperature[1] = mix_temperature_liquid(mp, cfs.temperature_air, cfs.precipitation,
                 temperature[1], M_surface)
+
+            # Rain mass joins the ice/firn matrix here (not `water`), so it is new age-zero
+            # mass in the cell on the same footing as snowfall.
+            age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
 
             # adjust grid cell density
             density[1] = M_surface_new / dz[1]
@@ -164,5 +181,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+    age, rain
 end

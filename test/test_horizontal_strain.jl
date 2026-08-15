@@ -5,11 +5,12 @@ using GEMB
 # MATLAB GEMB has no ice-dynamic term at all — so the tests pin it against its own closed
 # form, `dz *= exp(-D dt)`, and against the mass/energy the column reports losing.
 
+# Built through `column_state` rather than as a NamedTuple literal, so a new per-cell field
+# is picked up by changing the constructor call rather than every test helper that fakes one.
 _cols(; dz=[1.0, 2.0], water=[5.0, 0.0], density=[400.0, 600.0],
-    temperature=[260.0, 265.0]) = (
-    temperature=copy(temperature), dz=copy(dz), density=copy(density),
-    water=copy(water), grain_radius=[0.1, 0.2], grain_dendricity=[0.0, 0.0],
-    grain_sphericity=[0.5, 0.5])
+    temperature=[260.0, 265.0]) = GEMB.column_state(
+    copy(temperature), copy(dz), copy(density), copy(water),
+    [0.1, 0.2], [0.0, 0.0], [0.5, 0.5], zeros(length(dz)))
 
 @testset "apply_horizontal_strain!" begin
     yr = GEMB.SECONDS_PER_YEAR

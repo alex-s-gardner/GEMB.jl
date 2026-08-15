@@ -1,5 +1,5 @@
 """
-    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, mp::ModelParameters, verbose::Bool; n_target=length(dz))
+    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool; n_target=length(dz))
 
 Return every cell to its per-cell thickness band, then restore the column to exactly
 `n_target` cells.
@@ -21,17 +21,23 @@ The Dirichlet temperature boundary condition is re-imposed at the bottom; the en
 requires is the only term returned in `E_added`.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
-grain_sphericity, E_added)`. Arrays are mutated in place and their
+grain_sphericity, age, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
+
+`age` needs no handling here beyond being in the bundle: all three passes go through
+[`merge_pair!`](@ref) (which mass-weights it) and [`split_cell!`](@ref) (for which
+duplication is already correct, age being intensive). The merge pass keeps `M` in sync
+across a chain of cells folding into one target, so the weighting stays correct over a
+chain rather than only over a pair.
 """
 function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64},
+    grain_sphericity::Vector{Float64}, age::Vector{Float64},
     mp::ModelParameters, verbose::Bool; n_target::Int=length(dz))
 
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity)
+        grain_dendricity, grain_sphericity, age)
 
     if verbose
         M_total_initial, E_total_initial = column_mass_energy(cols, mp)
@@ -108,5 +114,6 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, E_added
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+    age, E_added
 end
