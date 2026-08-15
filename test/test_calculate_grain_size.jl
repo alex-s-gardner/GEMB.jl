@@ -66,6 +66,33 @@ end
         emissivity_method=:uniform))
 end
 
+@testset "all three state arrays are updated in place" begin
+    # `grain_radius` used to be returned as a fresh array while dendricity and sphericity
+    # were mutated. It now shares their convention, which removes the largest allocation in
+    # the function. Pinned here because callers rebinding the result would not notice the
+    # difference, so nothing else would catch a regression to copy-on-return.
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
+    cfs = _make_grain_cfs(dt=86400.0 * 10)
+    n = 4
+    temperature = [250.0, 252.0, 254.0, 256.0]
+    dz = fill(0.1, n)
+    density = fill(300.0, n)
+    water = zeros(n)
+    grain_radius = fill(0.5, n)
+    grain_dendricity = fill(0.5, n)
+    grain_sphericity = fill(0.5, n)
+
+    (gs_out, gdn_out, gsp_out) = GEMB.calculate_grain_size(
+        temperature, dz, density, water, grain_radius,
+        grain_dendricity, grain_sphericity, cfs, mp)
+
+    @test gs_out === grain_radius
+    @test gdn_out === grain_dendricity
+    @test gsp_out === grain_sphericity
+    # ...and the aliased array really did change, so `===` is not passing on a no-op.
+    @test !all(grain_radius .== 0.5)
+end
+
 @testset "Dendritic dry low gradient" begin
     mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
     cfs = _make_grain_cfs(dt=86400.0)
@@ -155,15 +182,16 @@ end
     grain_radius = [0.5, 0.5, 0.5]
     grain_dendricity = [0.0, 0.0, 0.0]
     grain_sphericity = [0.5, 0.5, 0.5]
+    gr_before = copy(grain_radius)      # mutated in place
 
     (gs_out, gdn_out, _) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # Expect growth in grain size
-    @test all(gs_out .> grain_radius)
+    @test all(gs_out .> gr_before)
     # Dendricity stays at 0
-    @test gdn_out == grain_dendricity
+    @test all(gdn_out .== 0.0)
 end
 
 @testset "Marbouty density limit" begin
@@ -177,13 +205,14 @@ end
     grain_radius = [0.5, 0.5, 0.5]
     grain_dendricity = [0.0, 0.0, 0.0]
     grain_sphericity = [0.5, 0.5, 0.5]
+    gr_before = copy(grain_radius)      # mutated in place
 
     (gs_out, _, _) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # No growth expected above density threshold
-    @test gs_out ≈ grain_radius atol = 1e-10
+    @test gs_out ≈ gr_before atol = 1e-10
 end
 
 @testset "Nondendritic wet snow (Brun)" begin
@@ -197,15 +226,16 @@ end
     grain_radius = [0.5, 0.5, 0.5]
     grain_dendricity = [0.0, 0.0, 0.0]
     grain_sphericity = [0.5, 0.5, 0.5]
+    gr_before = copy(grain_radius)      # mutated in place
 
     (gs_out, gdn_out, _) = GEMB.calculate_grain_size(
         temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, cfs, mp)
 
     # Expect growth via wet snow mechanism
-    @test all(gs_out .> grain_radius)
+    @test all(gs_out .> gr_before)
     # Dendricity stays at 0
-    @test gdn_out == grain_dendricity
+    @test all(gdn_out .== 0.0)
 end
 
 @testset "Clamping limits" begin

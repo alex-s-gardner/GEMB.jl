@@ -19,9 +19,11 @@ configurations silently ran with grain size frozen at the initial profile. Enume
 consumers to skip the work costs 11% on the runs that can skip it and re-breaks silently
 whenever a new consumer is added, so the work is simply always done.
 
-Returns `(grain_radius, grain_dendricity, grain_sphericity)`. `grain_dendricity`
-and `grain_sphericity` are updated in place; `grain_radius` is returned as a new
-array.
+Returns `(grain_radius, grain_dendricity, grain_sphericity)`. **All three are updated in
+place**, and the returned `grain_radius` is the same array that was passed in — pass a copy
+if the incoming values are still needed. `grain_radius` used to be returned as a fresh array;
+it now shares the mutation convention of the other two, which removed the largest allocation
+in the function (see the `gsz` comment below).
 
 This is a scalar-loop implementation that is numerically identical, element by
 element, to the reference vectorized MATLAB translation, but avoids the ~30 mask
@@ -47,14 +49,24 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     # Convert dt from seconds to days
     dt_days = cfs.dt / 86400.0
 
-    # Grain size (diameter) [mm]; fresh new array, initialised as 2 * radius.
-    gsz = similar(grain_radius)
+    # Work in grain size (diameter) [mm], converting `grain_radius` in place and halving it
+    # back at the end. Nothing reads the incoming radius after this doubling, and both
+    # callers rebind the returned vector to the same array they passed in, so the previous
+    # `similar(grain_radius)` scratch array was a copy no one needed — it was the largest
+    # allocation in the function (8 bytes/cell, ~73% of the total).
+    gsz = grain_radius
     @inbounds @simd for i in 1:m
-        gsz[i] = grain_radius[i] * 2
+        gsz[i] *= 2
     end
 
     # Classify cells once (fixed for the whole call, matching the vectorized
-    # G/J masks that were computed from the *initial* dendricity).
+    # G/J masks that were computed from the *initial* dendricity). This cannot be
+    # recomputed on the fly: the dendritic branch clamps `grain_dendricity` to 0 below, so
+    # by the time the non-dendritic branches test membership the distinction is gone.
+    # Deliberately a `Vector{Bool}` (1 byte/cell) rather than a `BitVector` (1 bit/cell): the
+    # BitVector was measured 15x slower to fill at this column size (556 ns vs 38 ns) and
+    # allocates one object *more*, since its wrapper and chunk array are separate. Masked
+    # bit `setindex!` does not pay for itself against 7 bytes/cell.
     isG = Vector{Bool}(undef, m)
     anyG = false
     anyJ = false
@@ -185,10 +197,9 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
         end
     end
 
-    # Convert grain size (diameter) back to effective grain radius, in place in
-    # the fresh gsz array, which becomes the returned grain_radius.
+    # Back from diameter to effective radius, in the caller's own array.
     @inbounds @simd for i in 1:m
-        gsz[i] = gsz[i] / 2
+        gsz[i] /= 2
     end
 
     return gsz, grain_dendricity, grain_sphericity
