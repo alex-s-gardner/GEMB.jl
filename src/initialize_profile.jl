@@ -61,8 +61,14 @@ Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
   grain_dendricity, grain_sphericity, age
 
-`age` [d] is zero on every path — the instant a profile is initialized is the epoch it is
-measured from.
+`age` [d] follows `mp.initialize_age`. Under `:steady_state` (the default) it is the
+residence time the march itself integrated — the accumulated burial time at each depth,
+increasing downward — which makes age and residence-time diagnostics meaningful from the
+first timestep instead of only after a multi-century spinup has flushed the column. Under
+`:zero` the instant of initialization is the epoch and every cell starts at 0, which is
+what the fidelity paths do regardless (`constant_density` discards the march's density, so
+its age describes a column that was replaced). Nothing in the physics reads `age`, so this
+choice is output-only.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false)
@@ -114,6 +120,10 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     grain_radius = constant_density ? fill(GRAIN_RADIUS_ICE, m) : ss.grain_radius
     grain_dendricity = constant_density ? zeros(m) : ss.grain_dendricity
     grain_sphericity = constant_density ? zeros(m) : ss.grain_sphericity
+    # `mp.initialize_age` picks the epoch convention; `constant_density` forces `:zero`
+    # because that path discards the march's density, and the marched age describes the
+    # firn column the march built, not the block of ice this flag substitutes for it.
+    age = (constant_density || mp.initialize_age === :zero) ? zeros(m) : ss.age
 
     # Create Z dimension
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
@@ -129,10 +139,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         grain_radius=DimArray(grain_radius, (zdim,)),
         grain_dendricity=DimArray(grain_dendricity, (zdim,)),
         grain_sphericity=DimArray(grain_sphericity, (zdim,)),
-        # This instant is the age epoch. Zero regardless of the fidelity flags and of the
-        # steady-state march: the march is a spatial construction, not a history the column
-        # actually experienced, so there is no residence time to inherit from it.
-        age=DimArray(zeros(m), (zdim,)),
+        age=DimArray(age, (zdim,)),
     )
 
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),

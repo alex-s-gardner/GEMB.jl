@@ -97,6 +97,12 @@ function forcing_climatology(cf::ClimateForcing; window=nothing)
         cf.precipitation_mean,
         cf.temperature_observation_height,
         cf.wind_observation_height;
+        # Carried over, not recomputed from the averaged year: averaging the record smooths
+        # away exactly the sub-annual variability both scalars exist to summarize (a warm
+        # rain event, a cold excursion), so the climatology must inherit the full record's
+        # values or the two gates would silently read weaker refinements under spinup.
+        accumulation_mean=cf.accumulation_mean,
+        temperature_air_effective=cf.temperature_air_effective,
         dataset=cf.dataset,
         latitude=cf.latitude,
         longitude=cf.longitude,

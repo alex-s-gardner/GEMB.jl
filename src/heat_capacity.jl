@@ -126,8 +126,39 @@ plus the latent heat of fusion. This is the `LF + CtoK * C_ICE` of the MATLAB bu
 generalized to a temperature-dependent `c_p`.
 
 GEMB carries pore water only at the melting point, so no liquid heat capacity is needed.
+
+See the two-argument form for liquid *above* the melting point, which only rain is.
 """
 @inline specific_enthalpy_water(mp::ModelParameters) = LF + specific_enthalpy(mp, CtoK)
+
+"""
+    specific_enthalpy_water(mp::ModelParameters, T) -> h [J kg-1]
+
+Specific enthalpy of liquid water at temperature `T` [K]: melting-point water plus its
+sensible heat above the melting point, `h_water + c_water·(T − CtoK)`.
+
+Rain is the only liquid GEMB carries above `CtoK`, and it is the only caller. Everything
+else — pore water, refreezing, runoff — is isothermal at the melting point and uses the
+one-argument form, which this reduces to exactly at `T == CtoK`.
+
+`mp.rain_heat_capacity` selects the heat capacity of that sensible term:
+
+- `:water` (default) — [`HEAT_CAPACITY_WATER`](@ref) ≈ 4220 J kg-1 K-1, the physical value.
+- `:ice` — `heat_capacity(mp, CtoK)` ≈ 2102, which is what MATLAB and GEMB.jl before this
+  option used. It understates the rain's sensible heat by about a factor two: ~3.9 kJ kg-1
+  for rain at 275 K, against 334.5 kJ kg-1 of `LF`. Small (~1% of the rain's energy) but
+  systematic, and growing linearly with `T_air − CtoK`.
+
+Below `CtoK` this returns the melting-point value unchanged rather than extrapolating: liquid
+colder than the melting point is not a state the column represents, and the callers reach
+this only on the rain branch, which is gated on `T_air > mp.rain_temperature_threshold`.
+"""
+@inline function specific_enthalpy_water(mp::ModelParameters, T::Real)
+    dT = Float64(T) - CtoK
+    dT <= 0.0 && return specific_enthalpy_water(mp)
+    c = mp.rain_heat_capacity === :water ? HEAT_CAPACITY_WATER : heat_capacity(mp, CtoK)
+    return specific_enthalpy_water(mp) + c * dT
+end
 
 """
     mix_temperature(mp::ModelParameters, T1, M1, T2, M2) -> T [K]
@@ -177,24 +208,49 @@ end
 
 Temperature after mixing `M_liquid` [kg] of liquid water at `T_liquid` [K] into `M_solid`
 [kg] of ice matrix at `T_solid` [K], conserving enthalpy. The liquid carries the latent heat
-of fusion, so its specific enthalpy is `h(T_liquid) + LF`.
+of fusion, so its specific enthalpy is [`specific_enthalpy_water`](@ref)`(mp, T_liquid)`.
 
-This is the rain-on-snow case. Under `:constant` the `c` cancels and `LF` reduces to the
-temperature offset `LF/c`, which is the form the MATLAB reference uses — computed that way
-here so the default path stays bit-identical rather than drifting through an `h`/`h⁻¹`
-round-trip.
+Two callers, and they sit on opposite sides of the melting point:
+
+- **Rain on snow** (`calculate_accumulation`), with `T_liquid = T_air > CtoK`. The rain's
+  sensible heat above the melting point is carried at `mp.rain_heat_capacity` — see
+  [`specific_enthalpy_water`](@ref).
+- **Refreezing** ([`refreeze_temperature`](@ref)), with `T_liquid = CtoK` exactly. The
+  sensible term vanishes and this reduces to the melting-point form.
+
+Under `:constant` the `c` cancels out of the enthalpy balance, so both are evaluated as a
+weighted mean of temperatures with the liquid at an effective temperature `h_liquid/c` —
+`T_liquid + LF/c` when the liquid's heat capacity is the matrix's, which is the grouping the
+MATLAB reference uses. Keeping that grouping is what makes the refreeze path (and
+`rain_heat_capacity = :ice`) bit-identical to the reference rather than drifting through an
+`h`/`h⁻¹` round-trip.
 
 Returns `T_solid` when the total mass is zero.
 """
 @inline function mix_temperature_liquid(mp::ModelParameters, T_liquid::Real, M_liquid::Real,
     T_solid::Real, M_solid::Real)
+    # Melting-point liquid, or liquid whose sensible heat is deliberately carried at the ice
+    # heat capacity: the reference's arithmetic, preserved bit-for-bit.
+    if mp.rain_heat_capacity === :ice || Float64(T_liquid) <= CtoK
+        if mp.heat_capacity_method === :constant
+            M = Float64(M_liquid) + Float64(M_solid)
+            M <= 0.0 && return Float64(T_solid)
+            return (Float64(M_liquid) * (Float64(T_liquid) + LF / mp.heat_capacity_ice) +
+                    Float64(T_solid) * Float64(M_solid)) / M
+        end
+        return mix_temperature(mp, specific_enthalpy(mp, T_liquid) + LF, M_liquid,
+            specific_enthalpy(mp, T_solid), M_solid, Val(:enthalpy))
+    end
+    # Above-freezing liquid (rain) with the liquid-water heat capacity.
     if mp.heat_capacity_method === :constant
         M = Float64(M_liquid) + Float64(M_solid)
         M <= 0.0 && return Float64(T_solid)
-        return (Float64(M_liquid) * (Float64(T_liquid) + LF / mp.heat_capacity_ice) +
+        c = mp.heat_capacity_ice
+        T_liquid_effective = CtoK + LF / c + (HEAT_CAPACITY_WATER / c) * (Float64(T_liquid) - CtoK)
+        return (Float64(M_liquid) * T_liquid_effective +
                 Float64(T_solid) * Float64(M_solid)) / M
     end
-    return mix_temperature(mp, specific_enthalpy(mp, T_liquid) + LF, M_liquid,
+    return mix_temperature(mp, specific_enthalpy_water(mp, T_liquid), M_liquid,
         specific_enthalpy(mp, T_solid), M_solid, Val(:enthalpy))
 end
 

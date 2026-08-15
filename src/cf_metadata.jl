@@ -92,6 +92,16 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :heat_flux_latent => CFAttrs("W m-2", "latent heat flux at the surface",
         "time: mean"; standard_name="surface_downward_latent_heat_flux",
         comment="Positive downward (toward the surface)."),
+    :heat_flux_basal => CFAttrs("W m-2", "conductive heat flux across the base of the column",
+        "time: mean";
+        comment="Positive upward (into the column) — the flux the fixed bottom cell " *
+                "supplies to hold itself at its initial temperature. This is diagnosed " *
+                "from the Dirichlet lower boundary, not a prescribed geothermal flux, so " *
+                "CF's upward_geothermal_heat_flux_at_sea_floor and " *
+                "downward_heat_flux_in_soil do not apply. Its magnitude measures how far " *
+                "the column is from thermal equilibrium with its base: it tends to zero " *
+                "under a converged spinup and is largest in the first decades of a run " *
+                "started from an un-equilibrated profile."),
     :albedo_broadband => CFAttrs("1", "broadband surface albedo", "time: mean";
         standard_name="surface_albedo"),
     :temperature_air => CFAttrs("K", "near-surface air temperature",
@@ -141,6 +151,13 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         comment="Depth to the first cell holding more than its irreducible water, " *
                 "i.e. the water table. NaN when the column holds no standing water, " *
                 "which is how 'dry' is distinguished from 'water table at the surface'."),
+    :close_off_age => CFAttrs("d", "age of the firn at pore close-off", "time: point";
+        comment="Age of the shallowest cell at or above the pore close-off density " *
+                "(830 kg m-3), the model analogue of the close-off age firn-air and " *
+                "ice-core work reports. NaN when the column never reaches close-off. " *
+                "Reads 0 until a spinup has buried the epoch unless initialize_age is " *
+                "steady_state, under which the initialized column carries the residence " *
+                "time the steady-state march integrated. No CF standard name exists."),
 
     # ---- profile (Z x Ti), instantaneous snapshots --------------------------
     :temperature => CFAttrs("K", "layer temperature", "time: point";
@@ -155,6 +172,14 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :grain_radius => CFAttrs("mm", "snow grain effective radius", "time: point"),
     :grain_dendricity => CFAttrs("1", "snow grain dendricity", "time: point"),
     :grain_sphericity => CFAttrs("1", "snow grain sphericity", "time: point"),
+    :viscosity => CFAttrs("Pa s", "effective viscosity of the snow/firn matrix",
+        "time: point";
+        comment="Present only when output_viscosity is set. Populated by the " *
+                "Crocus/CrocusPure viscous-settling law, the only densification scheme " *
+                "here that forms an effective viscosity; NaN under every other scheme, and " *
+                "NaN for the cells Crocus hands to GSFC2020 above CROCUS_HYBRID_DENSITY. " *
+                "Instantaneous value from the densification call at this timestamp, not an " *
+                "interval mean. No CF standard name exists."),
     :age => CFAttrs("d", "mass-weighted layer age", "time: point";
         comment="Mean age in decimal days of all mass in the cell, ice/firn matrix and " *
                 "pore water together, measured from column initialization. Snowfall, " *

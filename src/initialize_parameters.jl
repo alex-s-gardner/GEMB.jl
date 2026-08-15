@@ -19,6 +19,8 @@ function validate_parameters(mp::ModelParameters)
     # literature (m i.e. vs m w.e., a factor of ~1.099), so the coefficients cannot be
     # confirmed against an independent implementation.
     @assert mp.densification_method in (:HerronLangway, :Arthern, :ArthernB, :Barnola1991, :Crocus, :CrocusPure, :GSFC2020, :Simonsen2013, :Ligtenberg) "densification_method must be one of: HerronLangway, Arthern, ArthernB, Barnola1991, Crocus, CrocusPure, GSFC2020, Simonsen2013, Ligtenberg"
+    @assert mp.densification_accumulation in (:accumulation, :precipitation) "densification_accumulation must be accumulation or precipitation"
+    @assert mp.mean_temperature_method in (:arithmetic, :arrhenius) "mean_temperature_method must be arithmetic or arrhenius"
 
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
@@ -64,6 +66,10 @@ function validate_parameters(mp::ModelParameters)
     # Heat capacity
     @assert mp.heat_capacity_method in (:constant, :CuffeyPaterson) "heat_capacity_method must be constant or CuffeyPaterson"
     @assert 1500 <= mp.heat_capacity_ice <= 2500 "heat_capacity_ice must be in [1500, 2500]"
+    @assert mp.rain_heat_capacity in (:water, :ice) "rain_heat_capacity must be water or ice"
+
+    # Grain growth
+    @assert mp.grain_growth_method in (:Marbouty, :Arthern, :hybrid) "grain_growth_method must be one of: Marbouty, Arthern, hybrid"
 
     # Water
     @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"
@@ -105,6 +111,7 @@ function validate_parameters(mp::ModelParameters)
 
     # Output
     @assert mp.output_frequency in (:all, :monthly, :weekly, :daily, :last) "Invalid output_frequency"
+    @assert mp.initialize_age in (:zero, :steady_state) "initialize_age must be zero or steady_state"
 
     # Grid geometry
     @assert 0 <= mp.column_ztop <= 100

@@ -72,7 +72,22 @@ using GEMB_ClimateForcing
     # (0.821798 / 11398.551015 / 5017.057989) still fell inside these atols; they are
     # re-centered so the tolerance budget stays available for the cross-platform spread it
     # was sized for rather than being half-consumed by this change.
-    @test mean_albedo ≈ 0.822103 atol=3e-3       # ~0.37% relative
-    @test total_melt ≈ 11368.809855 atol=120.0  # ~1.1% relative
-    @test total_runoff ≈ 4997.438019 atol=120.0 # ~2.4% relative
+    # Re-centered again for two physics fixes, both of which change output by design:
+    # densification now compacts against mean *snowfall* rather than mean precipitation
+    # (`densification_accumulation = :accumulation`), and rain's sensible heat above the
+    # melting point is carried at the water heat capacity rather than the ice one
+    # (`rain_heat_capacity = :water`). Melt rises 48.7 kg m-2 (+0.43%) — the expected sign
+    # for the second, which adds real energy at a site where 3.2% of precipitation falls as
+    # rain. The previous values (0.821914 / 11368.809855 / 4997.438019) still fall inside
+    # these atols; re-centered so the tolerance budget stays available for the
+    # cross-platform spread it was sized for.
+    #
+    # Verified inert: with `densification_accumulation=:precipitation` and
+    # `rain_heat_capacity=:ice` the run reproduces the pre-fix result to the last bit on all
+    # three fields — 0.8219139818790556 / 11368.809854556823 / 4997.438018517874 — so the
+    # shift below is the two physics changes and nothing else. (The albedo reference had
+    # drifted to 0.822103 in transcription; melt and runoff were exact.)
+    @test mean_albedo ≈ 0.821768 atol=3e-3       # ~0.37% relative
+    @test total_melt ≈ 11417.534495 atol=120.0  # ~1.1% relative
+    @test total_runoff ≈ 5015.767041 atol=120.0 # ~2.4% relative
 end

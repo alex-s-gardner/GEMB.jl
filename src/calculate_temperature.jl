@@ -12,7 +12,7 @@ Accounts for:
 
 Sub-time steps are determined by Von Neumann stability analysis.
 
-Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, ghf, evaporation_condensation)`.
+Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation)`.
 
 # References
 - Bougamont, M., et al. (2005). (Surface roughness).
@@ -46,7 +46,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     EC_cumulative = 0.0
     lhf_cumulative = 0.0
     shf_cumulative = 0.0
-    ghf_cumulative = 0.0
+    heat_flux_basal_cumulative = 0.0
 
     if verbose
         T_bottom = temperature[end]
@@ -196,10 +196,10 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         # cells i and i+1) into cell i, so cell i's net is F_i − F_{i-1}. Applying one flux per
         # face with opposite signs makes the pairwise cancellation exact to the last bit, so
         # the column total is conserved independently of c_p. Cell m is the Dirichlet
-        # reservoir: face m-1 supplies F_{m-1} = ghf to cell m-1 and nothing is taken from
-        # cell m, whose Q_sw is zero — `temperature[m]` is therefore left exactly as it came
-        # in rather than round-tripped through h⁻¹, which matters because the check below
-        # compares it with an exact `!=`.
+        # reservoir: face m-1 supplies F_{m-1} = heat_flux_basal to cell m-1 and nothing is
+        # taken from cell m, whose Q_sw is zero — `temperature[m]` is therefore left exactly
+        # as it came in rather than round-tripped through h⁻¹, which matters because the
+        # check below compares it with an exact `!=`.
         #
         # The pre-diffusion temperatures are carried in registers (`T_pre_prev`, `T_pre_i`) —
         # each is read only at the two faces that bound its cell, so trailing the enthalpy
@@ -219,9 +219,9 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
             end
 
             # Face m-1 draws on the fixed bottom cell, so its temperature is used directly.
-            ghf = A_face[m-1] * (temperature[m] - T_pre_prev)
-            ghf_cumulative += ghf
-            H[m-1] += ghf - F_prev
+            heat_flux_basal = A_face[m-1] * (temperature[m] - T_pre_prev)
+            heat_flux_basal_cumulative += heat_flux_basal
+            H[m-1] += heat_flux_basal - F_prev
 
             # `temperature[1]` is the only cell read again before the next sub-step (surface
             # fluxes, the emissivity switch, and the verbose diagnostic), so it is the only one
@@ -250,13 +250,13 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
                 E_final += H[i]
             end
             E_used = E_final - E_initial
-            E_supplied = sw_total + longwave_downward + longwave_upward + thf + ghf
+            E_supplied = sw_total + longwave_downward + longwave_upward + thf + heat_flux_basal
             E_delta = E_used - E_supplied
 
             E_tolerance = energy_tolerance(E_initial)
             if (abs(E_delta) > E_tolerance) || isnan(E_delta)
                 @error "inputs" temperature[1] water_surface grain_radius[1] sum(shortwave_flux) cfs.longwave_downward cfs.temperature_air cfs.wind_speed cfs.vapor_pressure cfs.pressure_air
-                @error "internals" sw_total longwave_downward longwave_upward thf ghf
+                @error "internals" sw_total longwave_downward longwave_upward thf heat_flux_basal
                 error("energy not conserved in thermodynamics equations: supplied = $(E_supplied) J, used = $(E_used) J")
             end
 
@@ -275,10 +275,10 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     heat_flux_latent_out = lhf_cumulative / cfs.dt    # J -> W/m2
     heat_flux_sensible_out = shf_cumulative / cfs.dt  # J -> W/m2
     longwave_upward_out = longwave_upward_cumulative / cfs.dt  # J -> W/m2
-    ghf_out = ghf_cumulative / cfs.dt  # J -> W/m2
+    heat_flux_basal_out = heat_flux_basal_cumulative / cfs.dt  # J -> W/m2
     evaporation_condensation_out = EC_cumulative
 
-    return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, ghf_out, evaporation_condensation_out
+    return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, heat_flux_basal_out, evaporation_condensation_out
 end
 
 """

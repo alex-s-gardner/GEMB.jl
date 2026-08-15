@@ -15,11 +15,12 @@ const HEAT_CAPACITY_CUFFEY_B = 7.122
 
 const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
 
-# Specific heat capacity of liquid water [J kg-1 K-1]. Currently unreferenced: it is intended
-# for the sensible heat of *above-freezing* liquid entering the column — i.e. rain. Pore water
-# in GEMB is carried strictly at the melting point (see `specific_enthalpy_water`), so it would
-# not appear in the percolation or refreeze budgets; `heat_capacity(mp, T)` remains the
-# ice-matrix value everywhere else. Value from the Community Firn Model (`solver.py`, `c_liq`).
+# Specific heat capacity of liquid water [J kg-1 K-1]. Carries the sensible heat of
+# *above-freezing* liquid entering the column — i.e. rain — via the two-argument
+# `specific_enthalpy_water(mp, T)`, under the `rain_heat_capacity = :water` default. Pore water
+# in GEMB is carried strictly at the melting point, so this does not appear in the percolation
+# or refreeze budgets; `heat_capacity(mp, T)` remains the ice-matrix value everywhere else.
+# Value from the Community Firn Model (`solver.py`, `c_liq`).
 const HEAT_CAPACITY_WATER = 4219.9
 
 const LF = 0.3345e6        # Latent heat of fusion [J kg-1]
@@ -56,8 +57,8 @@ const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
 # each site so a densification scheme's assumed grain growth cannot drift from the others'.
 const GRAIN_GROWTH_EG = 42400.0
 # Grain-growth rate coefficient [m2 s-1], Arthern et al. (2010): dr²/dt = kgr·exp(-Eg/RT).
-# Currently unreferenced: it belongs to the Arthern grain law itself, which
-# `calculate_grain_size` does not yet implement (that module uses Marbouty/Brun).
+# Read by `calculate_grain_size` under `grain_growth_method` `:Arthern`/`:hybrid`. SI units, so
+# a conversion to the module's mm² working units is applied at that call site.
 const GRAIN_GROWTH_KGR = 1.3e-7
 # Density above which Marbouty's (1980) temperature-gradient growth law returns zero [kg m-3],
 # i.e. the ceiling of its calibration range. Read by the `H` coefficient in `_marbouty_Q`,
@@ -124,6 +125,13 @@ const DT_MIN_WARN = 1e-4
 # space above irreducible, while ponded water reaches 1e-1 to 1. Nothing in the physics reads
 # this; it only decides what `aquifer_diagnostics` reports.
 const AQUIFER_TOLERANCE = 1e-3         # standing-water detection [fraction of pore space]
+
+# The "not requested" sentinel for the opt-in per-cell viscosity diagnostic. A shared, empty
+# `Vector{Float64}` rather than `nothing` so that `gemb_core`'s `flux` NamedTuple has one
+# concrete type regardless of `mp.output_viscosity`; see the note in `gemb_core.jl`. Shared
+# rather than allocated per call because it is never written to — every write site tests
+# `isempty` first — so there is nothing to alias.
+const NO_VISCOSITY = Float64[]
 
 """
     energy_tolerance(E_reference)

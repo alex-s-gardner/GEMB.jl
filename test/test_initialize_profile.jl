@@ -465,3 +465,80 @@ matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
     @test length(profile.dz) > 0
     @test all(profile.dz .> 0)  # All layers have positive thickness
 end
+
+@testset "initialize_age" begin
+    cf = _dry_snow_forcing()
+    mp_ss = GEMB.ModelParameters(initialize_age=:steady_state)
+    mp_zero = GEMB.ModelParameters(initialize_age=:zero)
+
+    @test GEMB.ModelParameters().initialize_age === :steady_state
+
+    age_ss = collect(GEMB.initialize_profile(mp_ss, cf)[:age])
+    age_zero = collect(GEMB.initialize_profile(mp_zero, cf)[:age])
+
+    # :zero is the old behaviour on every cell.
+    @test all(age_zero .== 0.0)
+
+    # The marched age is the residence time of a parcel buried at cs.balance: increasing
+    # downward and finite everywhere. The surface cell is *not* age 0 — the profile is sampled
+    # at cell centers, so cell 1 has already been buried by half its own thickness, which is
+    # the right analogue of the transient run's mass-weighted cell age.
+    @test all(isfinite, age_ss)
+    @test issorted(age_ss)
+    @test age_ss[end] > age_ss[1] > 0.0
+
+    # Cell 1's age is exactly the burial time of half its own mass, which pins the units
+    # (days, not years) as well as the cell-center convention.
+    let cs = GEMB.initialize_climate_summary(cf, mp_ss),
+        p = GEMB.initialize_profile(mp_ss, cf)
+
+        half_mass = 0.5 * collect(p[:dz])[1] * collect(p[:density])[1]
+        @test isapprox(age_ss[1], half_mass / cs.balance * (GEMB.SECONDS_PER_YEAR / 86400.0);
+            rtol=0.05)
+    end
+
+    # Consistency with the burial rate rather than a hardcoded number: the age at the base is
+    # the column's mass above it divided by the annual balance, to march resolution.
+    profile = GEMB.initialize_profile(mp_ss, cf)
+    cs = GEMB.initialize_climate_summary(cf, mp_ss)
+    dz = collect(profile[:dz])
+    density = collect(profile[:density])
+    # Mass above the *center* of the deepest cell, matching the sampling convention.
+    mass_above = sum(dz[1:end-1] .* density[1:end-1]) + 0.5 * dz[end] * density[end]
+    expected_years = mass_above / cs.balance
+    @test isapprox(age_ss[end] / (GEMB.SECONDS_PER_YEAR / 86400.0), expected_years; rtol=0.1)
+
+    # The fidelity flags replace the marched column, so its age must not be inherited.
+    @test all(collect(GEMB.initialize_profile(mp_ss, cf; constant_density=true)[:age]) .== 0.0)
+    @test all(collect(GEMB.initialize_profile(mp_ss, cf;
+        constant_density=true, constant_temperature=true)[:age]) .== 0.0)
+
+    # An ablation column buries nothing, so the march never advances and there is no
+    # residence time to report on either setting. Same forcing as the ablation end of the
+    # balance sweep below.
+    cf_ablation = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=0.8,
+        shortwave=100.0, longwave=320.0)
+    @test GEMB.initialize_climate_summary(cf_ablation, mp_ss).balance < 0.0
+    @test all(collect(GEMB.initialize_profile(mp_ss, cf_ablation)[:age]) .== 0.0)
+end
+
+@testset "close_off_age" begin
+    # NaN for an open column, the age of the shallowest closed-off cell otherwise. Same
+    # NaN-means-absent convention as ice_slab_depth.
+    @test isnan(GEMB.close_off_age([300.0, 500.0, 700.0], [1.0, 2.0, 3.0]))
+    @test GEMB.close_off_age([300.0, 850.0, 900.0], [1.0, 2.0, 3.0]) == 2.0
+    # Exactly at the threshold counts as closed off.
+    @test GEMB.close_off_age([GEMB.DENSITY_PORE_CLOSEOFF], [7.0]) == 7.0
+    @test isnan(GEMB.close_off_age(Float64[], Float64[]))
+    # The threshold is a parameter, so a study can move it.
+    @test GEMB.close_off_age([700.0, 800.0], [1.0, 2.0], 750.0) == 2.0
+
+    # On a real initialized firn column it lies strictly between the surface and basal ages.
+    cf = _dry_snow_forcing()
+    profile = GEMB.initialize_profile(GEMB.ModelParameters(initialize_age=:steady_state), cf)
+    density = collect(profile[:density])
+    age = collect(profile[:age])
+    coa = GEMB.close_off_age(density, age)
+    @test maximum(density) >= GEMB.DENSITY_PORE_CLOSEOFF   # this column does close off
+    @test 0.0 < coa < age[end]
+end

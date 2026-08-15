@@ -247,7 +247,11 @@ end
     # A seasonal cycle rather than constant warmth: melt needs summer, and refreeze needs the
     # cold winter firn beneath it, so a constant-temperature column gives one or the other but
     # not both — and it is the melt-then-refreeze pairing that exercises the moment transport.
-    mp = initialize_parameters(output_frequency=:daily)
+    # `initialize_age=:zero`, so `elapsed` is the run length and the bound below is exact.
+    # Under the `:steady_state` default the column starts with the residence time the
+    # steady-state march integrated, which offsets every cell by an amount this bound knows
+    # nothing about; that path is checked separately at the end of this testset.
+    mp = initialize_parameters(output_frequency=:daily, initialize_age=:zero)
     n_days = 730
     seasonal = cos.(2π .* (1:n_days) ./ 365.0 .- π)
     cf = _age_forcing(n_days=n_days,
@@ -274,13 +278,26 @@ end
     # sitting beneath older firn is physically real at a melting site.)
     final = age[:, end]
     @test final[1] < final[end]
+
+    # The same run under the default `:steady_state` epoch. Every age must exceed the
+    # `:zero` run's, because the initialized column already carried residence time, and the
+    # column must still be finite, non-negative and older with depth — the bound moves, the
+    # invariants do not.
+    mp_ss = initialize_parameters(output_frequency=:daily, initialize_age=:steady_state)
+    age_ss = Array(gemb(initialize_profile(mp_ss, cf), cf, mp_ss)[:age])
+    @test all(isfinite, age_ss)
+    @test all(age_ss .>= 0.0)
+    @test maximum(age_ss) > maximum(age)
+    @test age_ss[1, end] < age_ss[end, end]
 end
 
 @testset "age accumulates across gemb_spinup cycles" begin
     # The assertion that `profile_extract.jl` carries `age` through the profile round-trip
     # between cycles. Without it, spinup either dies on a KeyError or silently resets the
     # clock each cycle and the deep column never accumulates residence time.
-    mp = initialize_parameters(output_frequency=:last)
+    # `:zero` again: the point here is that the clock *accumulates* across cycles rather
+    # than resetting, which is only visible against a known epoch.
+    mp = initialize_parameters(output_frequency=:last, initialize_age=:zero)
     cf = _age_forcing(n_days=365, temperature=250.0, precipitation=1.0)
     profile = initialize_profile(mp, cf)
 

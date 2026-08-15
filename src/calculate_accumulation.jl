@@ -59,8 +59,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
     # snow is deep enough to warrant its own layer.
 
-    # Define tolerances
-
     # Specify constants (shared with the steady-state initial guess, so a freshly
     # initialized column and freshly fallen snow agree by construction)
     re_new_snow = RE_NEW_SNOW    # new snow grain size [mm]
@@ -165,7 +163,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             E_total_final = column_enthalpy(mp, M, temperature, water)
 
             E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
-            E_rain = rain * (specific_enthalpy(mp, cfs.temperature_air) + LF)
+            E_rain = rain * specific_enthalpy_water(mp, cfs.temperature_air)
 
             E_delta = E_total_final - E_total_initial - E_snow - E_rain
 

@@ -60,7 +60,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     shortwave_net = sum(shortwave_flux)
 
     # 5. Calculate new temperature-depth profile and turbulent heat flux
-    temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, ghf, evaporation_condensation =
+    temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose)
 
@@ -115,7 +115,23 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)
 
-    dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp)
+    # Opt-in viscosity diagnostic. Allocated here rather than carried in `state` because it
+    # is a per-step diagnostic, not column state, and `output_viscosity` is false by default
+    # so the hot path allocates nothing. The grid controllers have already run (step 9), and
+    # nothing after this merges or splits cells, so these indices line up with the `dz` and
+    # `density` profiles this timestep reports — including the deepest cell, which
+    # `trim_bottom!` may thin but never re-indexes.
+    #
+    # "Off" is the empty `NO_VISCOSITY` vector, not `nothing`: `viscosity` lands in `flux`,
+    # and a `Union{Nothing,Vector{Float64}}` field would make `flux`'s type depend on
+    # `output_viscosity`, so `gemb_core`'s return type would not be concrete and the driver
+    # would box every one of `flux`'s ~40 `Float64` fields on every timestep (measured: 42
+    # allocations per step). A `Vector{Float64}` that happens to be empty keeps the type
+    # concrete on both settings; length, not type, is what says "not requested".
+    viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
+
+    dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp;
+        viscosity=viscosity)
 
     densification_from_compaction = densification_from_compaction - sum(dz)
 
@@ -158,18 +174,18 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
         longwave_net = cfs.longwave_downward - longwave_upward
         E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
-        E_rain = rain * (specific_enthalpy(mp, cfs.temperature_air) + LF)
+        E_rain = rain * specific_enthalpy_water(mp, cfs.temperature_air)
         E_runoff = runoff * specific_enthalpy_water(mp)
         E_thermal = column_enthalpy(mp, M, temperature)
         E_water = sum(water) * specific_enthalpy_water(mp)
         E_shortwave = shortwave_net * dt
         E_longwave = longwave_net * dt
         E_thf = (heat_flux_sensible + heat_flux_latent) * dt
-        E_ghf = ghf * dt
+        E_basal = heat_flux_basal * dt
 
         E_total_final = E_thermal + E_water + E_runoff
         E_used = E_total_final - E_total_initial
-        E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_ghf + E_evaporation_condensation + E_added
+        E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_basal + E_evaporation_condensation + E_added
         E_delta = E_used - E_supplied
 
         if abs(E_delta) > energy_tolerance(E_total_initial)
@@ -221,6 +237,12 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         shortwave_net=shortwave_net,
         heat_flux_sensible=heat_flux_sensible,
         heat_flux_latent=heat_flux_latent,
+        # The conductive flux diagnosed across the deepest interior face — *not* a prescribed
+        # geothermal flux, which is why it is not named `ghf`. It is what the fixed bottom
+        # cell supplies to the column to hold itself at its initial temperature, so it is an
+        # output of the Dirichlet condition rather than a boundary condition GEMB imposes.
+        # Already a term in the verbose energy budget above; now also reported.
+        heat_flux_basal=heat_flux_basal,
         longwave_upward=longwave_upward,
         rain=rain,
         melt=melt,
@@ -240,6 +262,9 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         ice_slab_depth=ice_slab_depth,
         aquifer_thickness=aquifer_thickness,
         aquifer_depth=aquifer_depth,
+        # Empty unless `mp.output_viscosity` — see the allocation note at the buffer's
+        # creation for why this is an empty vector rather than `nothing`.
+        viscosity=viscosity,
     )
 
     return new_state, flux
