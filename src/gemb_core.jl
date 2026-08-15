@@ -75,7 +75,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     densification_from_melt = sum(dz)
 
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, melt, melt_surface, runoff, refreeze =
+        grain_sphericity, melt, melt_surface, runoff, refreeze,
+        percolation_depth, ice_slab_thickness, ice_slab_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, rain, mp, verbose)
 
@@ -199,6 +200,14 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         E_added=E_added,
         densification_from_compaction=densification_from_compaction,
         densification_from_melt=densification_from_melt,
+        # Diagnostics from `calculate_melt`. Read-only: they are deliberately absent from the
+        # conservation checks above because they move no mass and carry no energy. The slab
+        # terms describe the column *before* steps 9-12 reshaped the grid — close enough for a
+        # diagnostic, and the alternative (rescanning after `trim_bottom!`) would cost a second
+        # pass over the column every timestep to no useful end.
+        percolation_depth=percolation_depth,
+        ice_slab_thickness=ice_slab_thickness,
+        ice_slab_depth=ice_slab_depth,
     )
 
     return new_state, flux

@@ -297,6 +297,26 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   (Coléou and Lesaffre 1998 eq. 3 via Langen et al. 2017 eq. 4), matching the Community Firn
   Model. Retention is zero at and above `DENSITY_PORE_CLOSEOFF`, as in CFM. Default
   `:constant` is unchanged and bit-identical.
+- **Added `impermeable_density` and `impermeable_thickness`**, exposing the bucket scheme's
+  density-based impermeability criterion, which MATLAB hardcodes as `830` kg m⁻³ and `0.1` m in
+  `calculate_melt`. Water is routed to runoff at a contiguous run of cells at or above
+  `impermeable_density` thicker than `impermeable_thickness`. RetMIP (Vandecrux et al. 2020)
+  recommends bucket schemes adopt such a criterion and shows model spread at ice-slab sites is
+  dominated by this pair: the density threshold spans 810 kg m⁻³ (DMIHH, after Gregory et al.
+  2014, which gave the lowest firn-temperature RMSE at KAN_U) to 917 (DTU, whose runoff was
+  unrealistic enough to be excluded from the paper's multi-model mean). The `:ColeouLesaffre`
+  gate stays on the constant `DENSITY_PORE_CLOSEOFF` — where capillary retention ceases for
+  want of connected pore space is a different question from where a lens stops conducting flow
+  — so lowering the flow criterion does not silently change retention. Defaults reproduce
+  MATLAB bit-identically.
+- **Added percolation-depth, ice-slab, and depth-limited firn-air-content diagnostics**
+  (`percolation_depth`, `ice_slab_thickness`, `ice_slab_depth`, `firn_air_content_10m`,
+  `firn_air_content_20m`), the quantities RetMIP evaluates models against — upward-looking
+  radar wetting-front depth (Heilig et al. 2018), firn-core slab observations, and published
+  FAC (Vandecrux et al. 2019), which is reported to a fixed depth rather than whole-column.
+  `percolation_depth` is an interval maximum, matching what radar measures; the slab terms are
+  instantaneous, so `ice_slab_depth = NaN` ("no slab") cannot poison an interval mean. All are
+  read-only and take no part in the mass or energy budget, so output is unchanged.
 - **Added `heat_capacity_method = :CuffeyPaterson`** — temperature-dependent specific heat,
   `c_p(T) = 152.5 + 7.122 T` (Cuffey and Paterson 2010 eq. 9.1). MATLAB uses the constant
   2102 J kg⁻¹ K⁻¹, its value at the melting point, which overstates the cold content of firn

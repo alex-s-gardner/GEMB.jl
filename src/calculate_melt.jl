@@ -23,6 +23,12 @@ Model and [`_irreducible_water`](@ref) do. `:constant` is deliberately *not* gat
 the default path stays bit-identical to MATLAB. The gate also removes the `ρ → ρᵢ`
 singularity in `S_wi`; the retention product `(ρᵢ − ρ)·S_wi` is finite in that limit,
 but the saturation alone is not.
+
+The gate is the *constant* `DENSITY_PORE_CLOSEOFF`, deliberately not the tunable
+`mp.impermeable_density`. The two thresholds answer different questions: this one is where
+capillary retention ceases for want of connected pore space, while `impermeable_density` is
+where a lens stops conducting flow at the scale the model represents. Tying them together
+would make lowering the flow criterion silently change retention too.
 """
 @inline function irreducible_saturation(mp::ModelParameters, density::Float64)
     if mp.water_irreducible_method === :constant
@@ -46,7 +52,18 @@ Processes:
 3. Percolation: Liquid water percolates downward, refreezing in cold layers,
    being retained as pore water, or running off at impermeable ice lenses.
 
-Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, melt_total, melt_surface, runoff_total, freeze_total)`.
+Water is routed to runoff at a contiguous run of cells at or above `mp.impermeable_density`
+thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m, as in MATLAB; across
+the RetMIP models the density criterion spans 810–917 kg m-3 — see `ModelParameters`).
+
+Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+melt_total, melt_surface, runoff_total, freeze_total, percolation_depth,
+ice_slab_thickness, ice_slab_depth)`.
+
+The last three are diagnostics that take no part in the mass or energy budget:
+`percolation_depth` [m] is how deep the wetting front reached this timestep (0 when no water
+moved), and the two slab terms come from [`ice_slab_diagnostics`](@ref).
+
 Arrays may shrink (cells deleted when mass=0).
 """
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
@@ -61,9 +78,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     d_tolerance = 1e-11
     water_tolerance = 1e-13
 
-    # Specify constants
-    d_phc = DENSITY_PORE_CLOSEOFF   # pore hole close off density [kg m-3]
-    ice_layer_dzmin = 0.1   # minimum ice layer thickness for runoff [m]
+    # The density-based impermeability criterion. Both default to the MATLAB values
+    # (`DENSITY_PORE_CLOSEOFF` = 830 and 0.1 m) — see `ModelParameters` for why they are
+    # tunable and what range the literature supports.
+    d_phc = mp.impermeable_density       # pore hole close off density [kg m-3]
+    ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)
     water_delta = zeros(m)
@@ -80,6 +99,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     runoff_total = 0.0
     melt_total = 0.0
     melt_surface = 0.0
+
+    # Diagnostics (read-only; they take no part in the mass or energy budget). Initialized
+    # here because the percolation block below is conditional — a timestep with no water
+    # anywhere skips it entirely and must still report a wetting front of zero depth.
+    percolation_depth = 0.0
 
     # calculate temperature excess above 0 degC
     T_excess = max.(0.0, temperature .- CtoK)
@@ -308,6 +332,15 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # calculate runoff_total
         runoff_total = sum(runoff) + flux_dn[Xi]
 
+        # Wetting-front depth [m], for comparison against upward-looking radar (e.g. Heilig et
+        # al., 2018, as used by RetMIP). `Xi` is incremented once per cell the loop completed,
+        # so `Xi - 1` cells were entered by water and their thicknesses sum to the depth the
+        # front reached. Taken before cells are deleted and `dz` rebuilt, so the indices still
+        # line up with the column the loop walked.
+        @inbounds for i in 1:(Xi-1)
+            percolation_depth += dz[i]
+        end
+
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
         # column state is assembled with `M` standing in for it.
@@ -322,6 +355,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     freeze_total = sum(freeze)
+
+    # Ice-slab diagnostics, on the post-melt column. Run unconditionally: a slab is a property
+    # of the column, present whether or not anything melted this timestep.
+    ice_slab_thickness, ice_slab_depth = ice_slab_diagnostics(dz, density, mp)
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose
@@ -344,5 +381,55 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         end
     end
 
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, melt_total, melt_surface, runoff_total, freeze_total
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+    melt_total, melt_surface, runoff_total, freeze_total,
+    percolation_depth, ice_slab_thickness, ice_slab_depth
+end
+
+"""
+    ice_slab_diagnostics(dz, density, mp::ModelParameters) -> (thickness, depth)
+
+Summarize the ice slabs in a column under the same criterion the percolation scheme uses.
+
+`thickness` [m] is the total thickness of all cells at or above `mp.impermeable_density`,
+whether or not they form a flow-blocking run — the quantity a firn core measures.
+
+`depth` [m] is the depth to the top of the shallowest contiguous run of such cells that is
+thicker than `mp.impermeable_thickness`, i.e. the first run that would actually block
+percolation (matching the test at the impermeable branch of [`calculate_melt`](@ref)). It is
+`NaN` when no run qualifies, so "no slab" stays distinguishable from "slab at the surface".
+
+Diagnostic only: nothing in the physics reads either value.
+"""
+function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
+    mp::ModelParameters)
+
+    d_tolerance = 1e-11
+    d_phc = mp.impermeable_density
+    dzmin = mp.impermeable_thickness
+
+    thickness = 0.0
+    depth = NaN
+    z_top = 0.0      # depth to the top of the current run
+    run_dz = 0.0     # thickness of the current run
+    z = 0.0          # depth to the top of cell i
+
+    @inbounds for i in eachindex(dz)
+        if density[i] >= d_phc - d_tolerance
+            thickness += dz[i]
+            if run_dz == 0.0
+                z_top = z
+            end
+            run_dz += dz[i]
+            # First qualifying run wins; keep scanning for `thickness` but never overwrite.
+            if isnan(depth) && run_dz > dzmin + d_tolerance
+                depth = z_top
+            end
+        else
+            run_dz = 0.0
+        end
+        z += dz[i]
+    end
+
+    return thickness, depth
 end

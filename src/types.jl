@@ -47,6 +47,19 @@ Base.@kwdef struct ModelParameters
     # `water_irreducible_saturation` — see `irreducible_saturation`.
     water_irreducible_method::Symbol = :constant
     water_irreducible_saturation::Float64 = 0.07
+    # The density-based impermeability criterion of the bucket scheme: percolating water is
+    # routed to runoff at a contiguous run of cells at or above `impermeable_density` that is
+    # thicker than `impermeable_thickness`. Below that thickness water passes through, on the
+    # grounds that thin lenses are laterally discontinuous at the scale the model represents.
+    #
+    # The defaults reproduce MATLAB. Both are genuinely uncertain and are the dominant control
+    # on bucket-scheme behaviour at ice-slab sites — across the RetMIP models (Vandecrux et
+    # al., 2020) the density threshold ranges from 810 kg m-3 (DMIHH, after Gregory et al.,
+    # 2014, which gave the lowest firn-temperature RMSE at KAN_U) to 917 (DTU, which
+    # over-produced runoff badly enough to be excluded from the paper's multi-model mean).
+    # Exposed here so that range can be explored. See `calculate_melt`.
+    impermeable_density::Float64 = DENSITY_PORE_CLOSEOFF
+    impermeable_thickness::Float64 = 0.1
 
     # --- Albedo & Radiation ---
     albedo_method::Symbol = :GardnerSharp

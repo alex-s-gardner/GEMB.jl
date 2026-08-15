@@ -174,6 +174,11 @@ The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes wit
 | `strain_thinning` | m | `time: sum` | Thickness lost to horizontal ice-dynamic strain (positive = thinning); zero unless `horizontal_strain_rate` is set |
 | `thickness_cumulative` | m | `time: mean` | Cumulative thickness change since the start of the run |
 | `firn_air_content` | m | `time: mean` | Total air height in the firn column |
+| `firn_air_content_10m` | m | `time: mean` | Air height in the top 10 m, the depth-limited form the firn-core literature reports |
+| `firn_air_content_20m` | m | `time: mean` | Air height in the top 20 m |
+| `percolation_depth` | m | `time: maximum` | Deepest the wetting front reached during the interval; comparable to upward-looking-radar estimates |
+| `ice_slab_thickness` | m | `time: point` | Total thickness of cells at or above `impermeable_density`, whether or not they block flow |
+| `ice_slab_depth` | m | `time: point` | Depth to the top of the shallowest flow-blocking ice slab; `NaN` when none qualifies |
 | `valid_profile_length` | 1 | `time: point` | Number of active vertical levels |
 | `temperature_air` | K | `time: mean` | Near-surface air temperature (forcing summary) |
 | `precipitation` | kg m⁻² | `time: sum` | Total precipitation (forcing summary) |

@@ -77,6 +77,39 @@ function surface_timeseries(A::AbstractMatrix)
 end
 
 """
+    firn_air_content(dz, density, density_ice, z_max=Inf) -> m of air
+
+Height of air in the column above depth `z_max`: `Σ dz (1 − ρ/ρ_ice)`, with densities above
+`density_ice` contributing nothing rather than negative air.
+
+The cell straddling `z_max` contributes in proportion to the fraction of it that lies above
+the cutoff, so the result is a true integral to `z_max` and does not step as cells cross the
+boundary during a run. `z_max = Inf` (the default) integrates the whole column.
+
+Depth-limited totals — conventionally to 10 m or 20 m — are what the firn-core literature
+reports (e.g. Vandecrux et al., 2019), so they are what a whole-column value cannot be
+compared against.
+
+Allocation-free: called every timestep from the `gemb` time loop.
+"""
+function firn_air_content(dz::AbstractVector, density::AbstractVector,
+    density_ice::Real, z_max::Real=Inf)
+
+    fac = 0.0
+    z = 0.0
+    @inbounds for i in eachindex(dz)
+        z >= z_max && break
+        # Thickness of this cell lying above the cutoff — the whole cell for every cell when
+        # `z_max` is Inf. Written as a clipped thickness rather than a fraction so a
+        # zero-thickness cell cannot produce a 0/0.
+        dz_in = min(dz[i], z_max - z)
+        fac += dz_in * (density_ice - min(density[i], density_ice))
+        z += dz[i]
+    end
+    return fac / density_ice
+end
+
+"""
     datetime2decyear(datetimes::AbstractVector{DateTime})
 
 Convert Julia `DateTime` objects to decimal year values.
