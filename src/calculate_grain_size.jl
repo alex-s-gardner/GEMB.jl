@@ -8,7 +8,11 @@ Accounts for different physical processes depending on snow state:
 - Nondendritic Dry Snow: Temperature gradient metamorphism using Marbouty (1980).
 - Wet Snow: Rapid grain growth due to liquid water using Brun (1989).
 
-Only executes if `mp.albedo_method` is `:GardnerSharp` or `:BrunLefebre`.
+Executes only when some part of the configuration reads grain size — see
+[`grain_size_required`](@ref). The skip is a performance optimization, not physics:
+metamorphism proceeds in a real snowpack regardless of which albedo scheme is selected, so
+the guard must cover every consumer or it silently freezes an input the rest of the model is
+still reading.
 
 Returns `(grain_radius, grain_dendricity, grain_sphericity)`. `grain_dendricity`
 and `grain_sphericity` are updated in place; `grain_radius` is returned as a new
@@ -33,8 +37,8 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     gdn_tolerance = 1e-10
     water_tolerance = 1e-13
 
-    # Only run grain growth for these albedo methods
-    if !(mp.albedo_method == :GardnerSharp || mp.albedo_method == :BrunLefebre)
+    # Skip only when nothing in this configuration reads grain size.
+    if !grain_size_required(mp)
         return grain_radius, grain_dendricity, grain_sphericity
     end
 
