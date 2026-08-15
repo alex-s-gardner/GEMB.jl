@@ -75,9 +75,13 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # enthalpy above `CtoK` (that energy is melt, and there is no water here to hold
     # it), so a warmer cell would be an unphysical heat reservoir that the first
     # timesteps discharge downward. The climate-derived path is already clamped in
-    # `_steady_state_temperature`; clamping the mean here covers the two fidelity
-    # paths, which fill it verbatim.
-    if T_mean > CtoK
+    # `_steady_state_temperature`; this clamp covers the two fidelity paths, which fill
+    # `T_mean` verbatim.
+    #
+    # Applied only where `T_mean` is actually used — under `constant_temperature` — so a
+    # temperate site does not get told its temperature was clamped on a path that never
+    # reads `T_mean` at all.
+    if constant_temperature && T_mean > CtoK
         @warn "temperature_air_mean is above the melt point; initialized temperature clamped to 0 °C." T_mean
         T_mean = CtoK
     end

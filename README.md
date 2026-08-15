@@ -315,8 +315,10 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   radar wetting-front depth (Heilig et al. 2018), firn-core slab observations, and published
   FAC (Vandecrux et al. 2019), which is reported to a fixed depth rather than whole-column.
   `percolation_depth` is an interval maximum, matching what radar measures; the slab terms are
-  instantaneous, so `ice_slab_depth = NaN` ("no slab") cannot poison an interval mean. All are
-  read-only and take no part in the mass or energy budget, so output is unchanged.
+  instantaneous, so `ice_slab_depth = NaN` ("no slab") cannot poison an interval mean, and are
+  scanned after the grid controllers run, so recomputing slab depth from the output `dz` and
+  `density` reproduces them. All are read-only and take no part in the mass or energy budget,
+  so output is unchanged.
 - **Added `heat_capacity_method = :CuffeyPaterson`** — temperature-dependent specific heat,
   `c_p(T) = 152.5 + 7.122 T` (Cuffey and Paterson 2010 eq. 9.1). MATLAB uses the constant
   2102 J kg⁻¹ K⁻¹, its value at the melting point, which overstates the cold content of firn

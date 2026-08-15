@@ -121,7 +121,9 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: point"),
     :ice_slab_thickness => CFAttrs("m", "total thickness of ice slabs", "time: point";
         comment="Summed thickness of all cells at or above impermeable_density, " *
-                "whether or not they block flow. No CF standard name exists."),
+                "whether or not they block flow. Scanned after the grid controllers " *
+                "run, so it describes the same column the dz and density profiles " *
+                "record at this timestamp. No CF standard name exists."),
     :ice_slab_depth => CFAttrs("m", "depth to the top of the shallowest blocking ice slab",
         "time: point";
         comment="Depth to the first contiguous run of cells at or above " *

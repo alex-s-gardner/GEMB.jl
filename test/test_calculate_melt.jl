@@ -352,6 +352,23 @@ end
     depth_dry, z_dry = _percolation(260.0)
     @test depth_dry == 0.0
 
+    # Excess pore water in the *deepest* cell alone, with no surface melt. The percolation
+    # loop still runs (there is excess water somewhere) and cannot break until it passes
+    # that cell, so the loop index is a poor proxy for how far water travelled: every cell
+    # above is walked without water entering it. The front depth must be 0, not the whole
+    # column. The driver reduces this layer with `max` over the interval, so one such
+    # timestep would otherwise pin the reported depth at the column base.
+    let n = 20
+        dz = fill(0.1, n)
+        water = zeros(n)
+        water[n] = 30.0
+        mp = GEMB.ModelParameters(density_ice=917.0)
+        out = GEMB.calculate_melt(fill(GEMB.CtoK, n), dz, fill(400.0, n), water,
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), 0.0, mp, false)
+        @test sum(out[4][1:(n-1)]) == 0.0    # confirm no water entered the cells above
+        @test out[12] == 0.0                 # so the wetting front went nowhere
+    end
+
     # More surface energy drives the front deeper, and it can never outrun the column.
     depth_warm, z_warm = _percolation(275.0)
     depth_hot, z_hot = _percolation(295.0)
@@ -406,6 +423,42 @@ end
     d_surface[1:5] .= 900.0
     _, depth_surface = GEMB.ice_slab_diagnostics(dz, d_surface, mp)
     @test depth_surface == 0.0
+
+    # Solid ice always counts, even when `impermeable_density` is set above `density_ice`.
+    # That configuration is legal (the validator allows up to 917 so lowering `density_ice`
+    # does not reject the default 830), and there `calculate_melt` blocks flow through its
+    # unconditional `density_ice` clause — so reporting "no slab" would contradict the
+    # physics. Verified against the runoff the same column actually produces below.
+    mp_low_ice = GEMB.ModelParameters(density_ice=800.0)   # impermeable_density = 830 > 800
+    d_ice = fill(400.0, 20)
+    d_ice[5:10] .= 800.0                                    # solid ice under this mp
+    t_ice, z_ice = GEMB.ice_slab_diagnostics(fill(0.1, 20), d_ice, mp_low_ice)
+    @test t_ice ≈ 0.6 atol = 1e-12
+    @test z_ice ≈ 0.4 atol = 1e-12
+
+    # ...and that same column really does route water to runoff, so the diagnostic and the
+    # percolation scheme agree rather than merely both being self-consistent.
+    let n = 20
+        water = zeros(n)
+        water[1] = 200.0                    # overwhelm irreducible retention above the ice
+        out = GEMB.calculate_melt(fill(GEMB.CtoK, n), fill(0.1, n), copy(d_ice), water,
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), 0.0, mp_low_ice, false)
+        @test out[10] > 0.0                 # runoff at the slab
+        @test sum(out[4][11:n]) == 0.0      # nothing got past it
+        # ...and the diagnostic, run on the column `calculate_melt` returned (which is where
+        # `gemb_core` runs it), sees the same slab that did the blocking.
+        t_after, z_after = GEMB.ice_slab_diagnostics(out[2], out[3], mp_low_ice)
+        @test t_after ≈ 0.6 atol = 1e-12
+        @test z_after ≈ 0.4 atol = 1e-12
+    end
+
+    # A single cell at `density_ice` blocks unconditionally, however thin — below the 0.1 m
+    # run threshold that a merely-dense cell must exceed.
+    d_thin_ice = fill(400.0, 20)
+    d_thin_ice[7] = 917.0
+    _, z_thin_ice = GEMB.ice_slab_diagnostics(fill(0.05, 20), d_thin_ice,
+        GEMB.ModelParameters(density_ice=917.0))
+    @test z_thin_ice ≈ 0.3 atol = 1e-12
 
     # The threshold is honoured: 850 qualifies under the 830 default, not under 917.
     d_850 = fill(400.0, 40)

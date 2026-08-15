@@ -57,12 +57,14 @@ thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m, as in MA
 the RetMIP models the density criterion spans 810–917 kg m-3 — see `ModelParameters`).
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-melt_total, melt_surface, runoff_total, freeze_total, percolation_depth,
-ice_slab_thickness, ice_slab_depth)`.
+melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
 
-The last three are diagnostics that take no part in the mass or energy budget:
-`percolation_depth` [m] is how deep the wetting front reached this timestep (0 when no water
-moved), and the two slab terms come from [`ice_slab_diagnostics`](@ref).
+`percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
+base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
+percolation loop can walk past cells water never entered (its exit also waits on the deepest
+cell holding pre-existing excess pore water), so this tracks water arrival per cell rather
+than the loop index. The companion slab diagnostics are taken in
+[`gemb_core`](@ref) via [`ice_slab_diagnostics`](@ref), after the grid controllers run.
 
 Arrays may shrink (cells deleted when mass=0).
 """
@@ -236,10 +238,20 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         Xi = 1
         m = length(temperature)
 
+        # Deepest cell water actually entered, for `percolation_depth`. Tracked separately
+        # from `Xi` (the cell the loop stopped at) because the loop's break condition also
+        # waits for `i > X`, the deepest cell holding *pre-existing* excess pore water: a
+        # single wet cell at depth keeps the loop running through every cell above it, none
+        # of which the water ever crossed. 0 when no cell receives water.
+        i_wet = 0
+
         # meltwater percolation
         for i in 1:m
             # calculate total melt water entering cell
             melt_input = melt[i] + flux_dn[i]
+            if abs(melt_input) > water_tolerance
+                i_wet = i
+            end
 
             ice_depth = 0.0
             # If this grid cell's density exceeds the pore closeoff density:
@@ -333,11 +345,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         runoff_total = sum(runoff) + flux_dn[Xi]
 
         # Wetting-front depth [m], for comparison against upward-looking radar (e.g. Heilig et
-        # al., 2018, as used by RetMIP). `Xi` is incremented once per cell the loop completed,
-        # so `Xi - 1` cells were entered by water and their thicknesses sum to the depth the
-        # front reached. Taken before cells are deleted and `dz` rebuilt, so the indices still
-        # line up with the column the loop walked.
-        @inbounds for i in 1:(Xi-1)
+        # al., 2018, as used by RetMIP): the base of the deepest cell water reached. Taken
+        # before cells are deleted and `dz` rebuilt, so the indices still line up with the
+        # column the loop walked.
+        @inbounds for i in 1:i_wet
             percolation_depth += dz[i]
         end
 
@@ -355,10 +366,6 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     freeze_total = sum(freeze)
-
-    # Ice-slab diagnostics, on the post-melt column. Run unconditionally: a slab is a property
-    # of the column, present whether or not anything melted this timestep.
-    ice_slab_thickness, ice_slab_depth = ice_slab_diagnostics(dz, density, mp)
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose
@@ -382,8 +389,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    melt_total, melt_surface, runoff_total, freeze_total,
-    percolation_depth, ice_slab_thickness, ice_slab_depth
+    melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
 end
 
 """
@@ -394,18 +400,30 @@ Summarize the ice slabs in a column under the same criterion the percolation sch
 `thickness` [m] is the total thickness of all cells at or above `mp.impermeable_density`,
 whether or not they form a flow-blocking run — the quantity a firn core measures.
 
-`depth` [m] is the depth to the top of the shallowest contiguous run of such cells that is
-thicker than `mp.impermeable_thickness`, i.e. the first run that would actually block
-percolation (matching the test at the impermeable branch of [`calculate_melt`](@ref)). It is
-`NaN` when no run qualifies, so "no slab" stays distinguishable from "slab at the surface".
+`depth` [m] is the depth to the top of the shallowest run that would actually block
+percolation, matching both clauses of the impermeable branch of [`calculate_melt`](@ref): a
+contiguous run thicker than `mp.impermeable_thickness`, or any single cell at
+`mp.density_ice`, which blocks unconditionally however thin it is. It is `NaN` when nothing
+qualifies, so "no slab" stays distinguishable from "slab at the surface".
 
-Diagnostic only: nothing in the physics reads either value.
+Both thresholds are capped at `mp.density_ice`, since `mp.impermeable_density` may be set
+above it (see [`ice_slab_diagnostics`](@ref) source) and solid ice must always count.
+
+Diagnostic only: nothing in the physics reads either value. Called from
+[`gemb_core`](@ref) after the grid controllers, not from [`calculate_melt`](@ref), so the
+column scanned is the one the profile output records at that timestamp.
 """
 function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
     mp::ModelParameters)
 
     d_tolerance = 1e-11
-    d_phc = mp.impermeable_density
+    # Solid ice is dense enough to count whatever `impermeable_density` is set to: the
+    # criterion may legitimately exceed `density_ice` (the validator allows up to 917 so that
+    # lowering `density_ice` does not reject the default), and in that configuration every
+    # pure-ice cell still blocks flow via the unconditional `density_ice` clause in
+    # `calculate_melt`. Taking the smaller of the two keeps this scan and that branch in
+    # agreement instead of reporting "no slab" for a column of solid ice.
+    d_phc = min(mp.impermeable_density, mp.density_ice)
     dzmin = mp.impermeable_thickness
 
     thickness = 0.0
@@ -422,7 +440,10 @@ function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
             end
             run_dz += dz[i]
             # First qualifying run wins; keep scanning for `thickness` but never overwrite.
-            if isnan(depth) && run_dz > dzmin + d_tolerance
+            # A cell at `density_ice` blocks on its own, however thin, matching the
+            # unconditional clause in `calculate_melt`.
+            if isnan(depth) && (run_dz > dzmin + d_tolerance ||
+                                density[i] >= mp.density_ice - d_tolerance)
                 depth = z_top
             end
         else
