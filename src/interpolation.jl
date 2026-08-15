@@ -16,7 +16,16 @@ evolves with every timestep.
 A `DimArray` of size `length(z_target) × N` with `Z(z_target)` and `Ti` dimensions.
 When `A` is a `DimArray` with a `Ti` dimension, the time coordinates are preserved.
 
-Matches MATLAB's `gemb_interp.m`.
+Target heights outside the column — above the top cell centre or below the bottom cell
+centre — are **not extrapolated**; they are left as the missing value `NaN`. The column
+depth and the surface height both migrate over a run (the surface cell is centimetres
+thick and the base is pinned only to `z_target`'s own tolerance), so a fixed `z_target`
+range like `(-20, 0)` inevitably reaches past the column. Extrapolating there continued
+the near-basal temperature gradient into rock and produced firn temperatures above the
+melt point — values the model itself never holds. `NaN` says "no column here" instead,
+and Makie renders it as blank.
+
+Differs from MATLAB's `gemb_interp.m`, which extrapolates.
 """
 function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::AbstractVector; interp_method::Symbol=:linear)
     @assert size(z_center) == size(A) "Dimensions of z_center and A must agree."
@@ -49,7 +58,7 @@ function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::Abst
         a_src = A[isf, k]
 
         if interp_method == :linear
-            A_regularized[:, k] = _interp1_extrap(z_src, a_src, z_target)
+            A_regularized[:, k] = _interp1(z_src, a_src, z_target)
         elseif interp_method == :nearest
             A_regularized[:, k] = _interp1_nearest(z_src, a_src, z_target)
         else
@@ -61,12 +70,14 @@ function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::Abst
 end
 
 """
-    _interp1_extrap(x, y, xi)
+    _interp1(x, y, xi)
 
-1D linear interpolation with extrapolation.
-x must be sorted (ascending or descending). Extrapolates beyond bounds.
+1D linear interpolation, **without** extrapolation: query points outside `[min(x), max(x)]`
+return `NaN` rather than a continuation of the end interval. `x` must be sorted (ascending
+or descending). See [`gemb_interp`](@ref) for why the ends are missing rather than
+extrapolated.
 """
-function _interp1_extrap(x::AbstractVector, y::AbstractVector, xi::AbstractVector)
+function _interp1(x::AbstractVector, y::AbstractVector, xi::AbstractVector)
     n = length(x)
     result = similar(xi, Float64)
 
@@ -78,11 +89,13 @@ function _interp1_extrap(x::AbstractVector, y::AbstractVector, xi::AbstractVecto
 
         if ascending
             # Find bracketing interval
-            if xq <= x[1]
-                # Extrapolate below
+            if xq < x[1] || xq > x[end]
+                # Outside the data: no extrapolation.
+                result[i] = NaN
+                continue
+            elseif xq == x[1]
                 idx_lo, idx_hi = 1, 2
-            elseif xq >= x[end]
-                # Extrapolate above
+            elseif xq == x[end]
                 idx_lo, idx_hi = n - 1, n
             else
                 # Binary search for interval
@@ -91,9 +104,13 @@ function _interp1_extrap(x::AbstractVector, y::AbstractVector, xi::AbstractVecto
             end
         else
             # Descending x
-            if xq >= x[1]
+            if xq > x[1] || xq < x[end]
+                # Outside the data: no extrapolation.
+                result[i] = NaN
+                continue
+            elseif xq == x[1]
                 idx_lo, idx_hi = 1, 2
-            elseif xq <= x[end]
+            elseif xq == x[end]
                 idx_lo, idx_hi = n - 1, n
             else
                 # Linear search (descending)
@@ -124,11 +141,17 @@ end
 """
     _interp1_nearest(x, y, xi)
 
-1D nearest-neighbor interpolation with extrapolation.
+1D nearest-neighbor interpolation, **without** extrapolation: query points outside
+`[min(x), max(x)]` return `NaN`, matching [`_interp1`](@ref).
 """
 function _interp1_nearest(x::AbstractVector, y::AbstractVector, xi::AbstractVector)
     result = similar(xi, Float64)
+    x_lo, x_hi = extrema(x)
     for i in eachindex(xi)
+        if xi[i] < x_lo || xi[i] > x_hi
+            result[i] = NaN
+            continue
+        end
         _, idx = findmin(abs.(x .- xi[i]))
         result[i] = y[idx]
     end

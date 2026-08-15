@@ -324,6 +324,13 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   cycles — which a column creeping steadily at just under the tolerance passes while still
   densifying — this bounds the trend. When both are given both must hold. Not present in
   MATLAB; off by default, so it changes no existing run.
+- **No initialized cell starts above the melt point.** `initialize_profile` clamps the
+  temperature it fills to 273.15 K, with a warning. The climate-derived path was already
+  clamped in `_steady_state_temperature`; this extends the ceiling to the two
+  MATLAB-fidelity flags (`constant_temperature`, and both flags together), which filled
+  `temperature_air_mean` verbatim as MATLAB's `model_initialize_profile` does. Affects only
+  sites whose mean annual air temperature is above freezing, where the old column began as
+  ice above its melting point holding no water — enthalpy the column has no state to carry.
 
 ### Fixed-length vertical grid
 

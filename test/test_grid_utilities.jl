@@ -83,6 +83,36 @@ using GEMB
         @test z_multi[1, 2] ≈ -0.1
     end
 
+    @testset "gemb_interp does not extrapolate" begin
+        # Two-cell column, centres at -0.5 and -1.5 m, with a steep gradient. A target grid
+        # that reaches past both ends must return NaN there rather than continuing the end
+        # interval: extrapolating the near-basal gradient past the column base is what
+        # produced firn temperatures above the melt point in plotted output.
+        z_center = [-0.5 -0.5; -1.5 -1.5]
+        T = [263.15 263.15; 273.15 273.15]        # +10 K per metre downward
+        z_target = [0.0, -0.5, -1.0, -1.5, -3.0]
+
+        g = gemb_interp(z_center, T, z_target)
+
+        @test isnan(g[1, 1])                      # above the top cell centre
+        @test g[2, 1] ≈ 263.15                    # exactly at the top centre
+        @test g[3, 1] ≈ 268.15                    # interpolated between the centres
+        @test g[4, 1] ≈ 273.15                    # exactly at the bottom centre
+        @test isnan(g[5, 1])                      # below the bottom centre
+        @test maximum(filter(isfinite, parent(g))) <= 273.15
+
+        # Nearest-neighbour agrees on the missing ends.
+        gn = gemb_interp(z_center, T, z_target; interp_method=:nearest)
+        @test isnan(gn[1, 1]) && isnan(gn[5, 1])
+        @test gn[3, 1] ∈ (263.15, 273.15)
+
+        # Ascending `z_center` (an upward-ordered column) takes the other branch and must
+        # behave identically.
+        g_asc = gemb_interp(reverse(z_center, dims=1), reverse(T, dims=1), z_target)
+        @test isnan(g_asc[1, 1]) && isnan(g_asc[5, 1])
+        @test g_asc[3, 1] ≈ 268.15
+    end
+
     @testset "fast_divisors" begin
         # Test small numbers
         @test fast_divisors(1) == [1]

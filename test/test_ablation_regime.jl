@@ -49,11 +49,15 @@
 
     # The escape hatch still yields the old exact pure-ice column on the *configured*
     # grid, which is what the MATLAB-fidelity sites rely on.
-    prof_const = initialize_profile(mp, cf;
-        constant_density=true, constant_temperature=true)
+    # This site's mean annual air temperature is above freezing, so the fidelity path
+    # clamps it: no initialized cell may start above the melt point, since the column
+    # has no way to carry that enthalpy.
+    prof_const = @test_logs (:warn, r"above the melt point") match_mode = :any (
+        initialize_profile(mp, cf; constant_density=true, constant_temperature=true))
     @test parent(prof_const[:dz]) == GEMB.initialize_grid(mp)
     @test all(parent(prof_const[:density]) .== mp.density_ice)
-    @test all(parent(prof_const[:temperature]) .== cf.temperature_air_mean)
+    @test cf.temperature_air_mean > GEMB.CtoK
+    @test all(parent(prof_const[:temperature]) .== GEMB.CtoK)
 
     N = length(profile[:dz])
     Z_fixed = sum(profile[:dz])

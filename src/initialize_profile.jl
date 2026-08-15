@@ -46,12 +46,16 @@ derived depth.
 - `constant_density`: fill density with `mp.density_ice`, with the matching
   bare-ice grain state (`grain_dendricity = 0`, `grain_sphericity = 0`,
   `grain_radius = 2.5` mm) and no pore water.
-- `constant_temperature`: fill temperature with `cf.temperature_air_mean`,
-  unclamped.
+- `constant_temperature`: fill temperature with `cf.temperature_air_mean`, clamped
+  to the melt point as every other path is.
 
 Setting **both** takes a separate early-return path
 ([`_uniform_ice_profile`](@ref)) that reproduces the MATLAB column exactly: pure
 ice, uniform mean-annual temperature, no march and no climate summary.
+
+Every path here returns temperature at or below the melt point (273.15 K): the
+climate-derived march clamps in [`_steady_state_temperature`](@ref), and the
+fidelity paths clamp `cf.temperature_air_mean` (with a warning) before filling.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
@@ -65,6 +69,17 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     @assert T_mean > 0 "temperature_air_mean must exceed 0 K."
     if T_mean < 100
         @warn "temperature_air_mean should be in kelvin, but is below 100, suggesting an error."
+    end
+
+    # No initialized cell may start above the melt point: the column carries no
+    # enthalpy above `CtoK` (that energy is melt, and there is no water here to hold
+    # it), so a warmer cell would be an unphysical heat reservoir that the first
+    # timesteps discharge downward. The climate-derived path is already clamped in
+    # `_steady_state_temperature`; clamping the mean here covers the two fidelity
+    # paths, which fill it verbatim.
+    if T_mean > CtoK
+        @warn "temperature_air_mean is above the melt point; initialized temperature clamped to 0 °C." T_mean
+        T_mean = CtoK
     end
 
     # MATLAB-fidelity path: nothing here is climate-derived, so short-circuit
@@ -125,6 +140,9 @@ cap in [`calculate_grain_size`](@ref)) and no pore water.
 Reached only when both fidelity flags of [`initialize_profile`](@ref) are set.
 Kept as a separate function taking no climate-derived input so no future change to
 the steady-state scheme can perturb it.
+
+`T_mean` is expected already clamped to `CtoK` by the caller — the clamp lives
+there so it covers both fidelity paths in one place.
 """
 function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
     dz = initialize_grid(mp)
