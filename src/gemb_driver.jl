@@ -139,6 +139,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         valid_profile_length=DimArray(fill(0, n_outputs), (ti_dim,)),
         ice_slab_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         ice_slab_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        aquifer_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        aquifer_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
 
         # Forcing summary outputs
         temperature_air=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -325,6 +327,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_percolation_depth = parent(output[:percolation_depth])
     out_slab_thickness = parent(output[:ice_slab_thickness])
     out_slab_depth = parent(output[:ice_slab_depth])
+    out_aquifer_thickness = parent(output[:aquifer_thickness])
+    out_aquifer_depth = parent(output[:aquifer_depth])
     out_thick = parent(output[:thickness_cumulative])
     out_ta = parent(output[:temperature_air])
     out_precip = parent(output[:precipitation])
@@ -487,6 +491,11 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 # poison for the whole interval.
                 out_slab_thickness[oi] = flux.ice_slab_thickness
                 out_slab_depth[oi] = flux.ice_slab_depth
+
+                # Instantaneous for the same reasons: the water table is column state, and
+                # `aquifer_depth` is NaN for a dry column.
+                out_aquifer_thickness[oi] = flux.aquifer_thickness
+                out_aquifer_depth[oi] = flux.aquifer_depth
 
                 # Forcing summary
                 out_ta[oi] = cum_temperature_air / cum_count

@@ -166,10 +166,39 @@ RetMIP's conclusion (their Sect. 5.2) is that until the physics of preferential 
 is better constrained by field and laboratory observation, the more complex schemes do not
 necessarily give better results than simple bucket schemes.
 
-The lever RetMIP does identify for bucket schemes is the impermeability criterion, which is
-exposed here as `impermeable_density` and `impermeable_thickness` — see
+The levers RetMIP does identify for bucket schemes are *when* water is blocked and *how fast*
+it then leaves, not how deep it goes. Both are exposed:
+
+**The impermeability criterion** — `impermeable_density` and `impermeable_thickness`. See
 [`calculate_melt`](@ref) and the physics-deviations notes in the README for the range the
 participating models spanned and how it maps onto their skill at the ice-slab site.
+
+**The runoff timescale** — `runoff_method`, with `surface_slope` as the driving hydraulic
+gradient. Under the `:instantaneous` default (MATLAB's behaviour) blocked water leaves the
+column within the timestep and no cell can ever hold more than its irreducible water. The
+other two let it pond into the pore space above the barrier and drain laterally over a finite
+timescale:
+
+| `runoff_method` | Runoff law | Reference |
+|---|---|---|
+| `:instantaneous` | All blocked water leaves within the timestep | MATLAB GEMB; the default |
+| `:ZuoOerlemans` | `drain = excess · min(1, Δt/τ)`, `τ = c₁ + c₂·exp(−c₃·S)` | Zuo and Oerlemans (1996) eqs. 21–22, coefficients via Langen et al. (2017) |
+| `:Darcy` | `drain = min(excess, ρ_w·Δt·K_sat·K_rel·S)` | Calonne et al. (2012) eq. 6 with van Genuchten (1980) / Yamaguchi et al. (2012) relative permeability |
+
+This is where RetMIP's evidence actually points. The two models with the lowest firn-temperature
+error at the ice-slab site KAN\_U — DMIHH (−1.6 °C) and GEUS (+0.6 °C), against a spread
+reaching +4.7 °C — were both bucket schemes that *delay* runoff rather than models that
+percolate deeper; DMIHH uses the `:ZuoOerlemans` timescale and GEUS a Darcy flux to a virtual
+downslope neighbour. At the other end, DTU runs water off immediately and produced runoff
+unrealistic enough that RetMIP excluded it from their multi-model mean.
+
+Delayed runoff is also what makes saturated firn representable at all: with the hard
+irreducible clamp of `:instantaneous`, a saturated cell cannot exist, and RetMIP (their
+Sect. 5.4) note that models so constrained "are incapable of modeling actual aquifers" —
+the firn-aquifer site was dropped from their retention evaluation for exactly this reason.
+Aquifers form bottom-up under either delayed method, and the `aquifer_thickness` and
+`aquifer_depth` outputs report the resulting water table. Both are new options: they are off
+at the default, which stays bit-identical to MATLAB.
 
 ## Output Variables
 
@@ -206,6 +235,8 @@ The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes wit
 | `percolation_depth` | m | `time: maximum` | Deepest the wetting front reached during the interval; comparable to upward-looking-radar estimates |
 | `ice_slab_thickness` | m | `time: point` | Total thickness of cells at or above `impermeable_density`, whether or not they block flow |
 | `ice_slab_depth` | m | `time: point` | Depth to the top of the shallowest flow-blocking ice slab; `NaN` when none qualifies |
+| `aquifer_thickness` | m | `time: point` | Total thickness of cells holding standing (super-irreducible) water; 0 unless `runoff_method` delays runoff |
+| `aquifer_depth` | m | `time: point` | Depth to the water table, i.e. the shallowest cell above irreducible saturation; `NaN` when the column holds no standing water |
 | `valid_profile_length` | 1 | `time: point` | Number of active vertical levels |
 | `temperature_air` | K | `time: mean` | Near-surface air temperature (forcing summary) |
 | `precipitation` | kg m⁻² | `time: sum` | Total precipitation (forcing summary) |

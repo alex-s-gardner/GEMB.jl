@@ -37,6 +37,90 @@ end
     @test k_out[1] ≈ expected atol = 1e-8
 end
 
+@testset "Calonne2019 method" begin
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Calonne2019)
+
+    # Hand-computed from Calonne et al. (2019) eq. 5, written out independently of the
+    # implementation (the same expression the Community Firn Model uses).
+    function k_reference(T, ρ)
+        θ = 1 / (1 + exp(-2 * 0.02 * (ρ - 450.0)))
+        k_snow = 0.024 - 1.23e-4 * ρ + 2.5e-6 * ρ^2
+        k_firn = 2.107 + 0.003618 * (ρ - 917.0)
+        K_ice = 9.828 * exp(-5.7e-3 * T)
+        return (1 - θ) * (K_ice / 2.107) * k_snow + θ * (K_ice / 2.107) * k_firn
+    end
+
+    for T in (240.0, 273.15), ρ in (200.0, 450.0, 700.0, 917.0)
+        @test GEMB.thermal_conductivity(T, ρ, mp) ≈ k_reference(T, ρ) rtol = 1e-14
+    end
+
+    # Continuous into ice by construction: no ice branch, and K(917) is K_ice(T). The
+    # residual is the logistic weight's distance from 1 at ρ = 917 (~3e-10 relative).
+    for T in (240.0, 273.15)
+        @test GEMB.thermal_conductivity(T, 917.0, mp) ≈ 9.828 * exp(-5.7e-3 * T) rtol = 1e-8
+    end
+
+    # Temperature dependence, which the 2011 fit lacks
+    @test GEMB.thermal_conductivity(240.0, 500.0, mp) > GEMB.thermal_conductivity(270.0, 500.0, mp)
+
+    # Monotone in density over the full column range
+    k_profile = [GEMB.thermal_conductivity(260.0, ρ, mp) for ρ in 50.0:5.0:916.0]
+    @test all(diff(k_profile) .> 0)
+    @test all(k_profile .> 0)
+
+    # Vector method agrees with the scalar method
+    @test GEMB.thermal_conductivity([260.0, 250.0], [300.0, 800.0], mp) ==
+          [GEMB.thermal_conductivity(260.0, 300.0, mp), GEMB.thermal_conductivity(250.0, 800.0, mp)]
+end
+
+@testset "Marchenko2019 method" begin
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Marchenko2019)
+    k_marchenko(ρ) = 0.301e-2 * ρ - 0.724
+    k_calonne(ρ) = 0.024 - 1.23e-4 * ρ + 2.5e-6 * ρ^2
+
+    # In the calibration range (350-900) the linear fit is the larger of the two and is used
+    for ρ in (400.0, 600.0, 900.0)
+        @test GEMB.thermal_conductivity(260.0, ρ, mp) ≈ k_marchenko(ρ) rtol = 1e-14
+    end
+
+    # Below the ~321 crossing the Calonne floor takes over, so K never goes negative even
+    # though the bare fit crosses zero at ρ ≈ 241
+    for ρ in (50.0, 150.0, 240.0, 300.0)
+        @test GEMB.thermal_conductivity(260.0, ρ, mp) ≈ k_calonne(ρ) rtol = 1e-14
+    end
+    @test k_marchenko(240.0) < 0                      # the fit alone is unphysical here
+    @test GEMB.thermal_conductivity(260.0, 240.0, mp) > 0
+
+    # Positive and monotone across the whole firn range, and continuous at the handover
+    k_profile = [GEMB.thermal_conductivity(260.0, ρ, mp) for ρ in 50.0:1.0:916.0]
+    @test all(k_profile .> 0)
+    @test all(diff(k_profile) .> 0)
+    @test maximum(abs.(diff(k_profile))) < 1e-2       # no step at the floor crossover
+
+    # Higher than Sturm and Calonne through the firn, the direction RetMIP's cold bias implies
+    mp_sturm = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
+    mp_calonne = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Calonne)
+    for ρ in (500.0, 700.0, 800.0)
+        @test GEMB.thermal_conductivity(260.0, ρ, mp) > GEMB.thermal_conductivity(260.0, ρ, mp_sturm)
+        @test GEMB.thermal_conductivity(260.0, ρ, mp) > GEMB.thermal_conductivity(260.0, ρ, mp_calonne)
+    end
+
+    # Temperature-independent in firn, but the ice branch still applies at density_ice
+    @test GEMB.thermal_conductivity(240.0, 600.0, mp) == GEMB.thermal_conductivity(270.0, 600.0, mp)
+    @test GEMB.thermal_conductivity(240.0, 917.0, mp) ≈ 9.828 * exp(-5.7e-3 * 240.0) atol = 1e-8
+end
+
+@testset "Unknown conductivity method errors" begin
+    # `ModelParameters` is not validated on construction, so the guard in the dispatch helper
+    # is what catches a typo reaching the physics.
+    mp = GEMB.ModelParameters(thermal_conductivity_method=:NotAMethod)
+    @test_throws ErrorException GEMB.thermal_conductivity(260.0, 400.0, mp)
+    @test_throws AssertionError GEMB.validate_parameters(mp)
+    for m in (:Sturm, :Calonne, :Calonne2019, :Marchenko2019)
+        @test GEMB.validate_parameters(GEMB.ModelParameters(thermal_conductivity_method=m)) === nothing
+    end
+end
+
 @testset "Ice conductivity" begin
     mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Sturm)
     density_ice = [917.0]
