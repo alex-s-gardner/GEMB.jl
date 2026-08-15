@@ -25,43 +25,13 @@ function _make_grain_cfs(; dt=86400.0)
     )
 end
 
-@testset "Albedo method skip" begin
-    n = 5
-    temperature = 260.0 * ones(n)
-    dz = 0.1 * ones(n)
-    density = 300.0 * ones(n)
-    water = zeros(n)
-    grain_radius = 0.5 * ones(n)
-    grain_dendricity = 0.5 * ones(n)
-    grain_sphericity = 0.5 * ones(n)
-    cfs = _make_grain_cfs()
-
-    # Method "None" should skip grain evolution. The skip is legitimate here only because
-    # the other defaults (:Arthern densification, :uniform emissivity) read no grain size
-    # either — see the "grain size runs whenever a consumer needs it" testset below.
-    mp_none = GEMB.ModelParameters(albedo_method=:None)
-    (gs_out, gdn_out, gsp_out) = GEMB.calculate_grain_size(
-        temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, cfs, mp_none)
-
-    @test gs_out == grain_radius
-    @test gdn_out == grain_dendricity
-    @test gsp_out == grain_sphericity
-
-    # Method "GreuellKonzelmann" should also skip
-    mp_gk = GEMB.ModelParameters(albedo_method=:GreuellKonzelmann)
-    (gs_out2, _, _) = GEMB.calculate_grain_size(
-        temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, cfs, mp_gk)
-
-    @test gs_out2 == grain_radius
-end
-
-@testset "grain size runs whenever a consumer needs it" begin
-    # The skip is an optimization, not physics: grains coarsen in a real snowpack whichever
-    # albedo scheme is configured. Gating it on `albedo_method` alone froze `grain_radius`
-    # at the initial profile while :ArthernB/:Crocus densification (which goes as 1/r²) and
-    # the grain-radius emissivity methods kept reading it.
+@testset "grain size evolves regardless of configuration" begin
+    # Metamorphism is not contingent on model configuration. MATLAB skips
+    # `calculate_grain_size` unless `albedo_method` is :GardnerSharp or :BrunLefebre, which
+    # covers only two of the four schemes that read `grain_radius` — :ArthernB/:Crocus/
+    # :CrocusPure densification (which goes as 1/r²) and the grain-radius emissivity
+    # methods read it too, and select independently of `albedo_method`. Those configurations
+    # silently ran with grain size frozen at the initial profile.
     n = 5
     temperature = 260.0 * ones(n)
     dz = 0.1 * ones(n)
@@ -76,30 +46,24 @@ end
         copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity),
         cfs, mp)[1] != grain_radius
 
-    # The predicate enumerates every consumer.
-    @test GEMB.grain_size_required(GEMB.ModelParameters())                      # :GardnerSharp
-    @test GEMB.grain_size_required(GEMB.ModelParameters(albedo_method=:BrunLefebre))
+    # Every albedo scheme, including the ones MATLAB skips on.
+    for am in (:GardnerSharp, :BrunLefebre, :GreuellKonzelmann, :None)
+        @test evolves(GEMB.ModelParameters(albedo_method=am))
+    end
+
+    # The two consumers that select independently of `albedo_method`, paired with an albedo
+    # scheme that reads no grain size — the configurations the old gate broke.
     for dm in (:ArthernB, :Crocus, :CrocusPure)
-        mp = GEMB.ModelParameters(albedo_method=:None, densification_method=dm)
-        @test GEMB.grain_size_required(mp)
-        @test evolves(mp)
+        @test evolves(GEMB.ModelParameters(albedo_method=:None, densification_method=dm))
     end
     for em in (:grain_radius_threshold, :grain_radius_w_threshold)
-        mp = GEMB.ModelParameters(albedo_method=:None, emissivity_method=em)
-        @test GEMB.grain_size_required(mp)
-        @test evolves(mp)
+        @test evolves(GEMB.ModelParameters(albedo_method=:None, emissivity_method=em))
     end
 
-    # ...and still skips when genuinely nothing reads it, so the optimization survives.
-    mp_skip = GEMB.ModelParameters(albedo_method=:None, densification_method=:Arthern,
-        emissivity_method=:uniform)
-    @test !GEMB.grain_size_required(mp_skip)
-    @test !evolves(mp_skip)
-
-    # A grain-size-free albedo scheme paired with a grain-size-dependent densification
-    # scheme is the exact configuration the bug silently broke.
-    @test GEMB.grain_size_required(
-        GEMB.ModelParameters(albedo_method=:GreuellKonzelmann, densification_method=:ArthernB))
+    # ...and a configuration where nothing reads grain size at all still evolves it, since
+    # the work is now unconditional rather than gated on who happens to consume the result.
+    @test evolves(GEMB.ModelParameters(albedo_method=:None, densification_method=:Arthern,
+        emissivity_method=:uniform))
 end
 
 @testset "Dendritic dry low gradient" begin

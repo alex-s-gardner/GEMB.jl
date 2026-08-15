@@ -11,38 +11,6 @@ and the initial-guess one (`_seb_annual_melt`), so both use one expression.
     0.029 * pressure / (R_GAS * temperature)
 
 """
-    grain_size_required(mp::ModelParameters) -> Bool
-
-Whether any part of this configuration reads `grain_radius`, and therefore whether
-[`calculate_grain_size`](@ref) has to run.
-
-Four schemes consume grain size, across three physics modules:
-
-| Consumer | Selected by |
-|:---|:---|
-| [`calculate_albedo`](@ref) | `albedo_method ∈ (:GardnerSharp, :BrunLefebre)` |
-| [`calculate_shortwave_radiation`](@ref) | `albedo_method == :BrunLefebre` (subsurface absorption) |
-| [`calculate_density`](@ref) | `densification_method ∈ (:ArthernB, :Crocus, :CrocusPure)` |
-| [`calculate_temperature`](@ref) emissivity | `emissivity_method ∈ (:grain_radius_threshold, :grain_radius_w_threshold)` |
-
-This predicate exists so that list lives in one place. Skipping metamorphism is purely an
-optimization — grains coarsen in a real snowpack whichever albedo scheme is configured — so
-the guard has to enumerate every consumer. Gating it on `albedo_method` alone, as MATLAB
-does, freezes `grain_radius` at its initial profile while `:ArthernB`/`:Crocus` densification
-and the grain-radius emissivity methods keep reading it.
-
-**Add a branch here when adding a scheme that reads `grain_radius`.**
-"""
-grain_size_required(mp::ModelParameters) =
-    mp.albedo_method === :GardnerSharp ||
-    mp.albedo_method === :BrunLefebre ||
-    mp.densification_method === :ArthernB ||
-    mp.densification_method === :Crocus ||
-    mp.densification_method === :CrocusPure ||
-    mp.emissivity_method === :grain_radius_threshold ||
-    mp.emissivity_method === :grain_radius_w_threshold
-
-"""
     fast_divisors(n::Integer)
 
 Find all positive divisors of integer `n`, returned sorted.

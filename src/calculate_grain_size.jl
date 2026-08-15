@@ -8,11 +8,16 @@ Accounts for different physical processes depending on snow state:
 - Nondendritic Dry Snow: Temperature gradient metamorphism using Marbouty (1980).
 - Wet Snow: Rapid grain growth due to liquid water using Brun (1989).
 
-Executes only when some part of the configuration reads grain size — see
-[`grain_size_required`](@ref). The skip is a performance optimization, not physics:
-metamorphism proceeds in a real snowpack regardless of which albedo scheme is selected, so
-the guard must cover every consumer or it silently freezes an input the rest of the model is
-still reading.
+Runs unconditionally. Metamorphism is not contingent on model configuration — grains coarsen
+in a real snowpack whichever albedo scheme is selected — and `grain_radius` is read by four
+schemes across three modules ([`calculate_albedo`](@ref),
+[`calculate_shortwave_radiation`](@ref), `:ArthernB`/`:Crocus`/`:CrocusPure` densification in
+[`calculate_density`](@ref), and the grain-radius emissivity methods in
+[`calculate_temperature`](@ref)). MATLAB skips this function unless `albedo_method` is
+`:GardnerSharp` or `:BrunLefebre`, which covers only the first two, so the other
+configurations silently ran with grain size frozen at the initial profile. Enumerating the
+consumers to skip the work costs 11% on the runs that can skip it and re-breaks silently
+whenever a new consumer is added, so the work is simply always done.
 
 Returns `(grain_radius, grain_dendricity, grain_sphericity)`. `grain_dendricity`
 and `grain_sphericity` are updated in place; `grain_radius` is returned as a new
@@ -36,11 +41,6 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     T_tolerance = 1e-10
     gdn_tolerance = 1e-10
     water_tolerance = 1e-13
-
-    # Skip only when nothing in this configuration reads grain size.
-    if !grain_size_required(mp)
-        return grain_radius, grain_dendricity, grain_sphericity
-    end
 
     m = length(temperature)
 
