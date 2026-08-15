@@ -420,6 +420,49 @@ What this changes for consumers of the output:
   it exports leaves laterally and is reported as the new `strain_thinning` output and in the
   mass budget, separately from the basal flux. MATLAB has no ice-dynamic term; at the default
   the two agree exactly.
+- **Added `runoff_method` and `surface_slope`**, replacing instantaneous runoff with a
+  selectable lateral drainage timescale. MATLAB routes all blocked water to runoff within the
+  timestep. Under `:ZuoOerlemans` the drained fraction is `min(1, Δt/τ)` with
+  `τ = c₁ + c₂·exp(−c₃·S)`, `c₁ = 0.33 d`, `c₂ = 25 d`, `c₃ = 140` (Zuo and Oerlemans 1996
+  eqs. 21–22, coefficients via Lefebre et al. 2003 / Langen et al. 2017); under `:Darcy` it is
+  `min(excess, ρ_w·Δt·K_sat·K_rel·S)` with `K_sat` from Calonne et al. (2012) eq. 6 and `K_rel`
+  from van Genuchten (1980) with the Yamaguchi et al. (2012) parameterization. These are the
+  schemes used by the two RetMIP models with the lowest firn-temperature error at the ice-slab
+  site KAN_U (DMIHH −1.6 °C, GEUS +0.6 °C, against a spread reaching +4.7 °C). The Community
+  Firn Model's `runoffZuoOerlemans` uses `c₁ = 1.5 d` rather than 0.33 while citing the same
+  source; the two published lineages disagree on this coefficient and GEMB follows Langen et
+  al., the DMIHH lineage RetMIP evaluated. The difference is immaterial at ice-sheet slopes
+  (21 d either way at `S = 0.01`). Default `:instantaneous` reproduces MATLAB bit-identically.
+- **Water may exceed irreducible saturation when runoff is delayed.** MATLAB clamps pore water
+  to irreducible at every retention site, so a saturated cell cannot exist and firn aquifers
+  are structurally unrepresentable (RetMIP Sect. 5.4 dropped their aquifer site from the
+  retention evaluation for this reason). When `runoff_method !== :instantaneous`, water blocked
+  at a barrier or the column base instead backs up into the pore space above it, filling each
+  cell to `pore_saturation_max` of its capacity from the barrier upward; only what reaches past
+  the surface cell runs off. Cells at or above `impermeable_density` are skipped as having no
+  connected pore space. The upward pass does not refreeze — those cells' cold content was
+  consumed during percolation — and a cold cell left holding liquid is resolved by the existing
+  refreeze-pore-water step on the next timestep. Unreachable at the `:instantaneous` default.
+- **Added `aquifer_thickness` and `aquifer_depth` diagnostics** — total thickness of cells
+  holding standing (super-irreducible) water, and the depth to the water table, the quantity
+  RetMIP evaluates aquifer representation against. Instantaneous, like the ice-slab terms, so
+  `aquifer_depth = NaN` ("no standing water") cannot poison an interval mean. Detection is
+  thresholded at `AQUIFER_TOLERANCE`, 1e-3 of a cell's pore space, rather than at the physics
+  tolerance: `calculate_melt` leaves a retaining cell at exactly irreducible, but
+  `calculate_density` then compacts it within the same timestep, shrinking the pore space
+  retention was computed against and leaving a genuine ~1e-7-of-pore-space excess that
+  accumulates between melt events. Read-only and absent from the mass and energy budgets, so
+  output is unchanged.
+- **Added `thermal_conductivity_method = :Calonne2019` and `:Marchenko2019`**, both named in
+  RetMIP's recommendations. `:Calonne2019` is Calonne et al. (2019) eq. 5, a sigmoid blend at
+  ρ = 450 kg m⁻³ between the Calonne 2011 snow quadratic and a firn branch, scaled by the
+  temperature-dependent conductivity of ice; it is continuous into ice by construction and so
+  is deliberately not short-circuited at `density_ice`. The `917` in its firn branch is the
+  paper's fitted pure-ice density, not `mp.density_ice`. `:Marchenko2019` is their eq. 30,
+  `k = 0.301e-2ρ − 0.724`, fitted over ρ = 350–900 and floored at the Calonne 2011 value below
+  their crossing near ρ = 321, where the bare fit heads negative. Both are higher than
+  `:Sturm`/`:Calonne` in firn, the direction RetMIP's cold bias at Summit and Dye-2 implies.
+  Default `:Sturm` is unchanged.
 
 ## Prerequisites
 

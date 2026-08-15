@@ -130,6 +130,17 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "impermeable_density thicker than impermeable_thickness, i.e. the " *
                 "first that blocks percolation. NaN when no run qualifies, which is " *
                 "how 'no slab' is distinguished from 'slab at the surface'."),
+    :aquifer_thickness => CFAttrs("m", "total thickness of water-saturated firn",
+        "time: point";
+        comment="Summed thickness of cells holding more water than irreducible " *
+                "saturation, i.e. standing rather than capillary-held water. 0 when " *
+                "runoff_method is instantaneous, under which no cell can exceed " *
+                "irreducible saturation. No CF standard name exists."),
+    :aquifer_depth => CFAttrs("m", "depth to the top of the shallowest saturated layer",
+        "time: point";
+        comment="Depth to the first cell holding more than its irreducible water, " *
+                "i.e. the water table. NaN when the column holds no standing water, " *
+                "which is how 'dry' is distinguished from 'water table at the surface'."),
 
     # ---- profile (Z x Ti), instantaneous snapshots --------------------------
     :temperature => CFAttrs("K", "layer temperature", "time: point";

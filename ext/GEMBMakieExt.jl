@@ -42,6 +42,8 @@ const _LABELS = Dict{Symbol,String}(
     :percolation_depth => "percolation depth",
     :ice_slab_thickness => "slab thickness",
     :ice_slab_depth => "depth to slab",
+    :aquifer_thickness => "saturated thickness",
+    :aquifer_depth => "water table",
     :thickness_cumulative => "cumulative Δ thickness",
     :densification_from_compaction => "compaction",
     :densification_from_melt => "melt",
@@ -155,11 +157,14 @@ const _SCALAR_GROUPS = [
     ("Broadband albedo", [:albedo_broadband]),
     ("Firn air content",
         [:firn_air_content, :firn_air_content_20m, :firn_air_content_10m]),
-    # Both are depths below the surface, so they share an axis. `ice_slab_depth` is NaN
-    # whenever no slab blocks flow, which Makie draws as a gap — the honest rendering of
-    # "there is nothing to plot here", and the reason the layer is not interval-averaged.
-    ("Percolation and ice slabs",
-        [:percolation_depth, :ice_slab_depth, :ice_slab_thickness]),
+    # All depths/thicknesses below the surface, so they share an axis. `ice_slab_depth` and
+    # `aquifer_depth` are NaN whenever nothing qualifies, which Makie draws as a gap — the
+    # honest rendering of "there is nothing to plot here", and the reason neither layer is
+    # interval-averaged. The aquifer series are flat zero / all-NaN under the
+    # `runoff_method = :instantaneous` default, where no water can stand.
+    ("Percolation, ice slabs and standing water",
+        [:percolation_depth, :ice_slab_depth, :ice_slab_thickness,
+            :aquifer_depth, :aquifer_thickness]),
     ("Densification", [:densification_from_compaction, :densification_from_melt]),
     ("Strain thinning", [:strain_thinning]),
 ]

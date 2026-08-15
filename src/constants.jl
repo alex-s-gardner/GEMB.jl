@@ -82,6 +82,20 @@ const GDN_TOLERANCE = 1e-10            # grain dendricity / sphericity [0,1] cla
 const E_TOLERANCE = 1e-3               # energy-conservation check [J] (verbose only)
 const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offset [K]
 
+# Diagnostic threshold, not a branch tolerance: how far above irreducible a cell must be for
+# `aquifer_diagnostics` to call it saturated. Deliberately loose, and expressed as a fraction
+# of the cell's pore space rather than as a mass.
+#
+# The reason is physical, not arithmetic. `calculate_melt` leaves a retaining cell at exactly
+# its irreducible water, but `calculate_density` then compacts the cell in the same timestep,
+# shrinking the pore space that irreducible water was computed against. The cell is left
+# marginally over-saturated — a genuine excess of order 1e-4 kg m-2 per timestep, which
+# accumulates between melt events. A mass threshold cannot separate that from a thin aquifer,
+# because the two differ in saturation, not in mass: compaction residue sits ~1e-7 of pore
+# space above irreducible, while ponded water reaches 1e-1 to 1. Nothing in the physics reads
+# this; it only decides what `aquifer_diagnostics` reports.
+const AQUIFER_TOLERANCE = 1e-3         # standing-water detection [fraction of pore space]
+
 """
     energy_tolerance(E_reference)
 

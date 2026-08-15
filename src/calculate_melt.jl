@@ -56,6 +56,41 @@ Water is routed to runoff at a contiguous run of cells at or above `mp.impermeab
 thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m, as in MATLAB; across
 the RetMIP models the density criterion spans 810–917 kg m-3 — see `ModelParameters`).
 
+# Ponding above a barrier
+
+What happens to water that reaches a barrier depends on `mp.runoff_method`:
+
+- `:instantaneous` (the default, and MATLAB's behaviour) — it leaves the column in the same
+  timestep. Every cell is capped at its irreducible saturation, so the column can never hold
+  standing water.
+- `:ZuoOerlemans` / `:Darcy` — it *backs up*. After the downward percolation loop, an upward
+  pass fills the cells above each barrier to their pore capacity
+  `mp.pore_saturation_max·(ρᵢ − ρ)·dz` [kg m-2], deepest first; only what is left after cell 1
+  is full genuinely leaves as runoff, the column then being saturated to the surface. Water in
+  excess of irreducible instead drains laterally, over a finite timescale, in
+  [`apply_lateral_drainage!`](@ref). Barrier cells are excluded from the fill: at or above
+  `mp.impermeable_density` there is no connected pore space to pond in, which is the premise
+  of their being impermeable in the first place.
+
+  The capacity uses the same `(ρᵢ − ρ)·S·dz` form as [`irreducible_saturation`](@ref) with
+  `S = mp.pore_saturation_max`, so `water/capacity` is exactly the saturation `S_wi` is
+  defined against and a cell at `S_wi = 1` reads as full rather than over-full.
+
+  The upward pass does not refreeze what it deposits, even into a cell that is still cold
+  (a cell can pass water down while retaining cold content if its refreeze was capped by
+  `d_max` rather than by cold content). Any such cell is resolved at the top of the *next*
+  timestep by the REFREEZE PORE WATER block above, so the only cost is a one-step delay; mass
+  and energy are conserved either way, because pore water and runoff carry the same
+  melt-point enthalpy.
+
+  Firn aquifers then form bottom-up with no further machinery: water still drains to
+  irreducible everywhere it passes, piles up at the deepest barrier, and backs up from there.
+  RetMIP (Vandecrux et al., 2020, Sect. 5.4) excluded the firn-aquifer site from its retention
+  evaluation for exactly this reason — models that cannot hold water above irreducible
+  saturation cannot represent an aquifer at all.
+
+  This deviates from MATLAB, which has only the `:instantaneous` behaviour.
+
 # No preferential-flow domain
 
 This is a single-domain bucket scheme: water descends cell by cell through the matrix, and
@@ -70,7 +105,9 @@ growing near-surface ice slabs several metres thick where none exist. Their one 
 the firn-aquifer site, which only they recharged. RetMIP's conclusion (their Sect. 5.2) is
 that until preferential flow in firn is better constrained observationally, the more complex
 schemes do not necessarily give better results than simple bucket schemes; the productive
-lever for a bucket scheme is instead the impermeability criterion above.
+levers for a bucket scheme are instead the impermeability criterion and the runoff timescale
+above — the two best-performing models at the ice-slab site KAN_U were bucket schemes that
+delay runoff rather than models that percolate deeper.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
 age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
@@ -400,11 +437,17 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
 
+        # Let blocked water back up into the pore space above the barrier instead of leaving
+        # in this timestep, unless `runoff_method` is `:instantaneous` (the MATLAB default,
+        # under which this returns the blocked mass unchanged and touches nothing).
+        runoff_blocked = pond_blocked_water!(M, density, water, water_delta, age,
+            runoff, flux_dn, flux_age, Xi, mp)
+
         # adjust pore water
         water = water .+ water_delta
 
         # calculate runoff_total
-        runoff_total = sum(runoff) + flux_dn[Xi]
+        runoff_total = sum(runoff) + runoff_blocked
 
         # Wetting-front depth [m], for comparison against upward-looking radar (e.g. Heilig et
         # al., 2018, as used by RetMIP): the base of the deepest cell water reached. Taken
@@ -452,6 +495,110 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
     age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
+end
+
+"""
+    pore_capacity(mp, density, dz) -> capacity [kg m-2]
+
+Maximum water a cell can hold, `mp.pore_saturation_max·(ρᵢ − ρ)·dz`.
+
+Deliberately the same `(ρᵢ − ρ)·S·dz` form as the retention in
+[`irreducible_saturation`](@ref), with `S = mp.pore_saturation_max` in place of `S_wi`, so
+that `water/capacity` is exactly the saturation `S_wi` is defined against: a cell holding its
+irreducible water sits at `S_wi/pore_saturation_max` of capacity, and one at `S_wi = 1` reads
+as full rather than over-full. The physically exact pore mass `ρ_w·dz·(1 − ρ/ρᵢ)` would
+disagree with the retention expression unless `ρ_w = ρᵢ`, and mixing the two conventions
+would let a cell exceed capacity while still under saturation 1.
+
+Returns 0 for a cell at or above `mp.density_ice`, which has no pore space at all.
+"""
+@inline pore_capacity(mp::ModelParameters, density::Float64, dz::Float64) =
+    max(0.0, mp.pore_saturation_max * (mp.density_ice - density) * dz)
+
+"""
+    pond_blocked_water!(M, density, water, water_delta, age, runoff, flux_dn, flux_age, Xi, mp)
+        -> runoff_blocked [kg m-2]
+
+Back water that percolation could not pass — the runoff each cell generated, plus the basal
+outflow `flux_dn[Xi]` — up into the pore space above, and return only the mass that still
+leaves the column.
+
+Called from [`calculate_melt`](@ref) after the percolation loop and before `water_delta` is
+applied, so it works on `water .+ water_delta` as the current pore water. A no-op under
+`mp.runoff_method === :instantaneous`, where it returns `flux_dn[Xi]` with `runoff`
+untouched, leaving the total identical to MATLAB's `sum(runoff) + flux_dn[Xi]`.
+
+Otherwise the blocked water is pooled (mass-weighted by [`mix_age`](@ref), since each
+contribution leaves its cell at that cell's outflow age `flux_age[i+1]`), the contributing
+`runoff` entries are zeroed, and the pool is spent filling cells to
+[`pore_capacity`](@ref) from the deepest contributing cell upward. Cells at or above
+`mp.impermeable_density` are skipped: at pore close-off the pore space is disconnected, which
+is the premise of their blocking flow. Whatever the column cannot hold is returned as runoff —
+at that point every cell up to the surface is at capacity, so it genuinely leaves.
+
+Mass is conserved by construction (every kilogram is either placed in a cell or returned),
+and so is energy: pore water and runoff carry the same melt-point enthalpy
+[`specific_enthalpy_water`](@ref), so moving mass between them changes neither budget term's
+per-kilogram value. Nothing refreezes here; see the ponding section of
+[`calculate_melt`](@ref) on why the next timestep handles that.
+"""
+function pond_blocked_water!(M::Vector{Float64}, density::Vector{Float64},
+    water::Vector{Float64}, water_delta::Vector{Float64}, age::Vector{Float64},
+    runoff::Vector{Float64}, flux_dn::Vector{Float64}, flux_age::Vector{Float64},
+    Xi::Int, mp::ModelParameters)
+
+    # `flux_dn[Xi]` is basal outflow only when the loop ran to completion; when it broke
+    # early `flux_dn[Xi]` is the sub-tolerance inflow to the cell it stopped at, which is
+    # why this is summed rather than treated as a separate case.
+    mp.runoff_method === :instantaneous && return flux_dn[Xi]
+
+    water_tolerance = 1e-13
+    d_tolerance = 1e-11
+    d_phc = mp.impermeable_density
+
+    # Pool the blocked water. Each contribution left its cell at that cell's outflow age,
+    # `flux_age[i+1]`; the basal term left the last cell visited, at `flux_age[Xi]`.
+    blocked = 0.0
+    blocked_age = 0.0
+    i_start = 0
+    @inbounds for i in eachindex(runoff)
+        if runoff[i] > water_tolerance
+            blocked_age = mix_age(blocked_age, blocked, flux_age[i+1], runoff[i])
+            blocked += runoff[i]
+            runoff[i] = 0.0
+            i_start = i
+        end
+    end
+    if flux_dn[Xi] > water_tolerance
+        blocked_age = mix_age(blocked_age, blocked, flux_age[Xi], flux_dn[Xi])
+        blocked += flux_dn[Xi]
+        i_start = max(i_start, Xi - 1)
+    end
+
+    blocked <= water_tolerance && return blocked
+    i_start = min(i_start, length(M))
+
+    # Fill upward from the deepest contributing cell. Water blocked at a shallow barrier never
+    # reached a deeper one, so a single upward sweep from the deepest source covers every
+    # barrier that received water this timestep.
+    @inbounds for i in i_start:-1:1
+        blocked <= water_tolerance && break
+        density[i] >= d_phc - d_tolerance && continue
+
+        dz_i = M[i] / density[i]
+        room = pore_capacity(mp, density[i], dz_i) - (water[i] + water_delta[i])
+        room <= water_tolerance && continue
+
+        add = min(blocked, room)
+        # Mass already in the cell, matrix and pore water together, which is what `age` is
+        # the mean over.
+        S = M[i] + water[i] + water_delta[i]
+        age[i] = mix_age(age[i], S, blocked_age, add)
+        water_delta[i] += add
+        blocked -= add
+    end
+
+    return blocked
 end
 
 """
@@ -510,6 +657,54 @@ function ice_slab_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
             end
         else
             run_dz = 0.0
+        end
+        z += dz[i]
+    end
+
+    return thickness, depth
+end
+
+"""
+    aquifer_diagnostics(dz, density, water, mp) -> (thickness, depth)
+
+Summarize the standing (super-irreducible) water in a column.
+
+`thickness` [m] is the total thickness of cells holding more water than capillary forces can
+retain — the saturated thickness a borehole or a firn core would find wet. `depth` [m] is the
+depth to the top of the shallowest such cell, `NaN` when there are none, so "dry column" stays
+distinguishable from "water table at the surface".
+
+Both are zero and `NaN` under `mp.runoff_method === :instantaneous`, where no cell can hold
+more than its irreducible water. They are what makes the ponding in [`calculate_melt`](@ref)
+observable in output, and the quantity RetMIP (Vandecrux et al., 2020, Sect. 5.4) evaluates
+aquifer representation against.
+
+A cell counts as saturated only once it exceeds irreducible by [`AQUIFER_TOLERANCE`](@ref) of
+its pore space, rather than by the arithmetic `WATER_TOLERANCE` the physics uses. `calculate_melt`
+leaves a retaining cell at exactly irreducible, but `calculate_density` then compacts it within
+the same timestep, shrinking the pore space that retention was computed against and leaving the
+cell genuinely — if negligibly — over-saturated. That residue accumulates between melt events
+and would otherwise read as a metres-thick water table in a run that cannot have one. It is
+separable from real ponding by saturation but not by mass: the residue sits ~1e-7 of pore space
+above irreducible against 1e-1 or more for ponded water.
+
+Diagnostic only: nothing in the physics reads either value. Called from [`gemb_core`](@ref)
+after the grid controllers, alongside [`ice_slab_diagnostics`](@ref), so the column scanned is
+the one the profile output records at that timestamp.
+"""
+function aquifer_diagnostics(dz::Vector{Float64}, density::Vector{Float64},
+    water::Vector{Float64}, mp::ModelParameters)
+
+    thickness = 0.0
+    depth = NaN
+    z = 0.0
+
+    @inbounds for i in eachindex(dz)
+        pore = (mp.density_ice - density[i]) * dz[i]
+        irreducible = pore * irreducible_saturation(mp, density[i])
+        if water[i] > irreducible + AQUIFER_TOLERANCE * pore
+            thickness += dz[i]
+            isnan(depth) && (depth = z)
         end
         z += dz[i]
     end

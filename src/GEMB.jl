@@ -43,6 +43,7 @@ include("calculate_shortwave_radiation.jl")
 include("calculate_temperature.jl")
 include("calculate_accumulation.jl")
 include("calculate_melt.jl")
+include("hydrology.jl")
 include("calculate_density.jl")
 include("manage_layer_thickness.jl")
 

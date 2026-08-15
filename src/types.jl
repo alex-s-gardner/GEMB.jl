@@ -31,6 +31,10 @@ Base.@kwdef struct ModelParameters
     surface_roughness_effective_ratio::Float64 = 0.10
 
     # --- Thermal Conductivity ---
+    # `:Sturm` (the MATLAB default) and `:Calonne` (Calonne et al., 2011) are density-only
+    # quadratics. `:Calonne2019` and `:Marchenko2019` are additions with no MATLAB
+    # counterpart; Vandecrux et al. (2020) recommend both over the older fits. See
+    # `thermal_conductivity`.
     thermal_conductivity_method::Symbol = :Sturm
 
     # --- Heat Capacity ---
@@ -60,6 +64,19 @@ Base.@kwdef struct ModelParameters
     # Exposed here so that range can be explored. See `calculate_melt`.
     impermeable_density::Float64 = DENSITY_PORE_CLOSEOFF
     impermeable_thickness::Float64 = 0.1
+    # How water that percolation cannot pass leaves the column.
+    #
+    # `:instantaneous` is MATLAB's behaviour and the default: blocked water runs off within the
+    # timestep, and no cell can ever hold more than its irreducible water. The other two let it
+    # pond above the barrier (see `calculate_melt`) and drain laterally over a finite timescale
+    # (see `apply_lateral_drainage!`), which is what makes standing water and firn aquifers
+    # representable at all. Both are scaled by `surface_slope`, and both were used by the two
+    # models with the lowest firn-temperature error at the RetMIP ice-slab site KAN_U
+    # (Vandecrux et al., 2020): `:ZuoOerlemans` by DMIHH, `:Darcy` by GEUS.
+    runoff_method::Symbol = :instantaneous
+    # Cap on how full a cell may get, as a fraction of its pore space. 1.0 permits full
+    # saturation. Only read when `runoff_method !== :instantaneous`. See `pore_capacity`.
+    pore_saturation_max::Float64 = 1.0
 
     # --- Albedo & Radiation ---
     albedo_method::Symbol = :GardnerSharp
@@ -97,6 +114,11 @@ Base.@kwdef struct ModelParameters
     # convergence, which thickens. 0.0 (the default) disables the term entirely and leaves
     # output bit-identical to a run without it. See `apply_horizontal_strain!`.
     horizontal_strain_rate::Float64 = 0.0
+    # Surface slope [m m-1], the lateral hydraulic gradient driving runoff under
+    # `runoff_method` `:ZuoOerlemans` or `:Darcy`; unread under `:instantaneous`. The RetMIP
+    # sites span 0 (Summit) to 0.6 degrees (FA), i.e. 0 to ~0.010 m m-1 — note the units are
+    # a gradient, not degrees.
+    surface_slope::Float64 = 0.0
 
     # --- Thermal Time Stepping ---
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver

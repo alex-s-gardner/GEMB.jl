@@ -59,7 +59,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.surface_roughness_effective_ratio <= 3 "surface_roughness_effective_ratio must be in [0, 3]"
 
     # Thermal conductivity
-    @assert mp.thermal_conductivity_method in (:Sturm, :Calonne) "thermal_conductivity_method must be Sturm or Calonne"
+    @assert mp.thermal_conductivity_method in (:Sturm, :Calonne, :Calonne2019, :Marchenko2019) "thermal_conductivity_method must be one of: Sturm, Calonne, Calonne2019, Marchenko2019"
 
     # Heat capacity
     @assert mp.heat_capacity_method in (:constant, :CuffeyPaterson) "heat_capacity_method must be constant or CuffeyPaterson"
@@ -75,6 +75,16 @@ function validate_parameters(mp::ModelParameters)
     # criterion whenever a caller lowers `density_ice`, a legitimate sensitivity test.
     @assert 700 <= mp.impermeable_density <= 917 "impermeable_density must be in [700, 917] (got $(mp.impermeable_density))"
     @assert mp.impermeable_thickness >= 0 "impermeable_thickness must be >= 0"
+
+    # Runoff
+    @assert mp.runoff_method in (:instantaneous, :ZuoOerlemans, :Darcy) "runoff_method must be one of: instantaneous, ZuoOerlemans, Darcy"
+    @assert 0 < mp.pore_saturation_max <= 1 "pore_saturation_max must be in (0, 1]"
+    # `:Darcy`'s flux is directly proportional to the slope, so a zero slope makes it drain
+    # nothing at all while still allowing water to pond — an aquifer that only ever fills.
+    # `:ZuoOerlemans` is well defined at zero slope (its timescale saturates at c1 + c2).
+    if mp.runoff_method === :Darcy
+        @assert mp.surface_slope > 0 "runoff_method=:Darcy requires surface_slope > 0; its flux is proportional to slope, so a zero slope drains nothing while still permitting ponding"
+    end
 
     # Albedo method
     @assert mp.albedo_method in (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann) "Invalid albedo_method"
@@ -108,4 +118,8 @@ function validate_parameters(mp::ModelParameters)
     # (fast shear margins reach ~1e-2 yr-1) and exists to catch a units mistake — an s-1
     # value, or a percent — rather than to constrain the physics.
     @assert -1 <= mp.horizontal_strain_rate <= 1 "horizontal_strain_rate must be in [-1, 1] yr-1"
+
+    # Slope as a gradient, not degrees. The bound is far above any ice-sheet surface slope
+    # (the RetMIP sites reach ~0.010 m m-1) and is there to catch degrees passed by mistake.
+    @assert 0 <= mp.surface_slope <= 1 "surface_slope must be in [0, 1] m m-1 (a gradient, not degrees)"
 end

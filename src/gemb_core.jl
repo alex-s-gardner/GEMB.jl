@@ -93,6 +93,17 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     densification_from_melt = densification_from_melt - sum(dz)
 
+    # 8b. Drain water standing above irreducible saturation out of the column laterally, over
+    # the timescale `mp.runoff_method` prescribes. Immediately after `calculate_melt`, which is
+    # what put the water there, and before the grid controllers, so a cell about to be merged
+    # has already drained. Only `water` changes, so no grid invariant is at stake and the mass
+    # joins `runoff` directly — the runoff enthalpy below is derived from that scalar, and pore
+    # water carries the same melt-point enthalpy, so no new energy term is needed either.
+    # A no-op at the `runoff_method = :instantaneous` default.
+    runoff += apply_lateral_drainage!(
+        column_state(temperature, dz, density, water, grain_radius,
+            grain_dendricity, grain_sphericity, age), cfs.dt, mp)
+
     # 9. Return cells to their thickness bands and restore the cell count to n_target
     #    (exactly conservative)
     temperature, dz, density, water, grain_radius, grain_dendricity,
@@ -132,6 +143,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # answer. Run unconditionally: a slab is a property of the column, present whether or not
     # anything melted this timestep. Read-only, and absent from the budgets above.
     ice_slab_thickness, ice_slab_depth = ice_slab_diagnostics(dz, density, mp)
+    aquifer_thickness, aquifer_depth = aquifer_diagnostics(dz, density, water, mp)
 
     if verbose
         dt = cfs.dt
@@ -226,6 +238,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         percolation_depth=percolation_depth,
         ice_slab_thickness=ice_slab_thickness,
         ice_slab_depth=ice_slab_depth,
+        aquifer_thickness=aquifer_thickness,
+        aquifer_depth=aquifer_depth,
     )
 
     return new_state, flux
