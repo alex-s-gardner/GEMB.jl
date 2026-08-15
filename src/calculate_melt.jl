@@ -42,7 +42,7 @@ would make lowering the flow criterion silently change retention too.
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, rain, mp::ModelParameters, verbose::Bool)
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, rain, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -56,8 +56,39 @@ Water is routed to runoff at a contiguous run of cells at or above `mp.impermeab
 thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m, as in MATLAB; across
 the RetMIP models the density criterion spans 810–917 kg m-3 — see `ModelParameters`).
 
+# No preferential-flow domain
+
+This is a single-domain bucket scheme: water descends cell by cell through the matrix, and
+there is no second, fast, heterogeneous ("piping") flow path, nor a Richards-equation matrix
+solver. That is deliberate. RetMIP (Vandecrux et al., 2020) found that the three of nine
+models carrying an explicit deep- or preferential-percolation scheme (CFM-Cr, CFM-KM,
+UppsalaUniDeepPerc) did worse than the bucket schemes at three of the four Greenland sites:
+they infiltrated too deeply and ran warm — firn-temperature mean error +3.6 to +6.2 °C at
+Dye-2 and +1.8 to +4.7 °C at KAN_U, plus a warm bias at the near-melt-free Summit site — and
+at Dye-2 in 2016 they percolated to 10 m against the 2.5 m the upward-looking radar observed,
+growing near-surface ice slabs several metres thick where none exist. Their one advantage was
+the firn-aquifer site, which only they recharged. RetMIP's conclusion (their Sect. 5.2) is
+that until preferential flow in firn is better constrained observationally, the more complex
+schemes do not necessarily give better results than simple bucket schemes; the productive
+lever for a bucket scheme is instead the impermeability criterion above.
+
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
+age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
+
+# Age transport
+
+`age` [d] is the mass-weighted mean age of all mass in a cell, matrix and pore water
+together, so a phase change that stays inside one cell (the initial pore-water refreeze) does
+not move it at all. Melt removal is likewise age-neutral: it takes a *fraction* of the cell,
+which leaves the mean age of the remainder unchanged.
+
+What does move age is percolation. Meltwater carries the age of the firn it came from, so the
+percolation loop transports the age *moment* `mass × age` alongside `flux_dn`, in a companion
+`flux_age` vector holding the mass-weighted mean age of the water in transit. At each cell the
+water generated there and any water the cell expels (both at `age[i]`) mix with the through-flow
+from above (at `flux_age[i]`) into one pool; whatever refreezes enters the cell at the pool's
+age, and whatever continues down or runs off leaves at it. Refreezing therefore makes a cell
+*younger* only to the extent that genuinely younger water reached it, rather than resetting it.
 
 `percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
 base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
@@ -71,7 +102,7 @@ Arrays may shrink (cells deleted when mass=0).
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, rain::Float64,
+    grain_sphericity::Vector{Float64}, age::Vector{Float64}, rain::Float64,
     mp::ModelParameters, verbose::Bool)
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
@@ -124,6 +155,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # fresh arrays (matching the previous `density = M ./ dz` etc.) so the
         # caller's inputs are not mutated; M and temperature are mutated in
         # place since they are already function-local fresh arrays.
+        #
+        # `age` needs no update here: this moves mass from `water[i]` to `M[i]` within one
+        # cell, and `age` is defined on their sum, so the cell's total mass and hence its
+        # mean age are both unchanged.
         dz_orig = dz
         density = similar(density)
         dz = similar(dz_orig)
@@ -234,6 +269,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # initialize refreeze, runoff, flux_dn and water_delta vectors
         runoff = zeros(m)
         flux_dn = zeros(m + 1)
+        # Mass-weighted mean age [d] of the water in `flux_dn`, same indexing. Only entries
+        # with `flux_dn > 0` are ever read, so the zero fill needs no sentinel.
+        flux_age = zeros(m + 1)
 
         Xi = 1
         m = length(temperature)
@@ -252,6 +290,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             if abs(melt_input) > water_tolerance
                 i_wet = i
             end
+
+            # Age moment of the cell on entry. `M[i]` still includes `melt[i]` (the branches
+            # below subtract it) and `water_delta[i]` has not been applied, so this is the
+            # cell's full mass before any of this timestep's transfers.
+            A_entry = (M[i] + water[i]) * age[i]
 
             ice_depth = 0.0
             # If this grid cell's density exceeds the pore closeoff density:
@@ -328,6 +371,25 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                 end
             end
 
+            # --- age transport ---------------------------------------------------------
+            # Applied once for all three branches above, which have by now set
+            # `water_delta[i]`, `runoff[i]` and `flux_dn[i+1]` and adjusted `M[i]`.
+            #
+            # The mobile pool at this cell is the water generated here plus any the cell is
+            # expelling (`water_delta < 0`), both at `age[i]`, mixed with the through-flow
+            # from above at `flux_age[i]`. Everything leaving the cell — downward flux and
+            # runoff — leaves at the pool's age; everything retained or refrozen enters at it.
+            own = melt[i] + max(0.0, -water_delta[i])
+            A_in = flux_dn[i] * flux_age[i]
+            pool_age = mix_age(age[i], own, flux_age[i], flux_dn[i])
+            flux_age[i+1] = pool_age
+
+            # Post-transfer cell mass, read back from the arrays the branches just wrote
+            # rather than derived from an assumed balance, so the mean stays bounded.
+            S_new = M[i] + water[i] + water_delta[i]
+            A_new = A_entry + A_in - (runoff[i] + flux_dn[i+1]) * pool_age
+            age[i] = S_new > water_tolerance ? max(0.0, A_new / S_new) : 0.0
+
             Xi = Xi + 1
         end
 
@@ -358,7 +420,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         to_delete = findall(M .<= water_tolerance)
         if !isempty(to_delete)
             close_slot!(column_state(temperature, M, density, water, grain_radius,
-                grain_dendricity, grain_sphericity), to_delete)
+                grain_dendricity, grain_sphericity, age), to_delete)
         end
 
         # calculate new grid lengths
@@ -389,7 +451,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
+    age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
 end
 
 """

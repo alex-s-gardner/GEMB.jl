@@ -18,7 +18,7 @@ using Serialization
 const SNAPSHOT = joinpath(@__DIR__, "baseline_init_snapshot.jls")
 
 const LAYERS = (:dz, :temperature, :density, :water, :grain_radius,
-                :grain_dendricity, :grain_sphericity)
+                :grain_dendricity, :grain_sphericity, :age)
 
 """Build the synthetic forcing the regression pin uses (test_1, 3-hourly)."""
 function synthetic_forcing()

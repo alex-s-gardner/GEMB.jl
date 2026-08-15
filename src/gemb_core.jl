@@ -25,8 +25,14 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     grain_radius = state.grain_radius
     grain_dendricity = state.grain_dendricity
     grain_sphericity = state.grain_sphericity
+    age = state.age
     evaporation_condensation = state.evaporation_condensation
     melt_surface = state.melt_surface
+
+    # 0. Advance the age clock, before any mass moves, so mass added later in this timestep
+    #    reads as age 0 in this timestep's output. The column carries no absolute time, so
+    #    this counter *is* the model clock (days from profile initialization).
+    age .+= cfs.dt / 86400.0
 
     if verbose
         M = dz .* density
@@ -58,8 +64,13 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose)
 
-    # 6. Change in thickness of top cell due to evaporation/condensation
+    # 6. Change in thickness of top cell due to evaporation/condensation.
+    #    Deposition (positive) is new mass at age 0, so it dilutes the surface cell's age;
+    #    sublimation (negative) removes a fraction of the cell and is age-neutral, which
+    #    `dilute_age` handles by returning the age unchanged for a non-positive input.
+    S_surface = dz[1] * density[1] + water[1]
     dz[1] = dz[1] + evaporation_condensation / density[1]
+    age[1] = dilute_age(age[1], S_surface, evaporation_condensation)
 
     if verbose
         E_evaporation_condensation = evaporation_condensation * specific_enthalpy(mp, temperature[1])
@@ -67,27 +78,27 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     # 7. Add snow/rain to top grid cell
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, rain =
+        grain_sphericity, age, rain =
         calculate_accumulation(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, cfs, mp, verbose)
+            grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
 
     # 8. Melt and wet compaction
     densification_from_melt = sum(dz)
 
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, melt, melt_surface, runoff, refreeze,
+        grain_sphericity, age, melt, melt_surface, runoff, refreeze,
         percolation_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, rain, mp, verbose)
+            grain_dendricity, grain_sphericity, age, rain, mp, verbose)
 
     densification_from_melt = densification_from_melt - sum(dz)
 
     # 9. Return cells to their thickness bands and restore the cell count to n_target
     #    (exactly conservative)
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, E_added =
+        grain_sphericity, age, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, mp, verbose;
+            grain_dendricity, grain_sphericity, age, mp, verbose;
             n_target=n_target)
 
     # 10. Allow non-melt densification
@@ -103,7 +114,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # this exports leaves laterally, not through the base, and is reported separately.
     # A no-op when `horizontal_strain_rate == 0` (the default).
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity)
+        grain_dendricity, grain_sphericity, age)
     mass_lateral, strain_energy = apply_horizontal_strain!(cols, cfs.dt, mp)
     E_added += strain_energy
 
@@ -188,6 +199,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_radius=grain_radius,
         grain_dendricity=grain_dendricity,
         grain_sphericity=grain_sphericity,
+        age=age,
         evaporation_condensation=evaporation_condensation,
         melt_surface=melt_surface,
     )

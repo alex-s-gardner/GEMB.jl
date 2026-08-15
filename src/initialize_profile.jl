@@ -59,7 +59,10 @@ fidelity paths clamp `cf.temperature_air_mean` (with a warning) before filling.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
-  grain_dendricity, grain_sphericity
+  grain_dendricity, grain_sphericity, age
+
+`age` [d] is zero on every path — the instant a profile is initialized is the epoch it is
+measured from.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false)
@@ -126,6 +129,10 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         grain_radius=DimArray(grain_radius, (zdim,)),
         grain_dendricity=DimArray(grain_dendricity, (zdim,)),
         grain_sphericity=DimArray(grain_sphericity, (zdim,)),
+        # This instant is the age epoch. Zero regardless of the fidelity flags and of the
+        # steady-state march: the march is a spatial construction, not a history the column
+        # actually experienced, so there is no residence time to inherit from it.
+        age=DimArray(zeros(m), (zdim,)),
     )
 
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
@@ -160,6 +167,7 @@ function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
         grain_radius=DimArray(fill(GRAIN_RADIUS_ICE, m), (zdim,)),
         grain_dendricity=DimArray(zeros(m), (zdim,)),
         grain_sphericity=DimArray(zeros(m), (zdim,)),
+        age=DimArray(zeros(m), (zdim,)),
     )
     return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end

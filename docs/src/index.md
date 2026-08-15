@@ -144,6 +144,33 @@ After climate forcing, model parameters, and the initial state of the column are
 | `calculate_density` | Snow/firn densification |
 | `manage_layer_thickness` | Layer splitting and merging to maintain grid constraints |
 
+### Meltwater percolation scheme
+
+GEMB percolates meltwater with a tipping-bucket scheme: water moves cell by cell from the
+surface down, refreezing where cold content allows, retained up to the irreducible water
+content ([`irreducible_saturation`](@ref)), and routed to runoff at a contiguous run of cells
+at or above `impermeable_density` thicker than `impermeable_thickness`. There is no
+preferential-flow (heterogeneous, "piping") domain and no Richards-equation matrix flow, and
+none is planned.
+
+That is a deliberate choice, not a missing feature. RetMIP (Vandecrux et al., 2020)
+intercompared nine firn models at four Greenland sites and found that the three models with
+explicit deep or preferential percolation (CFM-Cr, CFM-KM, UppsalaUniDeepPerc) performed worse
+than the bucket schemes at three of the four sites — they infiltrated water too deeply and
+carried a warm bias in firn temperature at the dry-snow site (Summit) and both percolation
+sites (Dye-2 mean error +3.6 to +6.2 °C, KAN\_U +1.8 to +4.7 °C). At Dye-2 in 2016 the CFM
+models percolated to 10 m against 2.5 m observed by upward-looking radar, and built
+multi-metre near-surface ice slabs where none are observed. Their advantage was confined to
+the firn-aquifer site, where only the deep-percolation schemes recharged the aquifer at all.
+RetMIP's conclusion (their Sect. 5.2) is that until the physics of preferential flow in firn
+is better constrained by field and laboratory observation, the more complex schemes do not
+necessarily give better results than simple bucket schemes.
+
+The lever RetMIP does identify for bucket schemes is the impermeability criterion, which is
+exposed here as `impermeable_density` and `impermeable_thickness` — see
+[`calculate_melt`](@ref) and the physics-deviations notes in the README for the range the
+participating models spanned and how it maps onto their skill at the ice-slab site.
+
 ## Output Variables
 
 The output `DimStack` contains monolevel (1D time series) and profile (2D depth-time) variables.
@@ -199,6 +226,7 @@ cell-centre heights with `dz2z(output[:dz])`.
 | `grain_radius` | mm | Effective grain radius |
 | `grain_dendricity` | 1 | Grain dendricity (0--1) |
 | `grain_sphericity` | 1 | Grain sphericity (0--1) |
+| `age` | d | Mass-weighted mean age of the cell's mass, from column initialization |
 
 ## Examples
 

@@ -7,15 +7,19 @@ per-cell state vectors independently at six separate call sites, so the structur
 bookkeeping was duplicated nine ways at each site and adding a tenth state field meant
 finding and editing all six.
 
-Everything structural now goes through the primitives below, which take the nine vectors as a
+Everything structural now goes through the primitives below, which take the vectors as a
 `ColumnState` NamedTuple and iterate over it generically, so the *structural* bookkeeping
-(shifting, merging, splitting) is written once instead of nine times per site.
+(shifting, merging, splitting) is written once instead of once per field per site.
 
-This removes the nine-way duplication within each site, not the number of sites: adding a
-tenth field still touches [`column_state`](@ref), the physics that fills it, and the
-extensive/intensive handling in [`merge_pair!`](@ref) / [`split_cell!`](@ref). The bundle is
+This removes the per-field duplication within each site, not the number of sites: adding a
+field still touches [`column_state`](@ref), the physics that fills it, the
+extensive/intensive handling in [`merge_pair!`](@ref) / [`split_cell!`](@ref), and five
+plumbing sites that share no source of truth (`initialize_profile`'s two `layers` tuples,
+the driver's output allocation and write loop, and `_extract_profile_at_index` — the last
+failing *silently* rather than loudly, since a profile field missing there is simply not
+carried between spinup cycles). The bundle is
 rebuilt per call site because the physics rebinds several vectors mid-timestep, so a
-long-lived bundle would go stale. All nine fields are `Vector{Float64}`, so a mis-ordered
+long-lived bundle would go stale. Every field is `Vector{Float64}`, so a mis-ordered
 argument list type-checks silently — keep the positional order identical everywhere.
 
 # The two controllers
@@ -43,10 +47,10 @@ whole-cell jumps a drop/create scheme would produce.
 
 """
     column_state(temperature, dz, density, water, grain_radius,
-                 grain_dendricity, grain_sphericity)
+                 grain_dendricity, grain_sphericity, age)
 
-Bundle the seven per-cell state vectors so the grid primitives can operate on all of them
-generically. `values(...)` of the result is a homogeneous `NTuple{7,Vector{Float64}}`, so
+Bundle the eight per-cell state vectors so the grid primitives can operate on all of them
+generically. `values(...)` of the result is a homogeneous `NTuple{8,Vector{Float64}}`, so
 the generic loops below stay type-stable and fully unrolled.
 
 Albedo is deliberately absent: every albedo method is diagnostic in the current column
@@ -58,9 +62,44 @@ The structural primitives (`open_slot!`, `close_slot!`) need no change when a fi
 cannot be inferred. See the module preamble on why the bundle is rebuilt per call site.
 """
 @inline column_state(temperature, dz, density, water, grain_radius,
-    grain_dendricity, grain_sphericity) =
+    grain_dendricity, grain_sphericity, age) =
     (; temperature, dz, density, water, grain_radius,
-       grain_dendricity, grain_sphericity)
+       grain_dendricity, grain_sphericity, age)
+
+"""
+    mix_age(age1, M1, age2, M2) -> age
+
+Mass-weighted mean age of two masses combined: `(age1·M1 + age2·M2)/(M1+M2)`.
+
+Age is intensive and mixes linearly in mass, so this is the whole rule — the analogue of
+[`mix_temperature`](@ref) for a quantity with no equation of state. Every site where age
+changes is one of its three cases: mass arriving from outside at age 0
+([`dilute_age`](@ref)), two cells combining ([`merge_pair!`](@ref)), and meltwater joining
+through-flow in `calculate_melt`. Keeping them one function keeps the zero-mass convention
+one decision.
+
+Returns `age1` when the total mass is zero, matching [`mix_temperature`](@ref).
+"""
+@inline function mix_age(age1::Float64, M1::Float64, age2::Float64, M2::Float64)
+    M = M1 + M2
+    M <= 0.0 && return age1
+    return (age1 * M1 + age2 * M2) / M
+end
+
+"""
+    dilute_age(age, mass_old, mass_added) -> age
+
+Mass-weighted mean age of a cell that gains `mass_added` [kg m-2] of brand-new (age 0)
+material, where `mass_old` is the cell's total mass beforehand. The [`mix_age`](@ref) case
+where one side is exactly zero.
+
+This is the update for every site where mass enters the column from outside: snowfall, rain,
+and vapour deposition. Returns `age` unchanged for non-positive `mass_added`, so the caller
+need not branch on the sign of a signed flux (sublimation removes a fraction of the cell and
+is age-neutral).
+"""
+@inline dilute_age(age::Float64, mass_old::Float64, mass_added::Float64) =
+    mass_added <= 0.0 ? age : mix_age(age, mass_old, 0.0, mass_added)
 
 """
     open_slot!(cols, i)
@@ -116,6 +155,12 @@ and are summed, with density recovered from the totals. Grain properties are inh
 cell `i` — that is the historical convention (the *upper* cell of the pair wins), preserved
 deliberately.
 
+`age` is mass-weighted on **total** cell mass (`dz*density + water`), matching how the field
+is defined, so `M_i`/`M_target` alone are not the right weights — the pore water of each cell
+is added in. Deliberately *not* the grain-property convention above: inheriting the upper
+cell's age would discard the older cell's residence time entirely and make deep age drift
+young with every merge.
+
 This performs only the physics of the merge. The now-redundant cell `i` still occupies a
 slot; the caller removes it with [`close_slot!`](@ref), either immediately or in a batch.
 """
@@ -130,6 +175,11 @@ slot; the caller removes it with [`close_slot!`](@ref), either immediately or in
         cols.grain_dendricity[i_target] = cols.grain_dendricity[i]
         cols.grain_sphericity[i_target] = cols.grain_sphericity[i]
 
+        # Age, mass-weighted on total cell mass. Computed before `water` is summed below,
+        # which needs each cell's pore water separately.
+        cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
+            cols.age[i_target], M_target + cols.water[i_target])
+
         cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
         cols.density[i_target] = M_new / cols.dz[i_target]
         cols.water[i_target] = cols.water[i] + cols.water[i_target]
@@ -142,8 +192,8 @@ end
 
 Split cell `i` into two cells of half its thickness, conserving mass and energy exactly.
 
-Thickness and pore water are halved (both extensive); density, temperature and grain
-properties are intensive and so are simply duplicated. The result occupies
+Thickness and pore water are halved (both extensive); density, temperature, grain
+properties and age are intensive and so are simply duplicated. The result occupies
 indices `i` and `i+1`, and the column grows by one cell.
 """
 @inline function split_cell!(cols::NamedTuple, i::Int)
@@ -392,6 +442,11 @@ Accreted material inherits the bottom cell's properties (the column below is unr
 `density[n]`, and `temperature[n]`, which is the Dirichlet-pinned basal boundary. Pore water
 scales with the thickness change; grain properties are intensive and unchanged.
 
+`age[n]` is untouched, so both regimes are handled by doing nothing: removal is proportional
+(age-neutral), and accreted material inherits `age[n]` like `density` and `temperature`. The
+consequence is that under sustained ablation the deepest cell's age is a lower bound on its
+true residence time rather than a measurement of it.
+
 Errors if the adjustment would consume the whole bottom cell — at realistic forcing it is
 ~1e-3 of the cell, so that signals a bug upstream, not an extreme climate.
 
@@ -455,6 +510,11 @@ law in closed form.
 `density` and `temperature` are untouched; grain properties are intensive and unchanged.
 Pore `water` [kg m-2] is a per-unit-area quantity, so it scales by the same factor as the
 lateral area.
+
+`age` is untouched in both directions. Under divergence every cell loses the same *fraction*
+of its mass, which leaves its mean age unchanged; under convergence the material advected in
+laterally is neighbouring firn at the same depth, so taking the local `age[i]` is the
+consistent choice.
 
 GEMB's column is per unit area, so the mass this removes leaves **laterally**, not through
 the base. It is returned signed — negative under divergence (mass leaves), positive under

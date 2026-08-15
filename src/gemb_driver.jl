@@ -79,6 +79,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_radius = Vector{Float64}(profile[:grain_radius]),
         grain_dendricity = Vector{Float64}(profile[:grain_dendricity]),
         grain_sphericity = Vector{Float64}(profile[:grain_sphericity]),
+        age = Vector{Float64}(profile[:age]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -152,6 +153,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_radius=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_dendricity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        age=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
 
     output = DimStack(layers;
@@ -335,6 +337,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_radius = parent(output[:grain_radius])
     out_grain_dendricity = parent(output[:grain_dendricity])
     out_grain_sphericity = parent(output[:grain_sphericity])
+    out_age = parent(output[:age])
 
     density_ice = mp.density_ice
 
@@ -512,6 +515,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_grain_radius[k, oi] = state.grain_radius[k]
                 out_grain_dendricity[k, oi] = state.grain_dendricity[k]
                 out_grain_sphericity[k, oi] = state.grain_sphericity[k]
+                out_age[k, oi] = state.age[k]
             end
 
             # Reset accumulators

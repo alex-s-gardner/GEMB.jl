@@ -52,6 +52,9 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
         grain_radius=DimArray(parent(out[:grain_radius])[:, col_idx], (zdim,)),
         grain_dendricity=DimArray(parent(out[:grain_dendricity])[:, col_idx], (zdim,)),
         grain_sphericity=DimArray(parent(out[:grain_sphericity])[:, col_idx], (zdim,)),
+        # Carrying `age` here is what makes it accumulate across `gemb_spinup` cycles, which
+        # round-trip the column through this function between runs.
+        age=DimArray(parent(out[:age])[:, col_idx], (zdim,)),
     )
 
     # Carry the CF attributes through, minus `cell_methods`: the extracted column has no

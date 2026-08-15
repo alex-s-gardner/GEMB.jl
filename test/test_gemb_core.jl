@@ -66,6 +66,7 @@ function _make_core_state(; n=10)
         grain_radius = 0.5 * ones(n),
         grain_dendricity = 0.5 * ones(n),
         grain_sphericity = 0.5 * ones(n),
+        age = zeros(n),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -131,6 +132,7 @@ end
         grain_radius = 0.5 * ones(10),
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
+        age = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -151,6 +153,7 @@ end
         grain_radius = 0.5 * ones(10),
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
+        age = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )

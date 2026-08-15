@@ -144,6 +144,15 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :grain_radius => CFAttrs("mm", "snow grain effective radius", "time: point"),
     :grain_dendricity => CFAttrs("1", "snow grain dendricity", "time: point"),
     :grain_sphericity => CFAttrs("1", "snow grain sphericity", "time: point"),
+    :age => CFAttrs("d", "mass-weighted layer age", "time: point";
+        comment="Mean age in decimal days of all mass in the cell, ice/firn matrix and " *
+                "pore water together, measured from column initialization. Snowfall, " *
+                "rain and vapour deposition enter at age 0; meltwater carries the age of " *
+                "the firn it melted from and mass-weights that age into the cell where it " *
+                "refreezes. Accumulates across gemb_spinup cycles, so for a spun-up run " *
+                "the epoch is the start of spinup rather than the start of the transient " *
+                "run. Under sustained ablation the deepest cell is a lower bound: basal " *
+                "accretion inherits that cell's own age."),
 )
 
 """

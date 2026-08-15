@@ -19,7 +19,7 @@ GEMB simulates a wide range of physical processes critical to glacier health:
 * **Surface Energy Balance (SEB):** Resolves radiative fluxes (shortwave/longwave) and turbulent heat fluxes (sensible/latent) using Monin-Obukhov similarity theory.
 * **Subsurface Thermodynamics:** Solves the heat equation with phase change, meltwater percolation, and refreezing.
 * **Firn Densification:** Simulates the compaction of snow into firn and ice using empirical or semi-empirical schemes.
-* **Hydrology:** Tracks meltwater retention (irreducible water content), percolation, and refreezing using a "bucket" scheme.
+* **Hydrology:** Tracks meltwater retention (irreducible water content), percolation, and refreezing using a "bucket" scheme, with a tunable density-and-thickness impermeability criterion for flow-blocking ice layers. There is no preferential-flow domain, by design — see [Meltwater percolation scheme](https://alex-s-gardner.github.io/GEMB.jl/dev/#Meltwater-percolation-scheme).
 * **Dynamic Albedo:** Models albedo evolution with long-term memory, accounting for grain growth and specific surface area.
 * **Grid Management:** Utilizes a dynamic Lagrangian-style vertical grid that evolves with accumulation and ablation, automatically merging and splitting layers to maintain numerical stability.
 
@@ -365,6 +365,19 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   `temperature_air_mean` verbatim as MATLAB's `model_initialize_profile` does. Affects only
   sites whose mean annual air temperature is above freezing, where the old column began as
   ice above its melting point holding no water — enthalpy the column has no state to carry.
+- **Added an `age` profile variable** — the mass-weighted mean age, in decimal days, of all
+  mass in a cell (ice/firn matrix plus pore water), measured from column initialization.
+  MATLAB GEMB has no age variable. Snowfall, rain and vapour deposition enter at age 0;
+  proportional mass removal (melt, sublimation, runoff, basal trim under accumulation,
+  horizontal strain) is age-neutral; merges mass-weight it and splits duplicate it.
+  Meltwater carries the age of the firn it melted from and mass-weights that age into the cell
+  where it refreezes, so a heavy melt year does not read as artificially young firn at depth.
+  Age accumulates across `gemb_spinup` cycles, so for a spun-up run the epoch is the start of
+  spinup. It is new state only: no physics reads it, and it moves no mass and carries no
+  energy, so the mass and energy budgets are unchanged and the synthetic regression pins are
+  unmoved. Under sustained ablation the deepest cell's age is a lower bound, basal accretion
+  inheriting that cell's own age — the same treatment `density` and `temperature` already get
+  at that site.
 
 ### Fixed-length vertical grid
 

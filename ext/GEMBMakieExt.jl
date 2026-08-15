@@ -125,8 +125,19 @@ const _CMAP = Dict{Symbol,Any}(
     :grain_radius => :matter,
     :grain_dendricity => :matter,
     :grain_sphericity => :matter,
+    # Age reads as depth-of-residence: young mass near the surface, old at the base.
+    :age => :acton,
 )
 _cmap(v::Symbol) = get(_CMAP, v, :viridis)
+
+# Display order for the profile (left) column — the counterpart of `_SCALAR_GROUPS` below,
+# which orders the right column. Storage order would put `age` last (it was added last) and
+# `dz` second; `age` belongs under `water` so the melt-and-refreeze story reads as one block.
+# Variables absent from this list sort after the listed ones, keeping their stack order.
+const _PROFILE_ORDER = [:temperature, :density, :water, :age, :grain_radius,
+    :grain_dendricity, :grain_sphericity, :dz]
+_prof_rank(v::Symbol) =
+    something(findfirst(==(v), _PROFILE_ORDER), length(_PROFILE_ORDER) + 1)
 
 # Scalar variables grouped by physical theme + shared unit so multiple series
 # share one axis (increasing data density, removing near-duplicate panels).
@@ -359,6 +370,9 @@ function GEMB.gemb_plot_output(output::DimStack;
         default_drop = (:dz, :grain_dendricity, :grain_sphericity)
         profile_vars = filter(v -> v ∉ default_drop, profile_vars)
     end
+    # Physical order rather than storage order (see `_PROFILE_ORDER`). Stable, so any
+    # variable the list doesn't name keeps its position relative to the other unnamed ones.
+    sort!(profile_vars; by=_prof_rank, alg=MergeSort)
     scalar_groups = [(t, [v for v in g if v in wanted]) for (t, g) in _SCALAR_GROUPS]
     scalar_groups = [(t, g) for (t, g) in scalar_groups if !isempty(g)]
     # Densification and strain thinning are dropped from the default panel set (kept
