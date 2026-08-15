@@ -98,13 +98,38 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: mean"; standard_name="air_temperature"),
     :firn_air_content => CFAttrs("m", "firn air content", "time: mean";
         comment="No CF standard name exists for firn air content."),
+    :firn_air_content_10m => CFAttrs("m", "firn air content in the top 10 m",
+        "time: mean";
+        comment="As firn_air_content but integrated to 10 m depth, the depth-limited " *
+                "form the firn-core literature reports. The cell straddling 10 m " *
+                "contributes in proportion. No CF standard name exists."),
+    :firn_air_content_20m => CFAttrs("m", "firn air content in the top 20 m",
+        "time: mean";
+        comment="As firn_air_content_10m, integrated to 20 m depth."),
     :thickness_cumulative => CFAttrs("m", "cumulative column thickness change",
         "time: mean";
         comment="Interval mean of a running total since the start of the run."),
 
+    # ---- monolevel, interval maximum ----------------------------------------
+    :percolation_depth => CFAttrs("m", "meltwater percolation depth", "time: maximum";
+        comment="Deepest the wetting front reached during the interval; 0 when no " *
+                "water moved. Comparable to upward-looking-radar estimates. No CF " *
+                "standard name exists."),
+
     # ---- monolevel, instantaneous -------------------------------------------
     :valid_profile_length => CFAttrs("1", "number of valid column layers",
         "time: point"),
+    :ice_slab_thickness => CFAttrs("m", "total thickness of ice slabs", "time: point";
+        comment="Summed thickness of all cells at or above impermeable_density, " *
+                "whether or not they block flow. Scanned after the grid controllers " *
+                "run, so it describes the same column the dz and density profiles " *
+                "record at this timestamp. No CF standard name exists."),
+    :ice_slab_depth => CFAttrs("m", "depth to the top of the shallowest blocking ice slab",
+        "time: point";
+        comment="Depth to the first contiguous run of cells at or above " *
+                "impermeable_density thicker than impermeable_thickness, i.e. the " *
+                "first that blocks percolation. NaN when no run qualifies, which is " *
+                "how 'no slab' is distinguished from 'slab at the surface'."),
 
     # ---- profile (Z x Ti), instantaneous snapshots --------------------------
     :temperature => CFAttrs("K", "layer temperature", "time: point";

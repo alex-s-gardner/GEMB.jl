@@ -75,7 +75,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     densification_from_melt = sum(dz)
 
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, melt, melt_surface, runoff, refreeze =
+        grain_sphericity, melt, melt_surface, runoff, refreeze,
+        percolation_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, rain, mp, verbose)
 
@@ -113,6 +114,13 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # leaves through the base), positive under net ablation (basal accretion).
     mass_added, trim_energy = trim_bottom!(cols, z_target, mp)
     E_added += trim_energy
+
+    # 13. Ice-slab diagnostics. Taken here, after every step that can change `dz` or
+    # `density`, so they describe the same column the profile output records at this
+    # timestamp — a user recomputing slab depth from the output `dz`/`density` gets this
+    # answer. Run unconditionally: a slab is a property of the column, present whether or not
+    # anything melted this timestep. Read-only, and absent from the budgets above.
+    ice_slab_thickness, ice_slab_depth = ice_slab_diagnostics(dz, density, mp)
 
     if verbose
         dt = cfs.dt
@@ -199,6 +207,13 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         E_added=E_added,
         densification_from_compaction=densification_from_compaction,
         densification_from_melt=densification_from_melt,
+        # Diagnostics. Read-only: deliberately absent from the conservation checks above
+        # because they move no mass and carry no energy. `percolation_depth` is necessarily
+        # mid-timestep (it describes an event during percolation); the slab terms are taken
+        # at step 13, on the final column.
+        percolation_depth=percolation_depth,
+        ice_slab_thickness=ice_slab_thickness,
+        ice_slab_depth=ice_slab_depth,
     )
 
     return new_state, flux

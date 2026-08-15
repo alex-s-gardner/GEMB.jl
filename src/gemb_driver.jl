@@ -132,7 +132,12 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         thickness_cumulative=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        firn_air_content_10m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        firn_air_content_20m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        percolation_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         valid_profile_length=DimArray(fill(0, n_outputs), (ti_dim,)),
+        ice_slab_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        ice_slab_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
 
         # Forcing summary outputs
         temperature_air=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -313,6 +318,11 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lhf = parent(output[:heat_flux_latent])
     out_albedo_broadband = parent(output[:albedo_broadband])
     out_fac = parent(output[:firn_air_content])
+    out_fac10 = parent(output[:firn_air_content_10m])
+    out_fac20 = parent(output[:firn_air_content_20m])
+    out_percolation_depth = parent(output[:percolation_depth])
+    out_slab_thickness = parent(output[:ice_slab_thickness])
+    out_slab_depth = parent(output[:ice_slab_depth])
     out_thick = parent(output[:thickness_cumulative])
     out_ta = parent(output[:temperature_air])
     out_precip = parent(output[:precipitation])
@@ -344,6 +354,11 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_densification_melt = 0.0
     cum_strain_thinning = 0.0
     cum_firn_air_content = 0.0
+    cum_firn_air_content_10m = 0.0
+    cum_firn_air_content_20m = 0.0
+    # Interval *maximum*, not a sum: the question a wetting-front depth answers is how deep
+    # water got during the interval, which is what upward-looking radar measures.
+    max_percolation_depth = 0.0
     cum_thickness = 0.0
     cum_temperature_air = 0.0
     cum_precipitation = 0.0
@@ -414,14 +429,14 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         # Metres of thinning, sign-flipped so a divergent column reports a positive number.
         # `flux.mass_lateral` is negative when mass leaves laterally.
         cum_strain_thinning -= flux.mass_lateral / density_ice
-        # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice), computed without a temporary
-        # array. Normalizing by `density_ice` (not 1000) is what makes this metres of air
-        # rather than metres of water equivalent — see upstream GEMB issue #198.
-        _fac = 0.0
-        @inbounds for j in eachindex(state.dz)
-            _fac += state.dz[j] * (density_ice - min(state.density[j], density_ice))
-        end
-        cum_firn_air_content += _fac / density_ice
+        # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice). Normalizing by `density_ice` (not
+        # 1000) is what makes this metres of air rather than metres of water equivalent — see
+        # upstream GEMB issue #198. The depth-limited variants are what the firn-core
+        # literature reports and are the only form comparable to it.
+        cum_firn_air_content += firn_air_content(state.dz, state.density, density_ice)
+        cum_firn_air_content_10m += firn_air_content(state.dz, state.density, density_ice, 10.0)
+        cum_firn_air_content_20m += firn_air_content(state.dz, state.density, density_ice, 20.0)
+        max_percolation_depth = max(max_percolation_depth, flux.percolation_depth)
         cum_thickness += thickness_added_total
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
@@ -457,7 +472,18 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lhf[oi] = cum_lhf / cum_count
                 out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
                 out_fac[oi] = cum_firn_air_content / cum_count
+                out_fac10[oi] = cum_firn_air_content_10m / cum_count
+                out_fac20[oi] = cum_firn_air_content_20m / cum_count
                 out_thick[oi] = cum_thickness / cum_count
+
+                # Interval maximum
+                out_percolation_depth[oi] = max_percolation_depth
+
+                # Instantaneous: slab geometry is slowly-varying column state, and
+                # `ice_slab_depth` is NaN when no slab qualifies, which an interval mean would
+                # poison for the whole interval.
+                out_slab_thickness[oi] = flux.ice_slab_thickness
+                out_slab_depth[oi] = flux.ice_slab_depth
 
                 # Forcing summary
                 out_ta[oi] = cum_temperature_air / cum_count
@@ -504,6 +530,9 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_densification_melt = 0.0
             cum_strain_thinning = 0.0
             cum_firn_air_content = 0.0
+            cum_firn_air_content_10m = 0.0
+            cum_firn_air_content_20m = 0.0
+            max_percolation_depth = 0.0
             cum_thickness = 0.0
             cum_temperature_air = 0.0
             cum_precipitation = 0.0

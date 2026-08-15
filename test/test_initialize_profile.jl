@@ -366,6 +366,47 @@ end
     @test gaps[end] < 0.4 * gaps[1]
 end
 
+@testset "No initialized cell starts above the melt point" begin
+    # An initialized column carries no enthalpy above `CtoK` — that energy would be
+    # melt, and there is no water in the profile to hold it — so every path must
+    # return T <= 273.15 K. The climate-derived march clamps in
+    # `_steady_state_temperature`; the two fidelity flags fill `temperature_air_mean`
+    # verbatim, so they are clamped in `initialize_profile` itself. A temperate site
+    # (mean annual air temperature above freezing) exercises all of it.
+    mp = GEMB.ModelParameters()
+
+    for T_mean in (274.0, 280.0, 295.0)
+        cf = _dry_snow_forcing(T_mean=T_mean, T_amp=6.0, precip=2.0,
+                               shortwave=120.0, longwave=300.0)
+        @test cf.temperature_air_mean > GEMB.CtoK   # the forcing really is warm
+
+        # Climate-derived path: no warning, clamped by the march.
+        prof = GEMB.initialize_profile(mp, cf)
+        @test maximum(collect(prof[:temperature])) <= GEMB.CtoK
+
+        # Each fidelity path warns as it clamps, and the clamp holds.
+        for kw in ((; constant_temperature=true),
+                   (; constant_density=true, constant_temperature=true))
+            prof_f = @test_logs (:warn, r"above the melt point") match_mode = :any (
+                GEMB.initialize_profile(mp, cf; kw...))
+            T = collect(prof_f[:temperature])
+            @test all(T .<= GEMB.CtoK)
+            @test all(T .≈ GEMB.CtoK)   # clamped from the (warmer) mean, not below it
+        end
+
+        # `constant_density` alone leaves temperature to the march, so it needs no
+        # clamp of its own and must not emit the warning.
+        prof_d = GEMB.initialize_profile(mp, cf; constant_density=true)
+        @test maximum(collect(prof_d[:temperature])) <= GEMB.CtoK
+    end
+
+    # A cold site is untouched: the clamp is a ceiling, not a rewrite.
+    cf_cold = _dry_snow_forcing(T_mean=250.0)
+    prof_cold = GEMB.initialize_profile(mp, cf_cold;
+        constant_density=true, constant_temperature=true)
+    @test all(collect(prof_cold[:temperature]) .≈ 250.0)
+end
+
 @testset "Climate summary cost is negligible" begin
     # The scheme's premise is that a best guess is rapidly computable from the
     # climate data alone. The meaningful comparison is against the integration it

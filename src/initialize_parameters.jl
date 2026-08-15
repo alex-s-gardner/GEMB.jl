@@ -68,6 +68,13 @@ function validate_parameters(mp::ModelParameters)
     # Water
     @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
+    # Bounded at 917 (pure ice, and the largest value used by any RetMIP model) rather than at
+    # `mp.density_ice`: a threshold above the column's ice density is inert, not invalid — a
+    # cell at `density_ice` is already unconditionally impermeable in `calculate_melt`
+    # regardless of run thickness. Tying the bound to `mp.density_ice` would reject the default
+    # criterion whenever a caller lowers `density_ice`, a legitimate sensitivity test.
+    @assert 700 <= mp.impermeable_density <= 917 "impermeable_density must be in [700, 917] (got $(mp.impermeable_density))"
+    @assert mp.impermeable_thickness >= 0 "impermeable_thickness must be >= 0"
 
     # Albedo method
     @assert mp.albedo_method in (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann) "Invalid albedo_method"
