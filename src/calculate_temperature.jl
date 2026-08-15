@@ -27,9 +27,11 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     # Note: temperature is modified in-place by the thermal solver.
 
-    d_tolerance = 1e-11
-    T_tolerance = 1e-4
-    W_tolerance = 1e-13
+    d_tolerance = D_TOLERANCE
+    # Not `T_TOLERANCE`: the only temperature comparison here is the emissivity melt switch,
+    # which MATLAB offsets by 1e-4 K, not by the 1e-10 branch tolerance.
+    T_tolerance = T_MELT_SWITCH_TOLERANCE
+    W_tolerance = W_TOLERANCE
     ds = density[1]      # density of top grid cell
 
     # calculated air density [kg/m3]
@@ -290,7 +292,7 @@ Initialize emissivity based on surface grain radius and model parameters.
 Returns `(emissivity, emissivity_melt_switch)`.
 """
 function _emissivity_initialize(grain_radius_surface::Float64, mp::ModelParameters)
-    gdn_tolerance = 1e-10
+    gdn_tolerance = GDN_TOLERANCE
 
     if mp.emissivity_method == :uniform
         emissivity = mp.emissivity
@@ -323,7 +325,7 @@ end
 Find the largest dt_divisor that is <= dt_target. Allocation-free.
 """
 function _find_dt_divisor(dt_target::Float64, dt_divisors::Vector{Float64})
-    if dt_target < 1e-4
+    if dt_target < DT_MIN_WARN
         @warn "Timestep is extremely small ($dt_target). Check for near-zero dz layers."
     end
 

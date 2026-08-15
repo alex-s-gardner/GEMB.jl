@@ -109,7 +109,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
 
         E_tol = energy_tolerance(E_total_initial)
 
-        if (abs(M_delta) > 1e-3) || (abs(E_delta) > E_tol)
+        if (abs(M_delta) > M_TOLERANCE) || (abs(E_delta) > E_tol)
             error("Mass and/or energy are not conserved in manage_layer_thickness:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
         end
     end

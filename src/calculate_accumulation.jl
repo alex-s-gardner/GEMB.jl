@@ -12,7 +12,7 @@ Methods: `150kgm2` → 150; `350kgm2` → 350; `:Fausto` → 315; `:Kaspers` and
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     precip_mean::Real, wind_speed_mean::Real)
-    T_tolerance = 1e-10
+    T_tolerance = T_TOLERANCE
     if mp.new_snow_method == Symbol("150kgm2")
         return 150.0
     elseif mp.new_snow_method == Symbol("350kgm2")
@@ -61,9 +61,9 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     # snow is deep enough to warrant its own layer.
 
     # Define tolerances
-    T_tolerance = 1e-10
-    d_tolerance = 1e-11
-    gdn_tolerance = 1e-10
+    T_tolerance = T_TOLERANCE
+    d_tolerance = D_TOLERANCE
+    gdn_tolerance = GDN_TOLERANCE
 
     # Specify constants (shared with the steady-state initial guess, so a freshly
     # initialized column and freshly fallen snow agree by construction)
@@ -175,7 +175,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
             E_tol = energy_tolerance(E_total_initial)
 
-            if (abs(M_delta) > 1e-3) || (abs(E_delta) > E_tol)
+            if (abs(M_delta) > M_TOLERANCE) || (abs(E_delta) > E_tol)
                 error("Mass and/or energy are not conserved:\n M_delta: $(M_delta) E_delta: $(E_delta)\n")
             end
         end

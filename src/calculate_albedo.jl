@@ -26,8 +26,8 @@ function calculate_albedo(dz::Vector{Float64},
     grain_radius::Vector{Float64}, melt_surface::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    T_tolerance = 1e-10
-    d_tolerance = 1e-11
+    T_tolerance = T_TOLERANCE
+    d_tolerance = D_TOLERANCE
 
     # constants
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
@@ -132,7 +132,7 @@ function _albedo_gardner(grain_radius::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, c1::Float64, c2::Float64,
     SZA::Float64, t::Float64)
 
-    d_tolerance = 1e-11
+    d_tolerance = D_TOLERANCE
 
     # convert effective radius to specific surface area [cm2 g-1]
     S1 = 3.0 / (0.091 * grain_radius[1])

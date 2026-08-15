@@ -40,9 +40,9 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     grain_sphericity::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    T_tolerance = 1e-10
-    gdn_tolerance = 1e-10
-    water_tolerance = 1e-13
+    T_tolerance = T_TOLERANCE
+    gdn_tolerance = GDN_TOLERANCE
+    water_tolerance = WATER_TOLERANCE
 
     m = length(temperature)
 
@@ -254,8 +254,8 @@ Marbouty (1980). No grain growth for density > 400 kg m-3 (H = 0).
 Scalar equivalent of the reference `_Marbouty`.
 """
 @inline function _marbouty_Q(temperature::Float64, density::Float64, dT::Float64)
-    T_tolerance = 1e-10
-    d_tolerance = 1e-11
+    T_tolerance = T_TOLERANCE
+    d_tolerance = D_TOLERANCE
 
     E = 0.09       # model time growth constant [mm d-1]
     T = temperature - 273.15   # K to C
