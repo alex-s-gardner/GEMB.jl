@@ -5,8 +5,21 @@ Model the evolution of effective snow grain size, dendricity, and sphericity.
 
 Accounts for different physical processes depending on snow state:
 - Dendritic Snow (fresh): Evolves based on temperature gradients and liquid water content.
-- Nondendritic Dry Snow: Temperature gradient metamorphism using Marbouty (1980).
+- Nondendritic Dry Snow: Temperature gradient metamorphism using Marbouty (1980), or
+  normal grain growth after Arthern et al. (2010), selected by `mp.grain_growth_method`.
 - Wet Snow: Rapid grain growth due to liquid water using Brun (1989).
+
+`mp.grain_growth_method` governs the non-dendritic *dry* branch only; the dendritic and wet
+branches, and the sphericity caps, are the same on every setting.
+
+- `:Marbouty` (default, MATLAB's behaviour) — Marbouty (1980) everywhere. Its density factor
+  `H` vanishes at `DENSITY_MARBOUTY_MAX`, so grain radius is frozen throughout the firn
+  column below a few metres.
+- `:Arthern` — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`, `GRAIN_GROWTH_EG`) at every
+  density, dropping the temperature-gradient dependence entirely.
+- `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it. Seasonal snow
+  keeps the temperature-gradient physics; firn grains keep growing, which matters because
+  `:ArthernB` densification goes as `1/r²`.
 
 Runs unconditionally. Metamorphism is not contingent on model configuration — grains coarsen
 in a real snowpack whichever albedo scheme is selected — and `grain_radius` is read by four
@@ -160,15 +173,28 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
 
-        # Dry-snow (Marbouty 1980) and wet-snow (Brun 1989) grain growth
+        # Dry-snow (Marbouty 1980 / Arthern 2010) and wet-snow (Brun 1989) grain growth
+        dt_seconds = cfs.dt
+        method = mp.grain_growth_method
         @inbounds for i in 1:m
             isG[i] && continue
             dTi = _grain_gradient(temperature, dz, i, m)
             if (water[i] <= 0 + WATER_TOLERANCE) ||
                ((grain_sphericity[i] <= 0 + GDN_TOLERANCE) && (dTi > 5 + T_TOLERANCE))
-                # DRY SNOW METAMORPHISM (Marbouty, 1980)
-                Q = _marbouty_Q(temperature[i], density[i], dTi)
-                gsz[i] += Q * dt_days
+                # DRY SNOW METAMORPHISM
+                if method === :Marbouty ||
+                   (method === :hybrid && density[i] < DENSITY_MARBOUTY_MAX - D_TOLERANCE)
+                    # Marbouty (1980) temperature-gradient metamorphism
+                    Q = _marbouty_Q(temperature[i], density[i], dTi)
+                    gsz[i] += Q * dt_days
+                else
+                    # Arthern et al. (2010): dr²/dt = kgr·exp(-Eg/RT), in radius, so halve
+                    # the working diameter and double back.
+                    r = gsz[i] / 2
+                    gsz[i] = 2 * sqrt(r * r + GRAIN_GROWTH_KGR *
+                                            exp(-GRAIN_GROWTH_EG / (R_GAS * temperature[i])) *
+                                            dt_seconds * 1e6)
+                end
             else
                 # WET SNOW METAMORPHISM (Brun, 1989)
                 lwci = _grain_lwc(water[i], density[i], dz[i])

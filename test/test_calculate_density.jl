@@ -1177,3 +1177,158 @@ end
     # σ³ dependence makes this strongly superlinear, not a rounding effect.
     @test (d_wet[3] - density[3]) / (d_dry[3] - density[3]) > 1.05
 end
+
+@testset "densification_accumulation and mean_temperature_method" begin
+    # Both gates select which of two `ClimateForcingStep` scalars `calculate_density` reads.
+    # `:precipitation`/`:arithmetic` must reproduce the pre-refinement behaviour exactly, so
+    # the checks below are `==`, not `≈`.
+    n = 4
+    dz = fill(0.5, n)
+    density = [350.0, 450.0, 600.0, 750.0]
+    temperature = fill(250.0, n)
+    grain_radius = fill(1.0, n)
+
+    pm, am = 400.0, 300.0     # 25% of the precipitation falls as rain
+    tam, teff = 250.0, 246.0  # T_eff is always the colder of the two (Arrhenius convexity)
+
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0,
+        precipitation_mean=pm, temperature_air_mean=tam,
+        accumulation_mean=am, temperature_air_effective=teff)
+
+    _run(mp) = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+        copy(grain_radius), zeros(n), cfs, mp)[2]
+
+    # Defaults: the refined scalars, which is why Fix 1 and Fix 2 are correctness fixes
+    # rather than opt-in preferences.
+    mp_default = GEMB.ModelParameters()
+    @test mp_default.densification_accumulation === :accumulation
+    @test mp_default.mean_temperature_method === :arithmetic
+
+    # Every accumulation-driven scheme must respond to the accumulation gate, and the
+    # Arrhenius-scaled subset to the temperature gate. `:Barnola1991` and `:Crocus` read
+    # neither scalar, so they are the control: they must be invariant to both.
+    # `:ArthernB` and `:CrocusPure` are the controls: both are purely stress-driven and read
+    # neither scalar, so they must be invariant to both gates. `:Barnola1991` is *not* a
+    # control despite being stress-driven — it falls back to Herron-Langway rates below the
+    # stage transition, so it inherits that scheme's accumulation dependence.
+    for method in (:HerronLangway, :Arthern, :Barnola1991, :Crocus, :GSFC2020,
+                   :Simonsen2013, :Ligtenberg)
+        kw = (; densification_method=method)
+        d_p = _run(GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation))
+        d_a = _run(GEMB.ModelParameters(; kw..., densification_accumulation=:accumulation))
+        # Less burial ⇒ less densification, at every cell the scheme touches.
+        @test all(d_a .<= d_p)
+        @test any(d_a .< d_p)
+
+        # Reading `pm` from the accumulation slot must be *identical* to having been handed
+        # that number as `precipitation_mean` — the gate is a selector, nothing more.
+        cfs_as_precip = GEMB.ClimateForcingStep(; dt=10800.0,
+            precipitation_mean=am, temperature_air_mean=tam)
+        d_ref = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+            copy(grain_radius), zeros(n), cfs_as_precip,
+            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation))[2]
+        @test d_a == d_ref
+    end
+
+    for method in (:ArthernB, :CrocusPure)
+        kw = (; densification_method=method)
+        @test _run(GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation)) ==
+              _run(GEMB.ModelParameters(; kw..., densification_accumulation=:accumulation))
+        @test _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arithmetic)) ==
+              _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arrhenius))
+    end
+
+    # The temperature gate: every Arrhenius-scaled scheme densifies *faster* at the colder
+    # effective temperature. For `:Arthern`/`:GSFC2020` this is direct — `exp(+Eg/(R·tam))`
+    # rises as `tam` falls. This is the bias Fix 2 corrects: the arithmetic mean
+    # under-densifies at any site with a real seasonal cycle.
+    for method in (:Arthern, :Crocus, :GSFC2020, :Simonsen2013, :Ligtenberg)
+        kw = (; densification_method=method)
+        d_arith = _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arithmetic))
+        d_arrh = _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arrhenius))
+        @test all(d_arrh .>= d_arith)
+        @test any(d_arrh .> d_arith)
+
+        cfs_as_tam = GEMB.ClimateForcingStep(; dt=10800.0,
+            precipitation_mean=am, temperature_air_mean=teff)
+        d_ref = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
+            copy(grain_radius), zeros(n), cfs_as_tam,
+            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation))[2]
+        @test _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arrhenius)) == d_ref
+    end
+
+    @test_throws AssertionError initialize_parameters(densification_accumulation=:bogus)
+    @test_throws AssertionError initialize_parameters(mean_temperature_method=:bogus)
+end
+
+@testset "accumulation_mean / temperature_air_effective derivation" begin
+    # Both scalars are derived from the record by `initialize_forcing` when not supplied.
+    n = 400
+    t = collect(DateTime(2000,1,1):Hour(3):DateTime(2000,1,1) + Hour(3*(n-1)))
+    # Half the record above freezing, half below, with uniform precipitation, so the
+    # snow fraction is exactly 1/2 and the expected value is closed-form.
+    T = [i <= n ÷ 2 ? 260.0 : 280.0 for i in 1:n]
+    precip = fill(1.0, n)
+    cf = GEMB.initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
+        fill(100.0, n), fill(250.0, n), fill(200.0, n);
+        temperature_air_mean=270.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+
+    # A *fraction* of the supplied `precipitation_mean`, not an independent sum, so a
+    # caller-supplied climatological mean keeps its own scale.
+    @test cf.accumulation_mean == 500.0
+    @test cf.accumulation_mean <= cf.precipitation_mean
+
+    Eg, R = GEMB.GRAIN_GROWTH_EG, GEMB.R_GAS
+    @test cf.temperature_air_effective ≈
+          Eg / (R * log(GEMB.Statistics.mean(exp.(Eg ./ (R .* T))))) rtol=1e-14
+    # Convexity: the Arrhenius mean is bounded by the coldest temperature and the
+    # arithmetic mean of the record, and is strictly colder than the latter.
+    @test minimum(T) < cf.temperature_air_effective < GEMB.Statistics.mean(T)
+
+    # A rain-free record leaves `accumulation_mean` equal to `precipitation_mean`, so the
+    # gate is inert at a dry-snow site rather than silently biased.
+    cf_cold = GEMB.initialize_forcing(t, fill(250.0, n), fill(90000.0, n), precip,
+        fill(3.0, n), fill(100.0, n), fill(250.0, n), fill(200.0, n);
+        temperature_air_mean=250.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    @test cf_cold.accumulation_mean == cf_cold.precipitation_mean
+    # Isothermal record ⇒ the two temperature means coincide exactly.
+    @test cf_cold.temperature_air_effective ≈ 250.0 rtol=1e-12
+
+    # Explicitly supplied values are taken verbatim, never recomputed.
+    cf_given = GEMB.initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
+        fill(100.0, n), fill(250.0, n), fill(200.0, n);
+        temperature_air_mean=270.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0,
+        accumulation_mean=123.0, temperature_air_effective=234.0)
+    @test cf_given.accumulation_mean == 123.0
+    @test cf_given.temperature_air_effective == 234.0
+
+    # `forcing_climatology` carries both over from the full record rather than recomputing
+    # them from the averaged year, which would smooth away the variability they summarize.
+    n2 = 8 * 366 * 2
+    t2 = collect(DateTime(2000,1,1):Hour(3):DateTime(2000,1,1) + Hour(3*(n2-1)))
+    T2 = 265.0 .+ 15.0 .* sin.(2π .* (0:n2-1) ./ (8*365.25))
+    cf2 = GEMB.initialize_forcing(t2, T2, fill(90000.0, n2), fill(0.05, n2),
+        fill(3.0, n2), fill(100.0, n2), fill(250.0, n2), fill(200.0, n2);
+        temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=150.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    clim = forcing_climatology(cf2)
+    @test clim.accumulation_mean == cf2.accumulation_mean
+    @test clim.temperature_air_effective == cf2.temperature_air_effective
+end
+
+@testset "ClimateForcingStep positional ABI" begin
+    # The two new scalars were appended at the *end* of the struct, with a 19-argument
+    # positional constructor defaulting them, so the many positional call sites in this
+    # suite keep binding their arguments to the fields they were written for.
+    cfs = GEMB.ClimateForcingStep(10800.0, 260.0, 90000.0, 0.1, 3.0, 100.0, 250.0, 200.0,
+        255.0, 4.0, 300.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1)
+    @test cfs.temperature_air_mean == 255.0
+    @test cfs.precipitation_mean == 300.0
+    @test cfs.cloud_fraction == 0.1
+    # Defaulted to the scalars they refine, so a 19-argument step makes both gates inert.
+    @test cfs.accumulation_mean == cfs.precipitation_mean
+    @test cfs.temperature_air_effective == cfs.temperature_air_mean
+end

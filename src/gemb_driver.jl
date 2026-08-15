@@ -56,6 +56,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.precipitation_mean,
         climate_forcing.temperature_observation_height,
         climate_forcing.wind_observation_height;
+        accumulation_mean=climate_forcing.accumulation_mean,
+        temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
         latitude=climate_forcing.latitude,
         longitude=climate_forcing.longitude,
@@ -127,6 +129,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         longwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_sensible=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_latent=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        heat_flux_basal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -135,6 +138,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         firn_air_content=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content_10m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content_20m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        close_off_age=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         percolation_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         valid_profile_length=DimArray(fill(0, n_outputs), (ti_dim,)),
         ice_slab_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -157,6 +161,13 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         age=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
+
+    # Optional layers, appended last so the base stack's layer order — and therefore the
+    # order `cf_layermetadata` walks — is unchanged whether or not they are present.
+    if mp.output_viscosity
+        layers = merge(layers, (;
+            viscosity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),))
+    end
 
     output = DimStack(layers;
         # Per-layer CF attributes: units, long_name, the interval reduction
@@ -206,7 +217,9 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
         climate_forcing.temperature_observation_height,
-        climate_forcing.wind_observation_height)
+        climate_forcing.wind_observation_height,
+        climate_forcing.accumulation_mean,
+        climate_forcing.temperature_air_effective)
 
     # Return the DimStack (already populated during time loop)
     return output
@@ -303,7 +316,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     f_cloud_fraction::AbstractVector,
     temperature_air_mean::Float64, wind_speed_mean::Float64,
     precipitation_mean::Float64, temperature_observation_height::Float64,
-    wind_observation_height::Float64)
+    wind_observation_height::Float64,
+    accumulation_mean::Float64, temperature_air_effective::Float64)
 
     # Extract concrete output arrays once (avoids per-write DimStack/At dispatch).
     out_melt = parent(output[:melt])
@@ -317,10 +331,12 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lwnet = parent(output[:longwave_net])
     out_shf = parent(output[:heat_flux_sensible])
     out_lhf = parent(output[:heat_flux_latent])
+    out_bhf = parent(output[:heat_flux_basal])
     out_albedo_broadband = parent(output[:albedo_broadband])
     out_fac = parent(output[:firn_air_content])
     out_fac10 = parent(output[:firn_air_content_10m])
     out_fac20 = parent(output[:firn_air_content_20m])
+    out_close_off_age = parent(output[:close_off_age])
     out_percolation_depth = parent(output[:percolation_depth])
     out_slab_thickness = parent(output[:ice_slab_thickness])
     out_slab_depth = parent(output[:ice_slab_depth])
@@ -339,6 +355,11 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_dendricity = parent(output[:grain_dendricity])
     out_grain_sphericity = parent(output[:grain_sphericity])
     out_age = parent(output[:age])
+    # Empty when the layer was not allocated, which is what gates the write below. Empty
+    # rather than `nothing` for the same reason as `NO_VISCOSITY`: this is a local in the
+    # time loop, so a `Union{Nothing,Matrix{Float64}}` would leave its element type
+    # unknowable at the write site.
+    out_viscosity = mp.output_viscosity ? parent(output[:viscosity]) : Matrix{Float64}(undef, 0, 0)
 
     density_ice = mp.density_ice
 
@@ -353,6 +374,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_longwave_net = 0.0
     cum_shf = 0.0
     cum_lhf = 0.0
+    cum_bhf = 0.0
     cum_albedo_broadband = 0.0
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
@@ -406,7 +428,9 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             f_cloud_optical_thickness[i],
             f_solar_zenith_angle[i],
             f_shortwave_downward_diffuse[i],
-            f_cloud_fraction[i])
+            f_cloud_fraction[i],
+            accumulation_mean,
+            temperature_air_effective)
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
@@ -427,6 +451,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_longwave_net += forcing_step.longwave_downward - flux.longwave_upward
         cum_shf += flux.heat_flux_sensible
         cum_lhf += flux.heat_flux_latent
+        cum_bhf += flux.heat_flux_basal
         cum_albedo_broadband += flux.albedo_broadband
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
@@ -474,6 +499,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lwnet[oi] = cum_longwave_net / cum_count
                 out_shf[oi] = cum_shf / cum_count
                 out_lhf[oi] = cum_lhf / cum_count
+                out_bhf[oi] = cum_bhf / cum_count
                 out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_fac10[oi] = cum_firn_air_content_10m / cum_count
@@ -485,7 +511,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
 
                 # Instantaneous: slab geometry is slowly-varying column state, and
                 # `ice_slab_depth` is NaN when no slab qualifies, which an interval mean would
-                # poison for the whole interval.
+                # poison for the whole interval. `close_off_age` is NaN for an open column for
+                # the same reason, and is likewise read off the current column rather than
+                # `flux` — it is pure state, not a budget term.
+                out_close_off_age[oi] = close_off_age(state.density, state.age)
                 out_slab_thickness[oi] = flux.ice_slab_thickness
                 out_slab_depth[oi] = flux.ice_slab_depth
 
@@ -524,6 +553,17 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_age[k, oi] = state.age[k]
             end
 
+            # From `flux`, not `state`: viscosity is a per-step diagnostic of the
+            # densification call, not column state carried forward. Written at the output
+            # step only, so it is the instantaneous value at this timestamp rather than an
+            # interval mean — averaging it would mix Pa s across cells whose density changed,
+            # and NaN under any non-Crocus scheme would poison the whole interval anyway.
+            if !isempty(out_viscosity)
+                @inbounds for k in 1:m
+                    out_viscosity[k, oi] = flux.viscosity[k]
+                end
+            end
+
             # Reset accumulators
             cum_melt = 0.0
             cum_runoff = 0.0
@@ -535,6 +575,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_longwave_net = 0.0
             cum_shf = 0.0
             cum_lhf = 0.0
+            cum_bhf = 0.0
             cum_albedo_broadband = 0.0
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0

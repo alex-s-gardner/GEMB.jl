@@ -19,6 +19,19 @@ Base.@kwdef struct ModelParameters
     # --- Density & Densification ---
     densification_method::Symbol = :Arthern
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
+    # Which climatological mass flux the accumulation-driven schemes compact against.
+    # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:
+    # `precipitation_mean` includes rain, which does not bury the column, so it overstates the
+    # burial rate at any raining site. `:precipitation` restores the reference behaviour.
+    # Inert on schemes whose rate does not depend on accumulation (`:ArthernB`,
+    # `:Barnola1991`, `:Crocus`, `:CrocusPure`). See `calculate_density`.
+    densification_accumulation::Symbol = :accumulation
+    # Which mean temperature the Arrhenius rate factors evaluate at. `exp(E/RT)` is convex in
+    # 1/T, so `exp(E/R⟨T⟩) ≠ ⟨exp(E/RT)⟩` — at a site with a ±15 K seasonal swing the two
+    # differ by tens of percent, biasing toward under-densification. `:arrhenius` uses
+    # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
+    # (the default, and the reference behaviour) uses the plain mean `cf.temperature_air_mean`.
+    mean_temperature_method::Symbol = :arithmetic
     new_snow_method::Symbol = Symbol("350kgm2")
     density_ice::Float64 = 910.0
     rain_temperature_threshold::Float64 = 273.15
@@ -44,6 +57,19 @@ Base.@kwdef struct ModelParameters
     # temperature-dependent and ignores `heat_capacity_ice`. See `heat_capacity`.
     heat_capacity_method::Symbol = :constant
     heat_capacity_ice::Float64 = HEAT_CAPACITY_ICE_DEFAULT
+    # Heat capacity carrying the *sensible* heat of above-freezing liquid entering the column,
+    # which only rain is. `:water` uses `HEAT_CAPACITY_WATER`; `:ice` uses the matrix value,
+    # understating it roughly twofold, which is what MATLAB does. Everything else in the model
+    # — pore water, refreezing, runoff — is isothermal at the melting point and unaffected by
+    # this field. See `specific_enthalpy_water`.
+    rain_heat_capacity::Symbol = :water
+
+    # --- Grain Growth ---
+    # Selects the non-dendritic *dry* grain-growth law. `:Marbouty` (MATLAB's behaviour) stops
+    # growing grains at `DENSITY_MARBOUTY_MAX`; `:Arthern` uses Arthern et al. (2010)
+    # `dr²/dt = kgr·exp(-Eg/RT)` at every density; `:hybrid` switches from the former to the
+    # latter at that density. See `calculate_grain_size`.
+    grain_growth_method::Symbol = :Marbouty
 
     # --- Melt & Water ---
     # `:constant` holds `water_irreducible_saturation` at every density (Colbeck, 1974, as
@@ -94,6 +120,17 @@ Base.@kwdef struct ModelParameters
 
     # --- Output Controls ---
     output_frequency::Symbol = :all
+    # Age epoch of an initialized column. `:steady_state` inherits the residence time
+    # `steady_state_profile` marched; `:zero` starts every cell at 0 (the instant of
+    # initialization is the epoch). No physics reads `age`, so this is output-only.
+    # See `initialize_profile`.
+    initialize_age::Symbol = :steady_state
+    # Add a `viscosity` profile layer [Pa s] to the `gemb` output. Off by default: it costs
+    # one length-`m` allocation per timestep, and it is populated only under
+    # `densification_method = :Crocus`/`:CrocusPure`, the only schemes that form an effective
+    # viscosity. Under any other scheme the layer exists but is all `NaN` — see
+    # `calculate_density`.
+    output_viscosity::Bool = false
 
     # --- Grid Geometry ---
     column_ztop::Float64 = 10.0
@@ -193,6 +230,7 @@ const CLIMATE_FORCING_LAYER_KEYS = (
 const CLIMATE_FORCING_META_KEYS = (
     :time_step, :temperature_air_mean, :wind_speed_mean, :precipitation_mean,
     :temperature_observation_height, :wind_observation_height,
+    :accumulation_mean, :temperature_air_effective,
     :dataset, :latitude, :longitude, :elevation, :elevation_native, :elevation_offset,
     :climatology_window_start, :climatology_window_stop,
     :climatology_n_years, :climatology_steps_per_year,
@@ -218,6 +256,18 @@ dataset's own surface elevation, m, before any adjustment), and `elevation_offse
 (m the forcing was elevation-adjusted by) — are stored alongside the physics scalars
 and default to `""`/`NaN`/`NaN`/`NaN`/`NaN`/`0.0`.
 
+Two optional refinements of the physics scalars, both defaulting to `NaN`, in which case
+they fall back to the scalar they refine so the forcing behaves exactly as one built
+without them:
+
+- `accumulation_mean` [kg m-2 yr-1] — mean *snowfall*, i.e. `precipitation_mean` with rain
+  excluded on `mp.rain_temperature_threshold`. Read by densification under
+  `mp.densification_accumulation = :accumulation`; falls back to `precipitation_mean`.
+- `temperature_air_effective` [K] — the Arrhenius-weighted mean temperature,
+  `Eg / (R·log(mean(exp(Eg/(R·T)))))`, which is what the grain-growth Arrhenius factors
+  actually need (`exp(E/R⟨T⟩) ≠ ⟨exp(E/RT)⟩`). Read under
+  `mp.mean_temperature_method = :arrhenius`; falls back to `temperature_air_mean`.
+
 `elevation_offset` is forced to `0.0` when `elevation` is not finite: with no known
 target elevation there is nothing an offset could be measured against, and carrying a
 bare offset invites downstream code to derive a native elevation from `NaN - offset`.
@@ -235,6 +285,7 @@ function ClimateForcing(
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
+    accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
     climatology_window_start=nothing, climatology_window_stop=nothing,
@@ -249,6 +300,12 @@ function ClimateForcing(
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
         temperature_observation_height, wind_observation_height,
+        # Both fall back to the total-precipitation / arithmetic-mean scalars they refine, so
+        # a forcing built without them behaves exactly as before and the two
+        # `ModelParameters` gates that read them are inert rather than reading a NaN.
+        isnan(accumulation_mean) ? Float64(precipitation_mean) : Float64(accumulation_mean),
+        isnan(temperature_air_effective) ? Float64(temperature_air_mean) :
+            Float64(temperature_air_effective),
         String(dataset), Float64(latitude), Float64(longitude),
         Float64(elevation), Float64(elevation_native),
         # No target elevation ⇒ no meaningful offset (see docstring).
@@ -304,7 +361,30 @@ struct ClimateForcingStep
     solar_zenith_angle::Float64
     shortwave_downward_diffuse::Float64
     cloud_fraction::Float64
+    # Refinements of `precipitation_mean` and `temperature_air_mean`, selected by
+    # `mp.densification_accumulation` and `mp.mean_temperature_method`. Last, not beside the
+    # scalars they refine, so the 19-argument positional form stays valid; the two-argument
+    # tail constructor below defaults each to the scalar it refines, which is what makes an
+    # existing positional call site behave exactly as it did.
+    accumulation_mean::Float64
+    temperature_air_effective::Float64
 end
+
+# 19-argument positional form: the two refinements default to the scalars they refine, so a
+# step built this way reads identically on either setting of the two gates.
+ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction) =
+    ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        precipitation_mean, temperature_air_mean)
 
 """
     ClimateForcingStep(; dt, temperature_air, ...)
@@ -328,7 +408,9 @@ function ClimateForcingStep(;
     wind_observation_height::Real=0.0,
     black_carbon_snow::Real=0.0, black_carbon_ice::Real=0.0,
     cloud_optical_thickness::Real=0.0, solar_zenith_angle::Real=0.0,
-    shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0)
+    shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0,
+    accumulation_mean::Real=precipitation_mean,
+    temperature_air_effective::Real=temperature_air_mean)
 
     return ClimateForcingStep(
         dt, temperature_air, pressure_air, precipitation, wind_speed,
@@ -337,5 +419,6 @@ function ClimateForcingStep(;
         temperature_observation_height, wind_observation_height,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        accumulation_mean, temperature_air_effective,
     )
 end

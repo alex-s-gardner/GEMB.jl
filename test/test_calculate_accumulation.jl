@@ -179,6 +179,11 @@ end
     old_dz1 = dz[1]
     old_t1 = t_vec[1]
 
+    # `calculate_accumulation` mutates its column arguments in place, so the pristine state
+    # is captured here for the second, `rain_heat_capacity=:ice` call below.
+    pristine = map(copy, (t_vec, dz, density, water, grain_radius,
+                          grain_dendricity, grain_sphericity, age))
+
     (t_out, dz_out, d_out, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age,
@@ -192,13 +197,30 @@ end
     @test d_out[1] ≈ new_mass / old_dz1 atol = 1e-10
     @test dz_out[1] ≈ old_dz1 atol = 1e-10
 
-    # Temperature update includes latent heat logic
-    # T(1) = (precipitation * (temperature_air + LF/CI) + T(1) * mInit(1)) / mass
-    term_rain = 10.0 * (275.0 + lf / ci)
+    # Temperature update includes latent heat logic. Rain arrives at 275 K, so it carries
+    # sensible heat above the melting point as well as `LF`; under the default
+    # `rain_heat_capacity = :water` that sensible part is at the *water* heat capacity, not
+    # the ice one. Expressed as the equivalent temperature the mixing algebra sees:
+    # `T_liq = CtoK + LF/c_ice + c_water*(T_air - CtoK)/c_ice`.
+    cw = GEMB.HEAT_CAPACITY_WATER
+    term_rain = 10.0 * (GEMB.CtoK + lf / ci + cw * (275.0 - GEMB.CtoK) / ci)
     term_snow = old_t1 * old_mass
     expected_t = (term_rain + term_snow) / new_mass
 
     @test t_out[1] ≈ expected_t atol = 1e-8
+
+    # `rain_heat_capacity = :ice` reproduces the pre-Fix-5 convention exactly, so the old
+    # reference is retained as the check that the gate is a faithful selector.
+    mp_ice = GEMB.ModelParameters(
+        new_snow_method=Symbol("150kgm2"), column_dzmin=0.05, density_ice=917.0,
+        albedo_snow=0.85, albedo_method=:GardnerSharp,
+        rain_temperature_threshold=273.15, rain_heat_capacity=:ice,
+    )
+    t_ice = GEMB.calculate_accumulation(pristine..., cfs, mp_ice, false)[1]
+    @test t_ice[1] ≈ (10.0 * (275.0 + lf / ci) + term_snow) / new_mass atol = 1e-8
+    # Water's larger heat capacity means more energy arrives with the same rain, so the
+    # default warms the surface cell strictly more.
+    @test t_out[1] > t_ice[1]
 end
 
 @testset "Rain density cap" begin

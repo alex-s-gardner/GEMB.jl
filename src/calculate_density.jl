@@ -19,6 +19,14 @@ Compute the densification of snow/firn using one of several models:
 Returns `(dz, density)`. `density` is updated in place; `dz` is returned as a
 new array (recomputed from the conserved cell mass).
 
+Pass a length-`m` `viscosity` vector to have the per-cell effective viscosity [Pa s]
+written into it. It is filled with `NaN` first and written only by the
+`:Crocus`/`:CrocusPure` settling branch, the one place a viscosity is genuinely formed;
+under every other scheme, and for the cells `:Crocus` hands to `:GSFC2020`, it stays
+`NaN`. Omitting the keyword leaves the hot path untouched: the default is the empty
+`NO_VISCOSITY`, and an empty vector means "not requested" (a concrete type on both
+settings — see the note in `gemb_core.jl`).
+
 `water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
 (as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity
 reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
@@ -45,18 +53,32 @@ deviates from the reference — see the comment on that branch.
 """
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
-    cfs::ClimateForcingStep, mp::ModelParameters)
+    cfs::ClimateForcingStep, mp::ModelParameters;
+    viscosity::Vector{Float64}=NO_VISCOSITY)
 
     # specify constants
     dt = cfs.dt / 86400.0   # convert from [s] to [d]
 
     m = length(density)
     density_ice = mp.density_ice
-    pm = cfs.precipitation_mean
-    tam = cfs.temperature_air_mean
+    # The two climatological scalars every accumulation- or Arrhenius-driven scheme below
+    # compacts against. `:accumulation`/`:arrhenius` select the refined forms; the
+    # `:precipitation`/`:arithmetic` settings reproduce the pre-refinement behaviour exactly.
+    pm = mp.densification_accumulation === :accumulation ?
+         cfs.accumulation_mean : cfs.precipitation_mean
+    tam = mp.mean_temperature_method === :arrhenius ?
+          cfs.temperature_air_effective : cfs.temperature_air_mean
 
     # New grid-cell lengths (fresh array; density is updated in place).
     dz_out = similar(dz)
+
+    # Effective viscosity is reported only where a scheme genuinely forms one — the
+    # `:Crocus`/`:CrocusPure` `dz = dz₀exp(-σ/η·dt)` branch. Every other scheme is a
+    # `ρ̇ = c(ρᵢ - ρ)` relaxation with no stress in it, so `η = σ/(ρ̇/ρ)` would be a
+    # reconstruction from a σ the scheme never used, reported in units that invite
+    # comparison with a quantity it is not. NaN says "not computed here", which is
+    # honest; a number would not be.
+    isempty(viscosity) || fill!(viscosity, NaN)
 
     method = mp.densification_method
 
@@ -214,6 +236,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 # load; for the first it is the difference between compacting and not.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
                 η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
+                isempty(viscosity) || (viscosity[i] = η)
                 dz_new = dz0 * exp(-σ / η * dt_seconds)
                 d = d0 * dz0 / dz_new
                 if d > density_ice - D_TOLERANCE

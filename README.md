@@ -378,6 +378,50 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
   unmoved. Under sustained ablation the deepest cell's age is a lower bound, basal accretion
   inheriting that cell's own age — the same treatment `density` and `temperature` already get
   at that site.
+- **Densification is driven by mean snowfall, not mean precipitation.** Every
+  accumulation-driven scheme (`:Arthern`, `:Ligtenberg`, `:Simonsen2013`, `:GSFC2020`,
+  `:HerronLangway`, `:Crocus`, and `:Barnola1991` below its stage transition) compacted
+  against `precipitation_mean`, which includes rain. Rain does not bury the column, so the
+  burial rate — and therefore compaction — was overstated at any raining site. A new
+  `accumulation_mean` forcing scalar partitions precipitation on
+  `rain_temperature_threshold`, the same split `initialize_climate_summary` already applied,
+  so the transient run and the initializer now use the same accumulation flux instead of
+  disagreeing. Reduces densification; on the synthetic site (3.2% rain) the 32-year final mean
+  column density falls by ~1.1 kg m⁻³. Set `densification_accumulation = :precipitation` to
+  restore the previous behaviour bit-for-bit.
+- **Rain's sensible heat is carried at the water heat capacity.** Rain above the melting
+  point entered through `mix_temperature_liquid` with its sensible heat evaluated at
+  `heat_capacity_ice` (2102 J kg⁻¹ K⁻¹) rather than ~4220, understating it by about 2×. The
+  new `specific_enthalpy_water(mp, T)` form is used on both sides of the budget, including
+  the `verbose` energy check, which previously used the same wrong convention on both sides
+  and so could not catch it. Adds energy at raining sites: on the synthetic site melt rises
+  48.7 kg m⁻² (+0.43%) over 32 years. Pore water is unaffected — it is pinned at the melting
+  point, where the one-argument form still applies exactly. Set
+  `rain_heat_capacity = :ice` to restore the previous behaviour bit-for-bit.
+- **An initialized column carries the age its steady-state profile implies.** `age` was set
+  to zero on every initialization path, even though `steady_state_profile` already integrated
+  a residence time along the march that temperature, density and all three grain variables
+  are initialized from. Any age or residence-time diagnostic was therefore meaningless until
+  a multi-century spinup had flushed the column. The marched age is now used, and a new
+  `close_off_age` output reports the age at the shallowest cell reaching pore close-off
+  (830 kg m⁻³), `NaN` for an open column. Output-only: no physics reads `age`, so budgets and
+  the regression pins are unmoved. Set `initialize_age = :zero` to restore zeros. The
+  `constant_density` escape hatch forces `:zero` regardless, since it discards the march's
+  density and the marched age describes a firn column that flag replaces with solid ice.
+- **Optional Arthern (2010) dry-snow grain growth.** Grain growth ran only the seasonal-snow
+  parameterizations, whose Marbouty density factor is identically zero above 400 kg m⁻³ — so
+  `grain_radius` was frozen throughout the firn column, which matters because `:ArthernB`
+  densification goes as `1/r²`. `grain_growth_method = :Arthern` integrates
+  `dr²/dt = k_gr·exp(-E_g/RT)` instead, and `:hybrid` keeps Marbouty's temperature-gradient
+  physics in seasonal snow and hands over to Arthern at 400 kg m⁻³. Default remains
+  `:Marbouty` (bit-identical); `:hybrid` is the physically defensible setting for deep firn.
+- **`heat_flux_basal` and an optional `viscosity` profile are now reported.** Both were
+  already computed and discarded. `heat_flux_basal` is the conductive flux across the deepest
+  interior face — an output of the Dirichlet lower boundary, not a prescribed geothermal flux,
+  hence the name — previously visible only inside the `verbose` energy check. `viscosity`
+  [Pa s] is added as a profile layer under `output_viscosity = true`, populated by the
+  `:Crocus`/`:CrocusPure` settling law and `NaN` under every other scheme, which form no
+  effective viscosity. Diagnostic only; no physics reads either.
 
 ### Fixed-length vertical grid
 

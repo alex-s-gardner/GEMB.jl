@@ -361,3 +361,50 @@ end
         @test all(0.0 .<= parent(output[:albedo_broadband]) .<= 1.0)
     end
 end
+
+@testset "rain sensible heat (rain_heat_capacity)" begin
+    # `specific_enthalpy_water(mp, T)` adds the sensible heat of *above-freezing* liquid on top
+    # of the melting-point value. At or below CtoK it must reduce exactly to the one-argument
+    # form, on every setting — that identity is what keeps the melt/percolation budgets, which
+    # only ever call the one-argument form, untouched by this option.
+    for hc in (:constant, :CuffeyPaterson), rhc in (:water, :ice)
+        mp = ModelParameters(heat_capacity_method=hc, rain_heat_capacity=rhc)
+        h0 = GEMB.specific_enthalpy_water(mp)
+        @test GEMB.specific_enthalpy_water(mp, GEMB.CtoK) === h0
+        @test GEMB.specific_enthalpy_water(mp, 260.0) === h0
+        @test GEMB.specific_enthalpy_water(mp, 280.0) > h0
+    end
+
+    @test ModelParameters().rain_heat_capacity === :water
+
+    # :water carries the sensible heat at ~4200 J kg-1 K-1, :ice at the matrix value (~2100),
+    # understating it roughly twofold. This is the deviation from MATLAB.
+    mp_w = ModelParameters(rain_heat_capacity=:water)
+    mp_i = ModelParameters(rain_heat_capacity=:ice)
+    dT = 275.0 - GEMB.CtoK
+    sens_w = GEMB.specific_enthalpy_water(mp_w, 275.0) - GEMB.specific_enthalpy_water(mp_w)
+    sens_i = GEMB.specific_enthalpy_water(mp_i, 275.0) - GEMB.specific_enthalpy_water(mp_i)
+    @test sens_w ≈ GEMB.HEAT_CAPACITY_WATER * dT rtol = 1e-12
+    @test sens_i ≈ GEMB.heat_capacity(mp_i, GEMB.CtoK) * dT rtol = 1e-12
+    @test sens_w / sens_i > 1.9
+
+    # `mix_temperature_liquid` at the melting point must stay bit-identical to the reference
+    # arithmetic on both settings — this is the call site `calculate_melt` shares with rain.
+    for rhc in (:water, :ice)
+        mp = ModelParameters(heat_capacity_method=:constant, rain_heat_capacity=rhc)
+        c = mp.heat_capacity_ice
+        expected = (2.0 * (GEMB.CtoK + GEMB.LF / c) + 265.0 * 100.0) / 102.0
+        @test GEMB.mix_temperature_liquid(mp, GEMB.CtoK, 2.0, 265.0, 100.0) === expected
+    end
+
+    # Under :ice, above-freezing liquid reproduces the reference arithmetic exactly (T_air
+    # substituted straight in), which is the point of retaining the setting.
+    mp = ModelParameters(heat_capacity_method=:constant, rain_heat_capacity=:ice)
+    c = mp.heat_capacity_ice
+    @test GEMB.mix_temperature_liquid(mp, 275.0, 2.0, 265.0, 100.0) ===
+          (2.0 * (275.0 + GEMB.LF / c) + 265.0 * 100.0) / 102.0
+
+    # Warmer rain deposits more energy, so the mixed cell ends warmer under :water.
+    @test GEMB.mix_temperature_liquid(mp_w, 275.0, 2.0, 265.0, 100.0) >
+          GEMB.mix_temperature_liquid(mp_i, 275.0, 2.0, 265.0, 100.0)
+end

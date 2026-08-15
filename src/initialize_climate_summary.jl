@@ -28,6 +28,11 @@ relative to any model integration.
 
 # Temperature [K]
 - `temperature_air_mean`: mean annual air temperature.
+- `temperature_air_effective`: the forcing's Arrhenius-weighted mean, carried through
+  from `cf.temperature_air_effective`. Used *only* where a rate factor is evaluated
+  (`DensificationCoeffs`, under `mp.mean_temperature_method = :arrhenius`), never where
+  a temperature is a temperature — the marched thermal profile and the annual harmonic
+  are built about `temperature_air_mean`, which is the column's actual mean state.
 - `temperature_amplitude`, `temperature_phase`: amplitude [K] and phase [rad] of
   the fitted annual cycle, `T(t) = T̄ + A·cos(ωt − φ)`.
 - `latent_warming`: `LF·refreeze/(c_p·accumulation_effective)`, the mean
@@ -45,6 +50,7 @@ struct ClimateSummary
     balance::Float64
     accumulation_effective::Float64
     temperature_air_mean::Float64
+    temperature_air_effective::Float64
     temperature_amplitude::Float64
     temperature_phase::Float64
     latent_warming::Float64
@@ -210,7 +216,7 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     end
 
     return ClimateSummary(accumulation, rainfall, melt, refreeze, balance, A_eff,
-        T_mean, T_amplitude, T_phase, latent_warming,
+        T_mean, Float64(cf.temperature_air_effective), T_amplitude, T_phase, latent_warming,
         wind_mean, pressure_mean, zT_obs, zW_obs)
 end
 

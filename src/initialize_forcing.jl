@@ -22,6 +22,15 @@ Matches MATLAB's `model_initialize_forcing.m`.
 - `precipitation_mean::Float64`: Climatological mean precipitation [kg m-2 yr-1]
 - `temperature_observation_height::Float64`: Height of temperature observation [m]
 - `wind_observation_height::Float64`: Height of wind observation [m]
+- `accumulation_mean::Float64`: Climatological mean *snowfall* [kg m-2 yr-1], i.e.
+  `precipitation_mean` less the rain fraction. Derived from the record by partitioning
+  precipitation on `rain_temperature_threshold` when not supplied. Read by
+  `calculate_density` under `densification_accumulation = :accumulation`.
+- `temperature_air_effective::Float64`: Arrhenius-weighted mean air temperature [K],
+  `Eg/(R·log(mean(exp(Eg/(R·T)))))`. Derived from the record when not supplied. Read by
+  `calculate_density` under `mean_temperature_method = :arrhenius`.
+- `rain_temperature_threshold::Float64`: Rain/snow partition temperature [K] used only to
+  derive `accumulation_mean`; keep it equal to the `ModelParameters` field of the same name.
 """
 function initialize_forcing(
     time::AbstractVector{DateTime},
@@ -37,6 +46,9 @@ function initialize_forcing(
     precipitation_mean::Real=NaN,
     temperature_observation_height::Real=NaN,
     wind_observation_height::Real=NaN,
+    accumulation_mean::Real=NaN,
+    temperature_air_effective::Real=NaN,
+    rain_temperature_threshold::Real=273.15,
     black_carbon_snow::Real=0.0,
     black_carbon_ice::Real=0.0,
     cloud_optical_thickness::Real=0.0,
@@ -86,6 +98,42 @@ function initialize_forcing(
         precipitation_mean = Statistics.mean(precipitation) * 365.25 / dt_days
     end
 
+    # Mean *snowfall*: `precipitation_mean` counts rain, which does not bury the column, so
+    # densification driven by it overstates the burial rate at any raining site. Partitioned on
+    # the same threshold `calculate_accumulation` applies per timestep, and on the same one
+    # `initialize_climate_summary` uses, so the transient run and the initializer agree by
+    # construction. Derived as a *fraction* of `precipitation_mean` rather than summed
+    # independently, so a caller-supplied climatological `precipitation_mean` (which may be
+    # scaled differently from this record's own mean) carries its scale over. No warning when
+    # undeclared: this is a derived refinement, not a scalar the caller was expected to supply.
+    if isnan(accumulation_mean)
+        precip_total = 0.0
+        snow_total = 0.0
+        @inbounds for i in eachindex(precipitation)
+            precip_total += precipitation[i]
+            if temperature_air[i] <= rain_temperature_threshold
+                snow_total += precipitation[i]
+            end
+        end
+        snow_fraction = precip_total > 0 ? snow_total / precip_total : 1.0
+        accumulation_mean = precipitation_mean * snow_fraction
+    end
+
+    # Arrhenius-weighted mean temperature. `exp(Eg/RT)` is convex in 1/T, so evaluating an
+    # Arrhenius factor at the arithmetic mean is not the mean of the factor; this inverts the
+    # mean of the exponential instead, which is the temperature at which a rate factor
+    # reproduces the record's true mean rate. Exact for every consumer only because all three
+    # grain-growth Arrhenius factors share `GRAIN_GROWTH_EG` — a scheme with a different
+    # activation energy would need its own effective temperature.
+    if isnan(temperature_air_effective)
+        acc = 0.0
+        @inbounds for T in temperature_air
+            acc += exp(GRAIN_GROWTH_EG / (R_GAS * T))
+        end
+        temperature_air_effective =
+            GRAIN_GROWTH_EG / (R_GAS * log(acc / length(temperature_air)))
+    end
+
     if isnan(temperature_observation_height)
         @warn "Undeclared temperature_observation_height. Assuming 2 m above surface."
         temperature_observation_height = 2.0
@@ -123,6 +171,8 @@ function initialize_forcing(
         Float64(precipitation_mean),
         Float64(temperature_observation_height),
         Float64(wind_observation_height);
+        accumulation_mean=Float64(accumulation_mean),
+        temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
         latitude=latitude,
         longitude=longitude,
@@ -161,6 +211,8 @@ vectors and metadata from `stack` and forwards them to the vector method of
 - `wind_observation_height`: Height of wind observations (m)
 
 # Optional Metadata (defaults used if not present)
+- `accumulation_mean` (kg/m²/year; derived from the record by rain/snow partitioning)
+- `temperature_air_effective` (K; derived from the record as the Arrhenius-weighted mean)
 - `black_carbon_snow` (default: 0.0)
 - `black_carbon_ice` (default: 0.0)
 - `cloud_optical_thickness` (default: 0.0)
@@ -246,6 +298,11 @@ function initialize_forcing(stack::DimStack)
     temperature_observation_height = Float64(meta["temperature_observation_height"])
     wind_observation_height = Float64(meta["wind_observation_height"])
 
+    # Optional refinements of the two scalars above. NaN is the "derive it from the record"
+    # sentinel the vector method understands, not a missing-data error.
+    accumulation_mean = get(meta, "accumulation_mean", NaN)
+    temperature_air_effective = get(meta, "temperature_air_effective", NaN)
+
     # Optional variables with defaults
     black_carbon_snow = get(meta, "black_carbon_snow", 0.0)
     black_carbon_ice = get(meta, "black_carbon_ice", 0.0)
@@ -283,6 +340,8 @@ function initialize_forcing(stack::DimStack)
         precipitation_mean = precipitation_mean,
         temperature_observation_height = temperature_observation_height,
         wind_observation_height = wind_observation_height,
+        accumulation_mean = accumulation_mean,
+        temperature_air_effective = temperature_air_effective,
         black_carbon_snow = black_carbon_snow,
         black_carbon_ice = black_carbon_ice,
         cloud_optical_thickness = cloud_optical_thickness,

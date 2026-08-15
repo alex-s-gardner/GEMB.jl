@@ -33,10 +33,14 @@ seeds:
   Marbouty/Brun metamorphism is not duplicated here.
 - **water** is the irreducible content at the melt point, using the same formula
   as [`calculate_melt`](@ref).
+- **age** is the march's own time coordinate — the accumulated `dt` at each depth, in days,
+  which is the residence time a parcel buried at `cs.balance` would have. Below the
+  firn/ice transition the march has stopped, so it is continued at the ice burial rate
+  `ρᵢ/b`; it is zero everywhere for an ablation column, where nothing is buried at all.
 
 Returns a `NamedTuple` of `Vector{Float64}`s at each depth in `z_center`, with
 keys `density`, `temperature`, `water`, `grain_radius`, `grain_dendricity`,
-`grain_sphericity`, plus the scalar `ice_depth` used to size the grid: the depth
+`grain_sphericity`, `age`, plus the scalar `ice_depth` used to size the grid: the depth
 at which the column reaches `mp.density_ice` (to within
 `DENSITY_FIRN_TOLERANCE`), below which it carries no further firn information.
 `ice_depth` is `0.0` for an ablation column (ice at the surface) and `max_depth`
@@ -87,14 +91,23 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
             grain_radius     = fill(GRAIN_RADIUS_ICE, m),
             grain_dendricity = zeros(m),
             grain_sphericity = zeros(m),
+            # Nothing is ever buried, so the march never advances and there is no residence
+            # time to report. Zero, not the true (large, unknowable) age of exposed ice.
+            age              = zeros(m),
             ice_depth        = 0.0,
         )
     end
 
-    p = DensificationCoeffs(mp, cs.accumulation_effective, cs.temperature_air_mean)
+    # `accumulation_effective` is already the snowfall-plus-refreeze flux, so the
+    # `densification_accumulation` gate has nothing to switch here — the initializer never
+    # used total precipitation. Only the temperature gate applies.
+    p = DensificationCoeffs(mp, cs.accumulation_effective,
+        mp.mean_temperature_method === :arrhenius ? cs.temperature_air_effective :
+                                                    cs.temperature_air_mean)
 
     # Age-marched curves, interpolated onto z_center at the end.
     z_curve   = Float64[0.0]
+    age_curve = Float64[0.0]                        # cumulative age along the march [yr]
     ρ_curve   = Float64[ρ0]
     re_curve  = Float64[RE_NEW_SNOW]
     gdn_curve = Float64[GDN_NEW_SNOW]
@@ -102,6 +115,7 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
 
     ρ   = ρ0
     z   = 0.0
+    age = 0.0                                       # residence time of the marched parcel [yr]
 
     # Grain state marched as a 3-cell stencil: `calculate_grain_size` derives the
     # temperature gradient from neighbours (`_grain_gradient` returns 0 for a
@@ -127,6 +141,10 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
         dt = _march_age_step(dz_step, ρ, b)
         z, ρ = _march_density_step(p, ρ, z, b, ρi, dt, gs_T[2])
         dt_seconds = dt * SECONDS_PER_YEAR
+        # The march's own time coordinate. `dt` is exactly the interval over which the parcel
+        # was buried from the previous depth to this one, so accumulating it *is* the residence
+        # time at depth `z` — the same quantity `age` counts in the transient run.
+        age += dt
 
         if ice_depth == 0.0 && ρ >= ρi - DENSITY_FIRN_TOLERANCE
             ice_depth = z
@@ -155,6 +173,7 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
             gs_re, gs_gdn, gs_gsp, cfs_grain, mp)
 
         push!(z_curve, z)
+        push!(age_curve, age)
         push!(ρ_curve, ρ)
         push!(re_curve, gs_re[2])
         push!(gdn_curve, gs_gdn[2])
@@ -165,6 +184,11 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     # Extend past the deepest requested cell so interpolation is well posed.
     if z_curve[end] < max_depth
         push!(z_curve, max_depth + 1.0)
+        # Age is the one curve that must not be extended by a constant: the march stops when
+        # the column reaches ice, but burial does not, so a flat tail would report the whole
+        # solid-ice base as the same age as its top. Continue at the ice burial rate, `ρi/b`
+        # years per metre, which is exactly the `dt` the loop would have taken.
+        push!(age_curve, age + (max_depth + 1.0 - z_curve[end-1]) * ρi / b)
         push!(ρ_curve, ρi)
         push!(re_curve, re_curve[end])
         push!(gdn_curve, gdn_curve[end])
@@ -184,6 +208,14 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     grain_radius = _interp_curve(re_curve, z_curve, depth; lo=RE_NEW_SNOW, hi=GRAIN_RADIUS_ICE)
     grain_dendricity = _interp_curve(gdn_curve, z_curve, depth; lo=0.0, hi=1.0)
     grain_sphericity = _interp_curve(gsp_curve, z_curve, depth; lo=0.0, hi=1.0)
+    # In days, matching the transient `age` counter (`cfs.dt/86400`). Converted with
+    # `SECONDS_PER_YEAR`, the same year length the march already uses for `dt_seconds`, so the
+    # marched age and the grain growth driven by it cannot disagree about how long a step was.
+    # `hi` is unreachable given the tail pushed above (which extends past `max_depth`); the
+    # surface is age 0 by construction.
+    days_per_year = SECONDS_PER_YEAR / 86400.0
+    age_profile = _interp_curve(age_curve .* days_per_year, z_curve, depth;
+        lo=0.0, hi=age_curve[end] * days_per_year)
 
     temperature = Vector{Float64}(undef, m)
     water = Vector{Float64}(undef, m)
@@ -199,6 +231,7 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
         grain_radius     = grain_radius,
         grain_dendricity = grain_dendricity,
         grain_sphericity = grain_sphericity,
+        age              = age_profile,
         ice_depth        = ice_depth,
     )
 end

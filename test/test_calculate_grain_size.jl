@@ -278,3 +278,52 @@ end
     # Radius should be capped at 1.0mm for spherical grains
     @test all(gs_out .<= 1.0 + 1e-10)
 end
+
+@testset "grain_growth_method" begin
+    # The dry non-dendritic branch is the only one this option touches. A column spanning the
+    # Marbouty density ceiling (400) pins the handover: cells 1-2 are below it, cells 3-5 above.
+    T = [263.0, 260.0, 255.0, 250.0, 248.0]
+    dz = fill(0.05, 5)
+    density = [200.0, 350.0, 450.0, 600.0, 800.0]
+    water = zeros(5)
+    gdn = zeros(5)   # non-dendritic
+    gsp = zeros(5)
+    cfs = _make_grain_cfs(dt=10800.0)
+
+    _grow(method) = GEMB.calculate_grain_size(copy(T), copy(dz), copy(density), copy(water),
+        fill(0.5, 5), copy(gdn), copy(gsp), cfs, GEMB.ModelParameters(grain_growth_method=method))[1]
+
+    r_marbouty = _grow(:Marbouty)
+    r_arthern = _grow(:Arthern)
+    r_hybrid = _grow(:hybrid)
+
+    # Marbouty is the default, and stops dead at DENSITY_MARBOUTY_MAX: no growth in cells 3-5.
+    @test GEMB.ModelParameters().grain_growth_method === :Marbouty
+    @test all(r_marbouty[1:2] .> 0.5)
+    @test r_marbouty[3:5] == fill(0.5, 3)
+
+    # Arthern grows at every density, and monotonically faster the warmer the cell.
+    @test all(r_arthern .> 0.5)
+    @test issorted(r_arthern, rev=true)   # T decreases with depth, so growth does too
+
+    # :hybrid is exactly Marbouty below the ceiling and exactly Arthern at or above it.
+    @test r_hybrid[1:2] == r_marbouty[1:2]
+    @test r_hybrid[3:5] == r_arthern[3:5]
+
+    # The Arthern law integrates dr²/dt = kgr·exp(-Eg/RT) exactly over the step. Checked in SI
+    # against the module's mm working units, which is where a unit slip would show.
+    dt = 365 * 86400.0
+    r0 = 0.5e-3   # m
+    dr2 = GEMB.GRAIN_GROWTH_KGR * exp(-GEMB.GRAIN_GROWTH_EG / (GEMB.R_GAS * 250.0)) * dt
+    expected = sqrt(r0^2 + dr2) * 1e3   # mm
+    r_yr = GEMB.calculate_grain_size(fill(250.0, 1), [0.05], [600.0], [0.0], [0.5],
+        [0.0], [0.0], _make_grain_cfs(dt=dt), GEMB.ModelParameters(grain_growth_method=:Arthern))[1]
+    @test r_yr[1] ≈ expected rtol = 1e-12
+
+    # Wet cells take the Brun branch on every setting, so the option cannot touch them.
+    wet = fill(2.0, 5)
+    r_wet = [GEMB.calculate_grain_size(copy(T), copy(dz), copy(density), copy(wet),
+        fill(0.5, 5), copy(gdn), fill(1.0, 5), cfs,
+        GEMB.ModelParameters(grain_growth_method=m))[1] for m in (:Marbouty, :Arthern, :hybrid)]
+    @test r_wet[1] == r_wet[2] == r_wet[3]
+end

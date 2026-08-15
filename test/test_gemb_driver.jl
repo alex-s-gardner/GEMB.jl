@@ -309,4 +309,99 @@ using Dates
         @test zattrs["positive"] == "up"
         @test DimensionalData.metadata(gridded)["units"] == "K"
     end
+    @testset "heat_flux_basal output" begin
+        # The conductive flux across the deepest interior face was already computed and
+        # consumed by the verbose energy budget; Fix 6 reports it. It is an interval mean,
+        # like the other three heat fluxes.
+        mp = initialize_parameters(output_frequency=:daily)
+        n_steps = 24 * 14
+        time = DateTime(2020, 1, 1) .+ Hour.(0:n_steps-1)
+        forcing = initialize_forcing(time, fill(255.0, n_steps), fill(101325.0, n_steps),
+            fill(0.1, n_steps), fill(5.0, n_steps), fill(50.0, n_steps),
+            fill(200.0, n_steps), fill(100.0, n_steps);
+            temperature_air_mean=255.0, wind_speed_mean=5.0, precipitation_mean=300.0,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+        out = gemb(initialize_profile(mp, forcing), forcing, mp; verbose=true)
+
+        bhf = parent(out[:heat_flux_basal])
+        @test haskey(out, :heat_flux_basal)
+        @test length(bhf) == length(parent(out[:heat_flux_sensible]))
+        # Every interval must be filled — a NaN would mean an output step the accumulator
+        # never reached.
+        @test all(isfinite, bhf)
+        # A real conductive flux, not an identically-zero placeholder, and bounded well
+        # inside the range of any plausible geothermal flux confusion.
+        @test any(!iszero, bhf)
+        @test all(abs.(bhf) .< 100.0)
+
+        md = GEMB.cf_attributes(:heat_flux_basal)
+        @test md["units"] == "W m-2"
+        @test md["cell_methods"] == "time: mean"
+        # Diagnosed against a Dirichlet reservoir, so no CF geothermal standard name applies.
+        @test !haskey(md, "standard_name")
+    end
+
+    @testset "viscosity output (output_viscosity)" begin
+        n_steps = 24 * 14
+        time = DateTime(2020, 1, 1) .+ Hour.(0:n_steps-1)
+        forcing = initialize_forcing(time, fill(255.0, n_steps), fill(101325.0, n_steps),
+            fill(0.1, n_steps), fill(5.0, n_steps), fill(50.0, n_steps),
+            fill(200.0, n_steps), fill(100.0, n_steps);
+            temperature_air_mean=255.0, wind_speed_mean=5.0, precipitation_mean=300.0,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+
+        _run(; kw...) = begin
+            mp = initialize_parameters(; output_frequency=:daily, kw...)
+            (mp, gemb(initialize_profile(mp, forcing), forcing, mp))
+        end
+
+        # Off by default, and absent rather than all-NaN — the layer costs a per-timestep
+        # allocation, so the default hot path must not carry it.
+        @test initialize_parameters().output_viscosity == false
+        (_, out_off) = _run(densification_method=:CrocusPure)
+        @test !haskey(out_off, :viscosity)
+
+        # `:CrocusPure` applies the settling law at every density, so every cell gets a
+        # viscosity.
+        (mp_p, out_p) = _run(densification_method=:CrocusPure, output_viscosity=true)
+        @test haskey(out_p, :viscosity)
+        v = parent(out_p[:viscosity])
+        @test size(v) == size(parent(out_p[:density]))
+        @test all(isfinite, v)
+        # Physically bounded: firn viscosity spans many orders of magnitude but is
+        # positive everywhere and nowhere near zero or infinite.
+        @test all(v .> 0)
+        @test all(1e9 .< v .< 1e22)
+
+        # Colder and denser firn is stiffer, which is the sign the Vionnet law carries in
+        # both its exponentials.
+        d = parent(out_p[:density])
+        deepest = size(v, 1)
+        @test v[deepest, end] > v[1, end]
+        @test d[deepest, end] >= d[1, end]
+
+        # `:Crocus` hands cells at or above CROCUS_HYBRID_DENSITY to `:GSFC2020`, which
+        # forms no viscosity, so exactly those cells must be NaN. This is the property that
+        # makes NaN meaningful rather than a missing-value artifact.
+        (_, out_c) = _run(densification_method=:Crocus, output_viscosity=true)
+        vc = parent(out_c[:viscosity])
+        dc = parent(out_c[:density])
+        for i in eachindex(vc)
+            if isfinite(vc[i])
+                @test dc[i] < GEMB.CROCUS_HYBRID_DENSITY
+            end
+        end
+
+        # Every non-Crocus scheme is a `c(rho_i - rho)` relaxation with no stress in it, so
+        # the layer is present but entirely NaN rather than a reconstructed number.
+        for method in (:Arthern, :HerronLangway, :GSFC2020, :Barnola1991)
+            (_, out_n) = _run(densification_method=method, output_viscosity=true)
+            @test all(isnan, parent(out_n[:viscosity]))
+        end
+
+        md = GEMB.cf_attributes(:viscosity)
+        @test md["units"] == "Pa s"
+        @test md["cell_methods"] == "time: point"
+        @test !haskey(md, "standard_name")
+    end
 end

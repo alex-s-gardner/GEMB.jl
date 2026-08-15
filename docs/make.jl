@@ -15,6 +15,7 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "Variable Reference" => "variables.md",
+        "CFM Comparison" => "cfm_comparison.md",
         "API Reference" => "api.md",
     ],
 )

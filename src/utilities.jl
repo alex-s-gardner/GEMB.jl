@@ -110,6 +110,34 @@ function firn_air_content(dz::AbstractVector, density::AbstractVector,
 end
 
 """
+    close_off_age(density, age, closeoff_density=DENSITY_PORE_CLOSEOFF) -> d
+
+Age [d] of the shallowest cell at or above pore close-off density, or `NaN` when the column
+never closes off.
+
+This is the model's analogue of the gas age at close-off that firn-air and ice-core work
+reports: the residence time of the firn at the depth where the pore space seals and the
+column stops exchanging with the atmosphere. `NaN` (rather than the column's total depth or
+its deepest age) is the correct answer for an open column, following the same convention as
+`ice_slab_depth` — there is no close-off depth to report an age at.
+
+Meaningful from the first timestep only under `mp.initialize_age = :steady_state`; under
+`:zero` it reads 0 until a spinup long enough to bury the epoch has run.
+
+Allocation-free: called every timestep from the `gemb` time loop.
+"""
+function close_off_age(density::AbstractVector, age::AbstractVector,
+    closeoff_density::Real=DENSITY_PORE_CLOSEOFF)
+
+    @inbounds for i in eachindex(density)
+        if density[i] >= closeoff_density - D_TOLERANCE
+            return age[i]
+        end
+    end
+    return NaN
+end
+
+"""
     datetime2decyear(datetimes::AbstractVector{DateTime})
 
 Convert Julia `DateTime` objects to decimal year values.
