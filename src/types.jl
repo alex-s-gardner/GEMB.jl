@@ -9,8 +9,9 @@ using Dates
 All GEMB model configuration parameters with validation.
 Construct with keyword arguments; unspecified fields use defaults.
 
-Derived from MATLAB's `model_initialize_parameters.m`, with additional fields where
-GEMB.jl offers physics options the reference does not.
+Defaults follow the recommendations of the two firn-model intercomparisons (Vandecrux et
+al., 2020, RetMIP; Lundin et al., 2017, FirnMICE) and, where those are silent, the shipped
+defaults of the Community Firn Model and IMAU-FDM. See the parameter table in `README.md`.
 """
 Base.@kwdef struct ModelParameters
     # --- General ---
@@ -22,7 +23,7 @@ Base.@kwdef struct ModelParameters
     # Which climatological mass flux the accumulation-driven schemes compact against.
     # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:
     # `precipitation_mean` includes rain, which does not bury the column, so it overstates the
-    # burial rate at any raining site. `:precipitation` restores the reference behaviour.
+    # burial rate at any raining site. `:precipitation` compacts against total precipitation.
     # Inert on schemes whose rate does not depend on accumulation (`:ArthernB`,
     # `:Barnola1991`, `:Crocus`, `:CrocusPure`). See `calculate_density`.
     densification_accumulation::Symbol = :accumulation
@@ -30,14 +31,21 @@ Base.@kwdef struct ModelParameters
     # 1/T, so `exp(E/R⟨T⟩) ≠ ⟨exp(E/RT)⟩` — at a site with a ±15 K seasonal swing the two
     # differ by tens of percent, biasing toward under-densification. `:arrhenius` uses
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
-    # (the default, and the reference behaviour) uses the plain mean `cf.temperature_air_mean`.
+    # (the default) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
-    # Fresh-snow density parameterization. `:Fausto` is the Fausto et al. (2018) Greenland
-    # fit frozen at a single temperature (315 kg m-3, inherited from MATLAB); `:FaustoFit` is
-    # that same fit carrying its temperature dependence, as IMAU-FDM implements it. Both also
-    # select the Crocus wind-dependent fresh-grain properties. See `fresh_snow_density`.
+    # Fresh-snow density parameterization. The default `"350kgm2"` is a constant 350 kg m-3,
+    # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Fausto` is the Fausto et al.
+    # (2018) Greenland fit frozen at a single temperature (315 kg m-3, that fit evaluated at
+    # T ≈ 256.2 K); `:FaustoFit` is the same fit carrying its temperature dependence, as
+    # IMAU-FDM implements it — though note IMAU-FDM drives it from a one-year running-mean
+    # temperature on its Greenland domain, where `:FaustoFit` uses the instantaneous value.
+    # Both also select the Crocus wind-dependent fresh-grain properties.
+    # See `fresh_snow_density`.
     new_snow_method::Symbol = Symbol("350kgm2")
-    density_ice::Float64 = 910.0
+    # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
+    # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
+    # Calonne (2019) conductivity and Barnola (1991) densification fits were built against.
+    density_ice::Float64 = 917.0
     rain_temperature_threshold::Float64 = 273.15
 
     # --- Longwave Emissivity ---
@@ -48,48 +56,61 @@ Base.@kwdef struct ModelParameters
     surface_roughness_effective_ratio::Float64 = 0.10
 
     # --- Thermal Conductivity ---
-    # `:Sturm` (the MATLAB default) and `:Calonne` (Calonne et al., 2011) are density-only
-    # quadratics. `:Calonne2019`, `:Calonne2019Air` and `:Marchenko2019` are additions with
-    # no MATLAB counterpart; Vandecrux et al. (2020) recommend all three over the older fits.
+    # `:Sturm` (Sturm et al., 1997) and `:Calonne` (Calonne et al., 2011) are density-only
+    # quadratics. `:Calonne2019`, `:Calonne2019Air` and `:Marchenko2019` are the
+    # temperature-dependent forms Vandecrux et al. (2020, RetMIP Sects. 5.1 and 7) recommend
+    # over the older fits, having attributed part of a multi-model cold bias at Summit to
+    # conductivity parameterization. `:Calonne2019` is the default and is what the Community
+    # Firn Model ships (`conductivity: "Calonne2019"`); IMAU-FDM hardcodes the same equation.
+    # `:Sturm` gives the lowest conductivity of the five — 0.56 against `:Calonne2019`'s 0.91
+    # W m-1 K-1 at 243 K and ρ = 550 — so selecting it damps the seasonal wave.
     # The two 2019 forms differ only in whether the snow branch carries the air-conductivity
     # ratio (`:Calonne2019Air` does, matching IMAU-FDM; `:Calonne2019` does not, matching the
     # Community Firn Model), which matters only for cold, low-density snow. See
     # `thermal_conductivity`.
-    thermal_conductivity_method::Symbol = :Sturm
+    thermal_conductivity_method::Symbol = :Calonne2019
 
     # --- Heat Capacity ---
     # Specific heat capacity of the load-bearing ice matrix, applied to snow, firn, and ice
-    # alike (pore air and pore water contribute nothing to this term). `:constant` uses
-    # `heat_capacity_ice` at every temperature, as MATLAB does; `:CuffeyPaterson` makes it
-    # temperature-dependent and ignores `heat_capacity_ice`. See `heat_capacity`.
+    # alike (pore air and pore water contribute nothing to this term). `:constant` (the default)
+    # uses `heat_capacity_ice` at every temperature, matching the Community Firn Model's
+    # `enthalpyDiff` melt path, which sets `c_firn = CP_I = 2097`. `:CuffeyPaterson` makes it
+    # temperature-dependent (`152.5 + 7.122·T`, as IMAU-FDM uses throughout) and ignores
+    # `heat_capacity_ice`. See `heat_capacity`.
     heat_capacity_method::Symbol = :constant
     heat_capacity_ice::Float64 = HEAT_CAPACITY_ICE_DEFAULT
     # Heat capacity carrying the *sensible* heat of above-freezing liquid entering the column,
-    # which only rain is. `:water` uses `HEAT_CAPACITY_WATER`; `:ice` uses the matrix value,
-    # understating it roughly twofold, which is what MATLAB does. Everything else in the model
+    # which only rain is. `:water` (the default) uses `HEAT_CAPACITY_WATER`; `:ice` uses the
+    # matrix value, understating it roughly twofold. Everything else in the model
     # — pore water, refreezing, runoff — is isothermal at the melting point and unaffected by
     # this field. See `specific_enthalpy_water`.
     rain_heat_capacity::Symbol = :water
 
     # --- Grain Growth ---
-    # Selects the non-dendritic *dry* grain-growth law. `:Marbouty` (MATLAB's behaviour) stops
-    # growing grains at `DENSITY_MARBOUTY_MAX`; `:Arthern` uses Arthern et al. (2010)
-    # `dr²/dt = kgr·exp(-Eg/RT)` at every density; `:hybrid` switches from the former to the
-    # latter at that density. See `calculate_grain_size`.
-    grain_growth_method::Symbol = :Marbouty
+    # Selects the non-dendritic *dry* grain-growth law. `:Arthern` (the default, and what the
+    # Community Firn Model ships as `GrGrowPhysics: "Arthern"`) uses Arthern et al. (2010)
+    # `dr²/dt = kgr·exp(-Eg/RT)` at every density. `:Marbouty` stops growing grains at
+    # `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen in deep firn — where `:ArthernB`
+    # and `:Crocus` densification read it as `1/r²`. `:hybrid` switches from the latter to the
+    # former at that density. See `calculate_grain_size`.
+    grain_growth_method::Symbol = :Arthern
 
     # --- Melt & Water ---
-    # `:constant` holds `water_irreducible_saturation` at every density (Colbeck, 1974, as
-    # in MATLAB). `:ColeouLesaffre` makes it density-dependent and ignores
-    # `water_irreducible_saturation` — see `irreducible_saturation`.
-    water_irreducible_method::Symbol = :constant
+    # `:ColeouLesaffre` (the default) makes the irreducible water content density-dependent
+    # after Coleou & Lesaffre (1998) and ignores `water_irreducible_saturation`. It is what the
+    # Community Firn Model ships (`ColeouLesaffre: true`) and what IMAU-FDM implements, and
+    # RetMIP Sect. 5.4 found it gave realistic percolation depths at Dye-2. `:constant` holds
+    # `water_irreducible_saturation` at every density (Colbeck, 1974). See
+    # `irreducible_saturation`.
+    water_irreducible_method::Symbol = :ColeouLesaffre
     water_irreducible_saturation::Float64 = 0.07
     # The density-based impermeability criterion of the bucket scheme: percolating water is
     # routed to runoff at a contiguous run of cells at or above `impermeable_density` that is
     # thicker than `impermeable_thickness`. Below that thickness water passes through, on the
     # grounds that thin lenses are laterally discontinuous at the scale the model represents.
     #
-    # The defaults reproduce MATLAB. Both are genuinely uncertain and are the dominant control
+    # The defaults (830, 0.1) are exactly what the Community Firn Model ships as `RhoImp` and
+    # `ThickImp`. Both are genuinely uncertain and are the dominant control
     # on bucket-scheme behaviour at ice-slab sites — across the RetMIP models (Vandecrux et
     # al., 2020) the density threshold ranges from 810 kg m-3 (DMIHH, after Gregory et al.,
     # 2014, which gave the lowest firn-temperature RMSE at KAN_U) to 917 (DTU, which
@@ -99,7 +120,9 @@ Base.@kwdef struct ModelParameters
     impermeable_thickness::Float64 = 0.1
     # How water that percolation cannot pass leaves the column.
     #
-    # `:instantaneous` is MATLAB's behaviour and the default: blocked water runs off within the
+    # `:instantaneous` is the default — a plain bucket scheme, as both the Community Firn Model
+    # (`liquid: "bucket"`, `Ponding: false`) and IMAU-FDM ship, and which RetMIP Sect. 5.2 found
+    # performs no worse than the deep-percolation schemes: blocked water runs off within the
     # timestep, and no cell can ever hold more than its irreducible water. The other two let it
     # pond above the barrier (see `calculate_melt`) and drain laterally over a finite timescale
     # (see `apply_lateral_drainage!`), which is what makes standing water and firn aquifers

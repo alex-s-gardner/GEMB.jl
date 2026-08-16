@@ -233,7 +233,8 @@ end
     @test GEMB.pore_capacity(mp_half, 400.0, 0.1) ≈ 0.5 * (917.0 - 400.0) * 0.1
     # A cell at irreducible saturation is a matching fraction of capacity, which is the
     # consistency the shared (rho_i - rho)*S*dz form exists to guarantee
-    mp_c = GEMB.ModelParameters(density_ice=917.0, water_irreducible_saturation=0.07)
+    mp_c = GEMB.ModelParameters(density_ice=917.0, water_irreducible_saturation=0.07,
+        water_irreducible_method=:constant)
     @test _irr(mp_c, 400.0, 0.1) / GEMB.pore_capacity(mp_c, 400.0, 0.1) ≈ 0.07
 end
 

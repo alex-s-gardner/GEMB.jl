@@ -1,4 +1,4 @@
-# Tests for calculate_grain_size - translated from MATLAB test_calculate_grain_size.m
+# Tests for calculate_grain_size
 
 # Helper to create a ClimateForcingStep for grain size tests
 function _make_grain_cfs(; dt=86400.0)
@@ -195,7 +195,9 @@ end
 end
 
 @testset "Marbouty density limit" begin
-    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
+    # `:Marbouty` explicitly — this ceiling is that method's behaviour, and the
+    # `:Arthern` default has no density ceiling.
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:Marbouty)
     cfs = _make_grain_cfs(dt=86400.0)
 
     temperature = [250.0, 252.0, 254.0]
@@ -297,8 +299,9 @@ end
     r_arthern = _grow(:Arthern)
     r_hybrid = _grow(:hybrid)
 
-    # Marbouty is the default, and stops dead at DENSITY_MARBOUTY_MAX: no growth in cells 3-5.
-    @test GEMB.ModelParameters().grain_growth_method === :Marbouty
+    # `:Arthern` is the default (it is what the Community Firn Model ships); `:Marbouty`
+    # stops dead at DENSITY_MARBOUTY_MAX, so it shows no growth in cells 3-5.
+    @test GEMB.ModelParameters().grain_growth_method === :Arthern
     @test all(r_marbouty[1:2] .> 0.5)
     @test r_marbouty[3:5] == fill(0.5, 3)
 

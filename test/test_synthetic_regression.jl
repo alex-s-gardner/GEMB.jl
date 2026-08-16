@@ -1,34 +1,20 @@
-# Full synthetic data regression test (Julia self-consistency pin)
+# Full synthetic data regression test (self-consistency pin)
 #
-# IMPORTANT: This is NOT a MATLAB cross-validation test. The reference values
-# below are GEMB.jl's own deterministic output, used to catch unintended changes
-# to the full-model result. Per-module MATLAB fidelity is validated separately
-# by the *.mat reference tests (thermal conductivity, melt, density, etc. at
-# ~1e-12). The FULL synthetic run cannot be compared bit-for-bit to MATLAB for
-# two structural reasons:
+# The reference values below are GEMB.jl's own deterministic output, used to catch
+# *unintended* changes to the full-model result. They are bit-for-bit reproducible
+# across runs on a given platform; small cross-platform spread remains because the
+# 75-cycle spinup (~7.9M iterations) amplifies floating-point evaluation-order
+# differences (arm64 vs x86_64), so the tolerances are modest rather than 1e-12.
 #
-#   1. RNG streams differ. simulate_climate_forcing seeds a Mersenne Twister
-#      with seed 42 in both languages, but MATLAB `randn` and Julia
-#      `randn(::MersenneTwister)` draw different sequences (different Gaussian
-#      sampling + MT seeding/tempering). The synthetic forcing is therefore a
-#      different realization in each language (mean climatology matches to
-#      ~0.03%, but noise-driven fields differ: precip ~5%, wind ~4%), which
-#      propagates to different melt/runoff totals.
-#   2. The Julia spinup was optimized in a way not present in the MATLAB version
-#      (see commit 5afce9f, "profile and spinup optimization ... not implemented
-#      in the Matlab version"), so the full workflow is intentionally not the
-#      same algorithm.
-#
-# The reference values are the deterministic Julia output (bit-for-bit identical
-# across runs on a given platform). Small cross-platform/version spread remains
-# because the 75-cycle spinup (~7.9M iterations) amplifies floating-point
-# evaluation-order differences (arm64 vs x86_64), so tolerances are modest
-# rather than 1e-12.
+# This is a change detector, not a physics validation: an intended change to the
+# defaults or to a physics scheme is expected to move these numbers, and re-pinning
+# them is part of making such a change. Every re-pin is recorded below with what
+# moved it and by how much, so the history of the fingerprint is auditable.
 
 using GEMB: Statistics
 using GEMB_ClimateForcing
 
-@testset "Synthetic regression (Julia self-consistency pin)" begin
+@testset "Synthetic regression (self-consistency pin)" begin
     # Generate 3-hourly synthetic climate forcing (returns DimStack)
     ds = simulate_climate_forcing("test_1", 3)
     cf = GEMB.initialize_forcing(ds)
@@ -36,9 +22,8 @@ using GEMB_ClimateForcing
     # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)
 
-    # Initialize profile. Both escape-hatch flags give the pure-ice initialization
-    # that the reference values below were generated with.
-    # and keep the deep column the MATLAB reference baseline used.
+    # Initialize profile. Both escape-hatch flags give the pure-ice initialization,
+    # and the deep column, that the reference values below were generated with.
     profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
 
     # Create climatological forcing and spin up
@@ -49,12 +34,12 @@ using GEMB_ClimateForcing
     # Run GEMB with spun-up profile
     output = gemb(profile_spunup, cf, mp)
 
-    # Julia reference values (GEMB.jl's own deterministic output — NOT MATLAB).
+    # The three pinned fields.
     mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
     total_runoff = sum(parent(output[:runoff]))
 
-    # Reference = deterministic Julia output on arm64 (macOS). Tolerances bracket
+    # Reference = deterministic output on arm64 (macOS). Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
     # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt.
     # atols are set ~2x that spread.
@@ -87,7 +72,19 @@ using GEMB_ClimateForcing
     # three fields — 0.8219139818790556 / 11368.809854556823 / 4997.438018517874 — so the
     # shift below is the two physics changes and nothing else. (The albedo reference had
     # drifted to 0.822103 in transcription; melt and runoff were exact.)
-    @test mean_albedo ≈ 0.821768 atol=3e-3       # ~0.37% relative
-    @test total_melt ≈ 11417.534495 atol=120.0  # ~1.1% relative
-    @test total_runoff ≈ 5015.767041 atol=120.0 # ~2.4% relative
+    #
+    # Re-pinned for v2.0.0, which changed four defaults on the recommendation of the two
+    # firn-model intercomparisons and the shipped configurations of the CFM and IMAU-FDM:
+    # `density_ice` 910 -> 917, `thermal_conductivity_method` :Sturm -> :Calonne2019,
+    # `water_irreducible_method` :constant -> :ColeouLesaffre, and `grain_growth_method`
+    # :Marbouty -> :Arthern. This is the first re-pin that moves the numbers by more than
+    # the tolerance, which is what the major version records. Melt falls 453.6 kg m-2
+    # (-4.0%) and runoff 255.1 (-5.1%); albedo moves 2e-5. The conductivity change is
+    # responsible for most of it — the higher firn conductivity conducts winter cold
+    # deeper, so the column enters the melt season colder and refreezes more of what melts
+    # (measured in isolation: melt -570, minimum column temperature +4.25 K). The atols
+    # are unchanged, since the cross-platform spread they were sized for has not moved.
+    @test mean_albedo ≈ 0.821926 atol=3e-3      # ~0.37% relative
+    @test total_melt ≈ 10963.944470 atol=120.0  # ~1.1% relative
+    @test total_runoff ≈ 4760.650556 atol=120.0 # ~2.5% relative
 end

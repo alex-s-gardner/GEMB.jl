@@ -170,18 +170,18 @@ The levers RetMIP does identify for bucket schemes are *when* water is blocked a
 it then leaves, not how deep it goes. Both are exposed:
 
 **The impermeability criterion** — `impermeable_density` and `impermeable_thickness`. See
-[`calculate_melt`](@ref) and the physics-deviations notes in the README for the range the
+[`calculate_melt`](@ref) and the physics notes in the README for the range the
 participating models spanned and how it maps onto their skill at the ice-slab site.
 
 **The runoff timescale** — `runoff_method`, with `surface_slope` as the driving hydraulic
-gradient. Under the `:instantaneous` default (MATLAB's behaviour) blocked water leaves the
+gradient. Under the `:instantaneous` default blocked water leaves the
 column within the timestep and no cell can ever hold more than its irreducible water. The
 other two let it pond into the pore space above the barrier and drain laterally over a finite
 timescale:
 
 | `runoff_method` | Runoff law | Reference |
 |---|---|---|
-| `:instantaneous` | All blocked water leaves within the timestep | MATLAB GEMB; the default |
+| `:instantaneous` | All blocked water leaves within the timestep | The default; what both comparison models and all three RetMIP bucket lineages use |
 | `:ZuoOerlemans` | `drain = excess · min(1, Δt/τ)`, `τ = c₁ + c₂·exp(−c₃·S)` | Zuo and Oerlemans (1996) eqs. 21–22, coefficients via Langen et al. (2017) |
 | `:Darcy` | `drain = min(excess, ρ_w·Δt·K_sat·K_rel·S)` | Calonne et al. (2012) eq. 6 with van Genuchten (1980) / Yamaguchi et al. (2012) relative permeability |
 
@@ -197,8 +197,8 @@ irreducible clamp of `:instantaneous`, a saturated cell cannot exist, and RetMIP
 Sect. 5.4) note that models so constrained "are incapable of modeling actual aquifers" —
 the firn-aquifer site was dropped from their retention evaluation for exactly this reason.
 Aquifers form bottom-up under either delayed method, and the `aquifer_thickness` and
-`aquifer_depth` outputs report the resulting water table. Both are new options: they are off
-at the default, which stays bit-identical to MATLAB.
+`aquifer_depth` outputs report the resulting water table. Both are opt-in: they are inert at
+the `:instantaneous` default.
 
 ## Output Variables
 

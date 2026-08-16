@@ -1,4 +1,4 @@
-# Tests for calculate_shortwave_radiation - matches MATLAB test_calculate_shortwave_radiation.m
+# Tests for calculate_shortwave_radiation
 
 # Helper to create a ClimateForcingStep with specified shortwave fields
 function _make_sw_cfs(; shortwave_downward=200.0, shortwave_downward_diffuse=50.0)
@@ -189,49 +189,3 @@ end
     @test sum(shortwave_flux) ≈ 0.0 atol = 1e-10
 end
 
-# MATLAB validation test
-matlab_validation_testset("calculate_shortwave_radiation", "calculate_shortwave_radiation.mat") do ref
-    # Extract reference inputs
-    dz = ref["dz_sw"][:]
-    density = ref["density_sw"][:]
-    grain_radius = ref["grain_radius_sw"][:]
-    albedo_broadband = ref["albedo_broadband_sw"][1]
-    albedo_diffuse = ref["albedo_diffuse_sw"][1]
-
-    # Surface-only absorption
-    params_surface = GEMB.ModelParameters(
-        shortwave_subsurface_absorption = false,
-        albedo_method = :GardnerSharp,
-        density_ice = 910.0
-    )
-
-    cfs = GEMB.ClimateForcingStep(
-        3600.0, 260.0, 101325.0, 0.0, 5.0,
-        ref["CFS_sw"]["shortwave_downward"][1],
-        200.0, 100.0, 255.0, 5.0, 200.0, 2.0, 10.0,
-        0.0, 0.0, 0.0,
-        ref["CFS_sw"]["shortwave_downward_diffuse"][1],
-        0.0, 0.1
-    )
-
-    swf_surface = GEMB.calculate_shortwave_radiation(
-        dz, density, grain_radius, albedo_broadband, albedo_diffuse,
-        cfs, params_surface
-    )
-
-    @test swf_surface ≈ ref["swf_surface"][:] rtol=1e-12 atol=1e-14
-
-    # Subsurface absorption
-    params_subsurface = GEMB.ModelParameters(
-        shortwave_subsurface_absorption = true,
-        albedo_method = :GardnerSharp,
-        density_ice = 910.0
-    )
-
-    swf_subsurface = GEMB.calculate_shortwave_radiation(
-        dz, density, grain_radius, albedo_broadband, albedo_diffuse,
-        cfs, params_subsurface
-    )
-
-    @test swf_subsurface ≈ ref["swf_subsurface"][:] rtol=1e-12 atol=1e-14
-end
