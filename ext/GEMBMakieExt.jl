@@ -199,7 +199,7 @@ function _isochrone_monthday(md)
     return (lat isa Real && isfinite(lat) && lat < 0) ? (11, 1) : (5, 1)
 end
 
-# Legend text naming the date the isochrones mark. Without it the yellow lines are unexplained
+# Legend text naming the date the isochrones mark. Without it the overlaid lines are unexplained
 # — and which date they are is hemisphere-dependent, so it cannot be a fixed string.
 function _isochrone_label(md)
     mo, dy = _isochrone_monthday(md)
@@ -238,7 +238,7 @@ end
 # `max_gap`, in years, is what keeps the ablation zone honest. There, annual snow rests
 # directly on ice tens of years older, so one layer interface spans that entire age jump and
 # *every* level in the record brackets across it. Without the test each horizon is placed at
-# the same snow/ice contact, and the lines stack into the solid yellow band that gives the
+# the same snow/ice contact, and the lines stack into the solid band that gives the
 # ablation zone away. But such an interface is a hiatus: the intervening years were never
 # deposited, or have already melted away, so there is no surface to draw. Interpolating across
 # it would invent a depth for snow that does not exist. Terminating is the honest rendering,
@@ -267,6 +267,17 @@ function _isochrone_depth(z_col, deposition, level, max_gap)
     return depth
 end
 
+# Isochrone stroke style: a hairline dark core over a wider translucent white casing.
+# The age colormap runs from near-black at the surface to near-white at depth, so no
+# single flat colour reads across it — the yellow this used to be disappeared over the
+# pale, oldest firn. A cased line reads on both ends, for the same reason a road on a
+# map is drawn with a halo. Widths stay small so a dozen horizons annotate the field
+# rather than dominate it.
+const _ISO_CORE = RGBAf(0.10, 0.10, 0.12, 0.90)
+const _ISO_CASE = RGBAf(1.00, 1.00, 1.00, 0.55)
+const _ISO_LW = 0.7
+const _ISO_CASE_LW = 2.2
+
 # Draw one thin line per annual horizon over an already-plotted heatmap.
 #
 # A layer interface may legitimately span a couple of years of deposition age once the model
@@ -275,17 +286,23 @@ end
 # tight enough to reject the decades-wide jumps of an ablation surface.
 function _isochrones!(ax, x, z_col, deposition, levels, label; max_gap=3.0)
     isempty(levels) && return nothing
-    for (k, level) in enumerate(levels)
-        # Only the first line carries the label: every line means the same thing, so labelling
-        # each would repeat one entry per year in the record.
-        lines!(ax, x, _isochrone_depth(z_col, deposition, level, max_gap);
-            color=(:yellow, 0.5), linewidth=0.6, label=k == 1 ? label : nothing)
+    for level in levels
+        depth = _isochrone_depth(z_col, deposition, level, max_gap)
+        # Casing first, core second, so every core sits above every casing — otherwise a
+        # closely-spaced pair of horizons has the upper one's casing wash out the lower's line.
+        lines!(ax, x, depth; color=_ISO_CASE, linewidth=_ISO_CASE_LW)
+        lines!(ax, x, depth; color=_ISO_CORE, linewidth=_ISO_LW)
     end
-    # Bottom-right: the deep column is the oldest and flattest part of the field, so the legend
-    # covers the least structure there. Opaque background, since the lines it explains are drawn
-    # over a dark colormap that a transparent patch would not read against.
-    axislegend(ax, position=:rb, framevisible=false, labelsize=11,
-        patchsize=(18, 8), padding=(4, 4, 2, 2), backgroundcolor=(:white, 0.75))
+    # The legend entry is built explicitly rather than harvested from a `label=` on the first
+    # line: at legend scale a hairline is invisible (the reason the old yellow swatch could not
+    # be read), so the swatch is drawn as one thicker cased line — a schematic of the horizon,
+    # not a literal copy of its width.
+    axislegend(ax,
+        [[LineElement(color=_ISO_CASE, linewidth=4.0),
+          LineElement(color=_ISO_CORE, linewidth=1.6)]],
+        [label];
+        position=:rb, framevisible=false, labelsize=11, labelcolor=:gray20,
+        patchsize=(20, 10), padding=(5, 5, 3, 3), backgroundcolor=(:white, 0.85))
     return nothing
 end
 
