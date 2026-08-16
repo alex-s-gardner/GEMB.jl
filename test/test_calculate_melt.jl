@@ -1,4 +1,4 @@
-# Tests for calculate_melt - translated from MATLAB test_calculate_melt.m
+# Tests for calculate_melt
 
 # Common setup helper for melt tests
 function _make_melt_inputs(; n=5)
@@ -13,8 +13,12 @@ function _make_melt_inputs(; n=5)
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age
 end
 
+# `:constant` retention, which is what most of the assertions below are written against:
+# a flat 0.07 saturation at every density, so hand-computed expectations stay tractable.
+# The `:ColeouLesaffre` default is exercised by its own testsets.
 function _melt_mp()
-    return GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07)
+    return GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
+        water_irreducible_method=:constant)
 end
 
 @testset "Cold dry snow - no change" begin
@@ -241,7 +245,10 @@ end
         temperature, dz, density, water, grain_radius, grain_dendricity,
             grain_sphericity, age = _make_melt_inputs()
         temperature[1] = 280.0      # drive melt at the surface
-        mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=S)
+        # `:constant` explicitly: this knob is the `:constant` method's only input, and
+        # `:ColeouLesaffre` (the default) ignores it by design.
+        mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=S,
+            water_irreducible_method=:constant)
         (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =
             GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
                 grain_dendricity, grain_sphericity, age, 0.0, mp, false)
@@ -293,6 +300,7 @@ end
         # exercised at all.
         water[1] = 10.0
         mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
+            water_irreducible_method=:constant,
             impermeable_density=density_threshold,
             impermeable_thickness=thickness_threshold)
         (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =

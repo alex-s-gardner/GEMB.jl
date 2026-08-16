@@ -1,4 +1,4 @@
-# Tests for calculate_accumulation - matches MATLAB test_calculate_accumulation.m
+# Tests for calculate_accumulation
 
 # Helper to create a ClimateForcingStep for accumulation tests
 function _make_accum_cfs(; precipitation=0.0, temperature_air=270.0, wind_speed=5.0,

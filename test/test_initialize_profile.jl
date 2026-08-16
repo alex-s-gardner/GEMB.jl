@@ -1,4 +1,4 @@
-# Tests for initialize_profile - matches MATLAB test_model_initialize_profile.m
+# Tests for initialize_profile
 # DimArray and Ti come from GEMB (re-exported from DimensionalData)
 using GEMB: DimArray, Ti
 
@@ -239,11 +239,14 @@ end
 
     # Where water is present it equals `calculate_melt`'s irreducible content,
     # (ρi − ρ)·S·(M/ρ) with M = ρ·dz, so init and runtime agree by construction.
+    # The saturation comes from `irreducible_saturation`, not from
+    # `mp.water_irreducible_saturation` directly, so this follows whichever
+    # `water_irreducible_method` is configured.
     for i in eachindex(water)
         water[i] == 0.0 && continue
         M = density[i] * dz[i]
         expected = (mp.density_ice - density[i]) *
-            mp.water_irreducible_saturation * (M / density[i])
+            GEMB.irreducible_saturation(mp, density[i]) * (M / density[i])
         @test isapprox(water[i], expected; rtol=1e-12)
         @test temperature[i] >= GEMB.CtoK - GEMB.T_TOLERANCE
     end
@@ -438,33 +441,6 @@ end
     @test t_march < 0.1 * t_pass
 end
 
-# MATLAB validation test
-matlab_validation_testset("initialize_profile", "initialize_profile.mat") do ref
-    # This will validate the grid geometry matches MATLAB
-    # Note: Full profile validation requires matching all parameters exactly
-    # Here we just validate grid structure
-    
-    params = GEMB.initialize_parameters()
-    ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
-    forcing = GEMB.initialize_forcing(ds)
-    # Both escape-hatch flags keep the configured column limits, which is what the
-    # MATLAB reference grid was built from — the climate-derived depth is a
-    # deliberate departure and would not be a like-for-like geometry comparison.
-    profile = GEMB.initialize_profile(params, forcing;
-        constant_density=true, constant_temperature=true)
-
-    # Validate number of layers
-    n_layers_julia = length(profile.dz)
-    n_layers_matlab = Int(ref["n_layers_init"][1])
-    
-    @test n_layers_julia == n_layers_matlab
-    
-    # Validate grid structure (dz and z_center patterns)
-    # Note: Exact values may differ slightly due to forcing differences
-    # but structure should match
-    @test length(profile.dz) > 0
-    @test all(profile.dz .> 0)  # All layers have positive thickness
-end
 
 @testset "initialize_age" begin
     cf = _dry_snow_forcing()

@@ -43,10 +43,10 @@ read in August 2026.
 
 ## What GEMB adopted
 
-Both findings land as **new `Symbol` option values**, leaving the previous
-defaults bit-identical. No existing run moves, and neither appears in `README.md`'s
-**Physics deviations** section, because neither is a deviation from the MATLAB
-reference on any default path.
+Both findings land as **new `Symbol` option values**, leaving the defaults of the day
+bit-identical. Neither appears in `README.md`'s **Physics notes** section, because neither
+changed a default when it was added. (`:Calonne2019` later *became* the default in v2.0.0,
+for the separate reasons recorded there.)
 
 ### Finding 1 — `:Calonne2019` omits the air-conductivity ratio of eq. 5
 
@@ -113,7 +113,7 @@ Rho0FM(step) = 362.1 + 2.78*(TempFM(step) - const%Tmelt)   ! Fausto et al. 2018
 
 `362.1 + 2.78·(T − 273.15) = 315.0` at **T ≈ 256.2 K**. GEMB's constant is
 demonstrably this same fit evaluated at one plausible Greenland annual-mean
-temperature, inherited from MATLAB — not a different parameterization.
+temperature — not a different parameterization.
 
 `mp.new_snow_method = :FaustoFit` selects the regression;  `:Fausto` still returns
 315.0. Two implementation notes:

@@ -10,7 +10,7 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance (GEMB, 
 
 GEMB is a column model (no horizontal communication) of intermediate complexity, prioritizing computational efficiency to accommodate the multi-millennial spin-ups required for initializing deep firn columns. It is used for interpreting satellite altimetry data, firn studies, surface mass balance inversion from satellite data, ice core studies, uncertainty quantification and model exploration in cryosphere research. A complete description of GEMB can be found in [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
 
-This Julia implementation began as a translation of the original MATLAB version and leverages Julia's performance, type system, and modern ecosystem including DimensionalData.jl for labeled arrays. It now deviates from the MATLAB version where the physics warranted it; those deviations are listed under [Differences from MATLAB Version](#differences-from-matlab-version).
+GEMB.jl is the reference implementation of GEMB and is developed independently. It began as a translation of an earlier MATLAB version, and since v2.0.0 its physics, defaults, and numerics are set on their own merits — against the published literature and against the two open firn models with a comparable physics surface, the [Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) and [IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM). The [MATLAB version](https://github.com/alex-s-gardner/GEMB) is maintained separately and the two are no longer expected to agree numerically; where GEMB.jl's physics differs from an earlier form or from a published law it is recorded under [Physics notes](#physics-notes).
 
 ## Key Capabilities
 
@@ -116,7 +116,67 @@ Full documentation is available at:
 - **Stable:** https://alex-s-gardner.github.io/GEMB.jl/stable/
 - **Development:** https://alex-s-gardner.github.io/GEMB.jl/dev/
 
-See also the comprehensive MATLAB documentation at the [original GEMB repository](https://github.com/alex-s-gardner/GEMB).
+See also the [CFM](https://alex-s-gardner.github.io/GEMB.jl/dev/cfm_comparison/) and
+[IMAU-FDM](https://alex-s-gardner.github.io/GEMB.jl/dev/imau_fdm_comparison/) comparison pages,
+which record GEMB's physics read against each of those models.
+
+## Model Parameters
+
+Every option is set through `initialize_parameters()`, which validates each value at
+construction. **Defaults are in bold.** Physics defaults follow the two firn-model
+intercomparisons — RetMIP (Vandecrux et al., 2020) and FirnMICE (Lundin et al., 2017) — and,
+where those are silent, the shipped configurations of the
+[Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) and
+[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM). Each option's full citation and
+rationale is in its `ModelParameters` docstring (`?ModelParameters`).
+
+### Method options
+
+| Parameter | Options | Notes |
+|---|---|---|
+| `densification_method` | **`:Arthern`**, `:ArthernB`, `:HerronLangway`, `:Barnola1991`, `:Crocus`, `:CrocusPure`, `:GSFC2020`, `:Simonsen2013`, `:Ligtenberg` | Firn compaction law. FirnMICE finds the raw `:Arthern` (k₀=k₁=1) the most accumulation-sensitive of the eight schemes tested; `:Ligtenberg` and `:GSFC2020` are its recalibrated successors and are worth considering for a specific domain |
+| `densification_accumulation` | **`:accumulation`**, `:precipitation` | Whether compaction is driven by mean snowfall or by mean total precipitation |
+| `thermal_conductivity_method` | **`:Calonne2019`**, `:Calonne2019Air`, `:Calonne`, `:Sturm`, `:Marchenko2019` | RetMIP §5.1 recommends `:Calonne2019` by name; the CFM and IMAU-FDM both ship it. `:Calonne2019Air` carries the air-conductivity ratio of eq. 5 on the snow branch as IMAU-FDM does |
+| `heat_capacity_method` | **`:constant`**, `:CuffeyPaterson` | `:constant` (2102 J kg⁻¹ K⁻¹) matches the CFM's melt-enabled path; `:CuffeyPaterson` is `152.5 + 7.122·T` |
+| `rain_heat_capacity` | **`:water`**, `:ice` | Heat capacity carrying rain's sensible heat above the melting point |
+| `mean_temperature_method` | **`:arithmetic`**, `:arrhenius` | How the mean annual temperature driving densification is averaged |
+| `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`; `:Marbouty` stops dead at 400 kg m⁻³ |
+| `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre; RetMIP §5.4 ties the flat 0.07 to under-retention in the percolation zone |
+| `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models run instantaneous. The other two give a drainage timescale and permit firn aquifers |
+| `new_snow_method` | **`Symbol("350kgm2")`**, `Symbol("150kgm2")`, `:Fausto`, `:FaustoFit`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350 |
+| `albedo_method` | **`:GardnerSharp`**, `:BrunLefebre`, `:GreuellKonzelmann`, `:None` | |
+| `emissivity_method` | **`:uniform`**, `:grain_radius_threshold`, `:grain_radius_w_threshold` | |
+| `initialize_age` | **`:steady_state`**, `:zero` | |
+| `output_frequency` | **`:all`**, `:daily`, `:weekly`, `:monthly`, `:last` | |
+
+### Physical and numerical settings
+
+| Parameter | Default | Units | Notes |
+|---|---|---|---|
+| `density_ice` | **917.0** | kg m⁻³ | Pure-ice density. Matches the CFM and IMAU-FDM, and the pure-ice density the Calonne (2019) conductivity and Barnola (1991) densification fits were built against |
+| `water_irreducible_saturation` | **0.07** | – | Read only under `water_irreducible_method = :constant` |
+| `impermeable_density` | **830.0** | kg m⁻³ | Flow-blocking criterion (CFM `RhoImp`). RetMIP models span 810–917 |
+| `impermeable_thickness` | **0.1** | m | Minimum blocking-lens thickness (CFM `ThickImp`) |
+| `pore_saturation_max` | **1.0** | – | Cap on pore filling; only reachable when runoff is delayed |
+| `heat_capacity_ice` | **2102.0** | J kg⁻¹ K⁻¹ | Read only under `heat_capacity_method = :constant` |
+| `rain_temperature_threshold` | **273.15** | K | Rain/snow partition temperature |
+| `emissivity` | **0.97** | – | |
+| `emissivity_grain_radius_large` | **0.97** | – | |
+| `emissivity_grain_radius_threshold` | **10.0** | mm | |
+| `surface_roughness_effective_ratio` | **0.10** | – | |
+| `albedo_snow` / `albedo_ice` / `albedo_fixed` | **0.85** / **0.48** / **0.85** | – | |
+| `albedo_density_threshold` | **`Inf`** | kg m⁻³ | `Inf` disables the density-based snow/ice albedo switch |
+| `cloud_fraction` | **0.1** | – | |
+| `shortwave_subsurface_absorption` | **`false`** | – | Absorb shortwave with depth rather than at the surface only |
+| `shortwave_downward_diffuse`, `solar_zenith_angle`, `cloud_optical_thickness`, `black_carbon_snow`, `black_carbon_ice` | **0.0** | – | Overridden by the forcing when supplied |
+| `column_ztop` | **10.0** | m | Depth of the uniform near-surface zone |
+| `column_dztop` | **0.05** | m | Cell thickness in that zone |
+| `column_dzmin` / `column_dzmax` | **0.025** / **0.075** | m | Merge/split bands enforcing the fixed cell count |
+| `column_depth_max` | **250.0** | m | *Ceiling* on the constructed column depth, not the depth itself |
+| `column_zy` | **1.10** | – | Geometric growth ratio below `column_ztop` |
+| `horizontal_strain_rate` | **0.0** | yr⁻¹ | Ice-dynamic layer thinning; 0 disables the term |
+| `surface_slope` | **0.0** | m m⁻¹ | Hydraulic gradient; read only under `:ZuoOerlemans`/`:Darcy` |
+| `output_viscosity` | **`false`** | – | Adds a `viscosity` output layer; populated only under `:Crocus`/`:CrocusPure` |
 
 ## Output Structure
 
@@ -134,72 +194,66 @@ Output variables include:
 
 ## Testing
 
-GEMB.jl includes a comprehensive test suite that validates against the original MATLAB implementation:
-
 ```julia
 using Pkg
 Pkg.test("GEMB")
 ```
 
 Tests validate:
-- Individual physics modules against MATLAB reference data (typically ~1e-12 relative tolerance)
-- Full model integration
-- Spinup functionality
+- Each physics module against the closed form of the law it implements, and against
+  published values or an independent implementation (the CFM, IMAU-FDM) where one exists
+- Conservation of mass and energy per timestep, and over a whole run
+- Full model integration, spinup convergence, and grid management invariants
 - Profile extraction and interpolation
+- A full-run numerical fingerprint (`test/test_synthetic_regression.jl`) that catches
+  unintended changes to model output; an intended change re-pins it, with the reason and
+  the size of the shift recorded in place
+
+The test target needs the companion [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl)
+checked out as a sibling directory, resolved via `[sources]` in `test/Project.toml`
+(Julia ≥ 1.11).
 
 ## Performance
 
-Julia's JIT compilation and type inference, combined with allocation and compute
-optimizations to the hot physics loop, provide substantial performance benefits over the
-reference MATLAB implementation.
+GEMB prioritizes computational efficiency to accommodate the multi-millennial spinups that
+deep firn columns require, and the hot physics loop is tuned for low allocations and type
+stability.
 
-**Benchmark workload** (`examples/synthetic_example.jl` / `examples/GEMB_example_synthetic.m`):
-a 75-year climatological spinup followed by a 32-year transient run — **~107 model-years at
-3-hourly resolution** — on a single firn column. Total wall-clock time for the full
-workflow (spinup + transient run), measured on an Apple M2 Max as the minimum of 3 runs
-after warmup:
-
-| Implementation | Total runtime | Speedup vs MATLAB |
-|---|---|---|
-| MATLAB (R2024b) | 98.8 s | 1× |
-| Julia (current) | **5.7 s** | **~17×** |
-
-Both were re-benchmarked on the same machine with the same protocol
-(`examples/GEMB_example_synthetic.m` timed physics only, post-warmup, min of 3 runs).
-
-The Julia hot loop has been tuned for low allocations and type stability. The
-MATLAB-validation test suite passes (~1e-12 relative tolerance per module) for every
-physics function except where a deviation is documented under
-[Physics deviations](#physics-deviations).
-
-Whole-column output is **not** bit-identical to the MATLAB reference, and cannot be: the
-fixed-length vertical grid (see below) merges and splits cells at depth to hold the cell
-count constant, which changes the deep discretization. Integrated surface quantities agree
-closely with the pre-refactor Julia results — melt −0.17%, runoff +0.26%, refreeze −0.50%,
-net shortwave −0.31%, surface albedo +0.01%, and latent heat flux +0.79% over the 107
-model-year benchmark — but a cell-by-cell comparison against MATLAB will differ at depth by
-more than floating-point rounding.
+**Benchmark workload** (`bench/opt_bench.jl`): a 75-year climatological spinup followed by a
+32-year transient run — **~107 model-years at 3-hourly resolution** — on a single firn
+column. Total wall-clock time for the full workflow, measured on an Apple M2 Max as the
+minimum of 3 runs after warmup: **5.7 s**.
 
 The first call to any function includes JIT compilation overhead; subsequent calls use
-compiled native code.
+compiled native code, so a single short run is not representative.
 
-## Differences from MATLAB Version
+`bench/opt_bench.jl` also emits a per-field numerical snapshot (sum/min/max/count), so an
+optimization can be checked for bit-level equivalence against a baseline rather than only
+for speed.
 
-GEMB.jl embraces Julia idioms and deviates from the MATLAB implementation where justified:
+## Design
 
-- **DimensionalData.jl:** All arrays use explicit dimension labels (`Ti`, `Z`) instead of implicit ordering
-- **Immutable Parameters:** `ModelParameters` is immutable; create new instance for modifications
-- **Multiple Dispatch:** Physics functions use multiple dispatch for type-based specialization
-- **Broadcasting:** Uses Julia's `.` broadcasting syntax instead of implicit array operations
-- **Module System:** Organized as a proper Julia package with explicit exports
+- **DimensionalData.jl:** all arrays carry explicit dimension labels (`Ti`, `Z`) rather than
+  relying on positional ordering
+- **Immutable parameters:** `ModelParameters` is immutable; construct a new instance to change
+  a setting
+- **Symbols for options:** every method choice is a `Symbol` (see the
+  [parameter table](#model-parameters)), validated at construction
+- **State as a NamedTuple:** the column state passes between timesteps as a plain NamedTuple
+  of vectors, so the hot loop carries no labeled-array overhead
 - **Fixed-length vertical grid:** the column holds a constant cell count and a constant total
   depth for the whole run, rather than growing and shrinking as cells are added and removed
   (see below)
+- **Conservation checks:** with `verbose=true`, `gemb_core` validates mass and energy
+  conservation every timestep
 
-### Physics deviations
+### Physics notes
 
-Changes that alter model output relative to the MATLAB reference. Upstream issue numbers
-refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
+Places where GEMB.jl's physics departs from an earlier form of the model, or where a
+published law needed correction or interpretation. Recorded so the choices are auditable and
+are not silently re-litigated. Upstream issue numbers refer to
+[the MATLAB implementation](https://github.com/alex-s-gardner/GEMB/issues), where the same
+defect exists.
 
 - **Grain metamorphism runs unconditionally**, where MATLAB skips it unless `albedo_method` is
   `:GardnerSharp` or `:BrunLefebre`. That gate is a performance optimization — grains coarsen
@@ -307,8 +361,10 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
 - **Added `water_irreducible_method = :ColeouLesaffre`** — density-dependent irreducible
   saturation, `S_wi = wmi/(1−wmi)·ρᵢρ/(ρ_w(ρᵢ−ρ))` with `wmi = 0.057(ρᵢ−ρ)/ρ + 0.017`
   (Coléou and Lesaffre 1998 eq. 3 via Langen et al. 2017 eq. 4), matching the Community Firn
-  Model. Retention is zero at and above `DENSITY_PORE_CLOSEOFF`, as in CFM. Default
-  `:constant` is unchanged and bit-identical.
+  Model, and the default since v2.0.0 — it is what both the CFM and IMAU-FDM ship, and
+  RetMIP Sect. 5.4 attributes part of the multi-model under-retention in the percolation zone
+  to the flat 0.07. Retention is zero at and above pore close-off, as in CFM. `:constant`
+  remains available and holds `water_irreducible_saturation` at every density.
 - **Added `impermeable_density` and `impermeable_thickness`**, exposing the bucket scheme's
   density-based impermeability criterion, which MATLAB hardcodes as `830` kg m⁻³ and `0.1` m in
   `calculate_melt`. Water is routed to runoff at a contiguous run of cells at or above
@@ -334,7 +390,8 @@ refer to [the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues).
 - **Added `heat_capacity_method = :CuffeyPaterson`** — temperature-dependent specific heat,
   `c_p(T) = 152.5 + 7.122 T` (Cuffey and Paterson 2010 eq. 9.1). MATLAB uses the constant
   2102 J kg⁻¹ K⁻¹, its value at the melting point, which overstates the cold content of firn
-  at 240 K by 12.9% and at 210 K by 27.5%. Default `:constant` reproduces the MATLAB value.
+  at 240 K by 12.9% and at 210 K by 27.5%. The default is `:constant`, matching what the CFM
+  ships on its melt-enabled path (`c_firn = CP_I`).
 - **Internal energy is the enthalpy integral `∫c_p dT`, not `M·T·c_p`.** The latter is valid
   only for constant `c_p`; under `:CuffeyPaterson` it overstates enthalpy by `(b/2)T²`, which
   is 0.79·`LF` at the melting point. Cell mixing, the thermal solver, and every energy budget
@@ -476,7 +533,8 @@ What this changes for consumers of the output:
   Firn Model's `runoffZuoOerlemans` uses `c₁ = 1.5 d` rather than 0.33 while citing the same
   source; the two published lineages disagree on this coefficient and GEMB follows Langen et
   al., the DMIHH lineage RetMIP evaluated. The difference is immaterial at ice-sheet slopes
-  (21 d either way at `S = 0.01`). Default `:instantaneous` reproduces MATLAB bit-identically.
+  (21 d either way at `S = 0.01`). The default is `:instantaneous`, which all three RetMIP
+  bucket-scheme lineages and both comparison models use.
 - **Water may exceed irreducible saturation when runoff is delayed.** MATLAB clamps pore water
   to irreducible at every retention site, so a saturated cell cannot exist and firn aquifers
   are structurally unrepresentable (RetMIP Sect. 5.4 dropped their aquifer site from the
@@ -506,19 +564,19 @@ What this changes for consumers of the output:
   `k = 0.301e-2ρ − 0.724`, fitted over ρ = 350–900 and floored at the Calonne 2011 value below
   their crossing near ρ = 321, where the bare fit heads negative. Both are higher than
   `:Sturm`/`:Calonne` in firn, the direction RetMIP's cold bias at Summit and Dye-2 implies.
-  Default `:Sturm` is unchanged.
+  `:Calonne2019` is the default since v2.0.0: RetMIP Sect. 5.1 recommends it by name, and it is
+  what both the CFM and IMAU-FDM ship.
 
 ## Prerequisites
 
-GEMB.jl requires:
-- Julia ≥ 1.11
-- DimensionalData.jl
-- Statistics (standard library)
-- Dates (standard library)
+GEMB.jl requires Julia ≥ 1.11. Its dependencies (DimensionalData.jl,
+DataInterpolations.jl, FillArrays.jl, JSON.jl, and the `Statistics` and `Dates` standard
+libraries) install automatically.
 
-For MATLAB cross-validation tests:
-- MATLAB.jl (optional, for running MATLAB comparison tests)
-- MAT.jl (for reading MATLAB .mat files)
+Optional:
+- A Makie backend (CairoMakie, GLMakie, or WGLMakie) to enable `gemb_plot_output`
+- [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) for
+  real (ERA5-Land) or synthetic climate forcing — also required to run the test suite
 
 ## Citation
 
@@ -526,21 +584,37 @@ If you use GEMB.jl in your research, please cite:
 
 Gardner, A. S., Schlegel, N.-J., and Larour, E.: Glacier Energy and Mass Balance (GEMB): a model of firn processes for cryosphere research, Geosci. Model Dev., 16, 2277–2302, [https://doi.org/10.5194/gmd-16-2277-2023](https://doi.org/10.5194/gmd-16-2277-2023), 2023.
 
-If you use GEMB model outputs, please cite:
-
-Schlegel, N.-J., & Gardner, A. (2025). Output from the Glacier Energy and Mass Balance (GEMB v1.0) forced with 3-hourly ERA5 fields and gridded to 10km, Greenland and Antarctica 1979-2024 (1.4) [Data set]. Zenodo. [https://doi.org/10.5281/zenodo.14714746](https://doi.org/10.5281/zenodo.14714746)
-
 ## Related Repositories
 
-- [GEMB (MATLAB)](https://github.com/alex-s-gardner/GEMB) - Original MATLAB implementation
-- [GEMB.jl Documentation](https://alex-s-gardner.github.io/GEMB.jl/)
+GEMB:
+
+- [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) —
+  climate forcing for GEMB: real data (ERA5-Land, via CDS) and synthetic forcing, produced as
+  a `DimStack`
+- [GEMB_GlacierSims.jl](https://github.com/alex-s-gardner/GEMB_GlacierSims.jl) — multi-site
+  and regional GEMB simulation workflows
+- [GEMB (MATLAB)](https://github.com/alex-s-gardner/GEMB) — the separately maintained MATLAB
+  implementation
+- [GEMB.jl documentation](https://alex-s-gardner.github.io/GEMB.jl/)
+
+Other open firn models, both used as independent cross-checks on GEMB's physics (see the
+[CFM](https://alex-s-gardner.github.io/GEMB.jl/dev/cfm_comparison/) and
+[IMAU-FDM](https://alex-s-gardner.github.io/GEMB.jl/dev/imau_fdm_comparison/) comparison
+pages):
+
+- [Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) — CFM, the
+  University of Washington modular firn model (Stevens et al., 2020)
+- [IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM) — the Utrecht firn
+  densification model (Ligtenberg et al., 2011; Brils et al., 2022)
 
 ## Contributing
 
 Contributions are welcome! Please:
-1. Deviate from the MATLAB implementation only where physically justified, and document the
-   deviation under [Physics deviations](#physics-deviations)
-2. Add tests that validate against MATLAB reference data
+1. Justify any change to the physics against the literature or against an independent
+   implementation, and record it under [Physics notes](#physics-notes) if it moves model
+   output
+2. Add tests that pin the new behaviour — against a closed form, a published value, or an
+   independent implementation, whichever applies
 3. Follow Julia style guidelines
 4. Update documentation for new features
 

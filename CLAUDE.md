@@ -13,7 +13,11 @@ GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance model. 
 - Densification (compaction and wet compaction)
 - Layer management
 
-The model began as a translation from MATLAB to Julia and leverages Julia's performance and type system. Physics deviations from the MATLAB version are permitted where justified, and must be documented (see [Documenting deviations](#documenting-deviations-from-matlab)).
+GEMB.jl is the reference implementation of GEMB. It began as a translation of an earlier
+MATLAB model, but as of v2.0.0 it is developed independently: the two are maintained
+separately and are no longer expected to agree numerically. Changes to the physics are
+judged on their own merits and against the published literature, not against the MATLAB
+output (see [Changing the physics](#changing-the-physics)).
 
 ## Quick Start
 
@@ -198,7 +202,7 @@ Initialize Profile → Time Loop [
 
 ### Key Design Principles
 
-- **MATLAB Provenance**: Physics derive from the original MATLAB implementation, and comments reference MATLAB line numbers. Deviations are permitted where physically justified and must be documented (see [Documenting deviations](#documenting-deviations-from-matlab)).
+- **Cited physics**: Every scheme traces to a published source, cited in the docstring of the function that implements it. Some comments still reference line numbers in the MATLAB model the code was originally translated from; these are historical provenance, not a specification to conform to.
 - **DimensionalData.jl**: All input/output arrays use `DimArray` with explicit dimensions (`Ti` for time, `Z` for vertical). Indexing uses keyword syntax: `output[:temperature][Z=1:10, Ti=At(t)]`
 - **State as NamedTuple**: The column state (temperature, dz, density, etc.) is passed between timesteps as a plain NamedTuple of vectors — no DimStack overhead in the hot loop
 - **Symbols for Options**: Model parameters that select methods use `Symbol` (e.g., `albedo_method=:GardnerSharp`, `output_frequency=:daily`)
@@ -209,16 +213,33 @@ Initialize Profile → Time Loop [
 
 ### Test Structure
 
-Tests validate against MATLAB reference data stored in `test/` directory (MAT files). Each physics module has a corresponding test file that:
-1. Loads MATLAB reference inputs
-2. Runs Julia function
-3. Compares outputs with reference (typically to ~1e-12 relative tolerance)
+Each physics module has a corresponding `test/test_*.jl` file. Validation comes from four
+sources, in rough order of strength:
+
+1. **Closed-form checks** — where a scheme has an analytic solution, the test computes it
+   independently and compares to ~1e-12 (e.g. the Arthern grain-growth integral in
+   `test_calculate_grain_size.jl`, checked in SI against the module's mm working units).
+2. **Published values** — coefficients and reference points taken from the paper the
+   scheme is cited to.
+3. **Independent implementations** — agreement with the Community Firn Model and IMAU-FDM
+   where the algebra is the same; see `docs/src/cfm_comparison.md` and
+   `docs/src/imau_fdm_comparison.md`.
+4. **Invariants** — conservation of mass and energy (`gemb_core` with `verbose=true`),
+   monotonicity, bounds, and the physical limits of each scheme.
+
+On top of those, `test/test_synthetic_regression.jl` pins three whole-model fields as a
+self-consistency fingerprint. It is a *change detector*, not a physics validation: an
+intended change to the defaults or to a scheme is expected to move it, and re-pinning is
+part of making such a change. Every re-pin is recorded in that file with what moved it and
+by how much, so the history stays auditable.
 
 The test suite in `runtests.jl` runs all module tests in order of dependency.
 
 ### Constants and Physical Models
 
-Physical constants are defined in `constants.jl` (e.g., `LF`, `CtoK`, `GRAVITY`) and match MATLAB conventions.
+Physical constants are defined in `constants.jl` (e.g., `LF`, `CtoK`, `GRAVITY`), each with
+its source in a comment. Numerical tolerances live there too (commit `a5247ea`) rather than
+as literals at their use sites. New constants belong in that file, not inline.
 
 GEMB simulates:
 - **Surface Energy Balance**: Radiative (shortwave/longwave) and turbulent (sensible/latent) fluxes using Monin-Obukhov similarity theory
@@ -228,24 +249,33 @@ GEMB simulates:
 - **Dynamic Albedo**: Long-term memory albedo accounting for grain growth and specific surface area
 - **Grid Management**: Lagrangian-style vertical grid that merges/splits layers dynamically
 
-## Testing Against MATLAB
+## Changing the physics
 
-When modifying physics functions, always run the corresponding test to ensure MATLAB equivalence is maintained. Tests use the MAT.jl package to load reference data stored in `test/` directory (MAT files). Validation typically requires ~1e-12 relative tolerance to match MATLAB. If you add new physics, generate reference data using `test/generate_reference_data.m` (MATLAB script).
+When modifying a physics function, run its `test/test_*.jl` file and then the full suite.
+Two things follow from GEMB.jl being independent of the MATLAB model:
 
-## Documenting deviations from MATLAB
+- **The bar is the literature, not the old output.** Justify a change by citing the source
+  it comes from, and put that citation in the docstring. Where the change touches a scheme
+  the Community Firn Model or IMAU-FDM also implements, check it against theirs and record
+  the comparison in the relevant `docs/src/*_comparison.md` page.
+- **New behaviour is opt-in unless a default change is the point.** Prefer adding a new
+  `Symbol` option value, which leaves every existing run bit-identical. Changing a default
+  is a deliberate, separately-argued act — the four default changes in v2.0.0 are the
+  worked example.
 
-When a change alters model output relative to the MATLAB reference, add a one-line entry to
-the **Physics deviations** subsection of `README.md`. State what changed and what it
-affects, concisely and factually. Do not editorialize.
+If a change moves model output, add a one-line entry to the **Physics notes** subsection of
+`README.md` stating what changed and what it affects, concisely and factually. Do not
+editorialize. If the change also alters the synthetic regression fingerprint beyond its
+tolerances, re-pin `test/test_synthetic_regression.jl` and append the reason and the
+measured deltas to the history at the top of that file.
 
-If the deviation corrects a defect that also exists in the MATLAB source, open an issue on
-[the MATLAB repository](https://github.com/alex-s-gardner/GEMB/issues) and reference its
-number in the README entry.
+If the change corrects a defect that also exists in the
+[MATLAB model](https://github.com/alex-s-gardner/GEMB), opening an issue there is a
+courtesy to its users, but the two codebases are no longer kept in step.
 
-### Cross-Validation Examples
+### Examples
 - `examples/synthetic_example.jl` - Simple synthetic forcing test
-- `examples/era5_example.jl` - ERA5 reanalysis data example  
-- `examples/compare_outputs.jl` - MATLAB/Julia cross-validation
+- `examples/era5_example.jl` - ERA5 reanalysis data example
 
 ## DimensionalData.jl Usage
 
@@ -258,7 +288,7 @@ number in the README entry.
 
 ## Performance Considerations
 
-- First run includes JIT compilation time; subsequent runs are 2-5x faster than MATLAB
+- First run includes JIT compilation time; measure only after warmup
 - GEMB prioritizes computational efficiency for multi-millennial spinups required by deep firn columns
 - Memory efficient with minimal allocations after warmup
 - The hot loop (`gemb_core`) uses plain NamedTuple of vectors (not DimStack) to avoid overhead

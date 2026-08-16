@@ -57,7 +57,7 @@ Reading CFM against GEMB surfaced a small set of findings that are *not* about
 CFM's extra capabilities but about places where GEMB's own physics was internally
 inconsistent, or where a cheap, well-cited parameterization was missing. Those
 were fixed. Each is gated on a `ModelParameters` `Symbol` so the prior behaviour
-remains reproducible bit-for-bit, and each appears in the **Physics deviations**
+remains reproducible bit-for-bit, and each appears in the **Physics notes**
 section of `README.md`.
 
 ### Fix 1 — densification driven by mean snowfall, not mean precipitation

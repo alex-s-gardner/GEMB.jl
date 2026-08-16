@@ -5,9 +5,6 @@ using Dates
 using InteractiveUtils   # code_typed, for the type-stability guard in test_heat_capacity.jl
 using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
 
-# Include test utilities for MATLAB validation
-include("test_utils.jl")
-
 @testset "GEMB.jl" begin
     @testset "Heat Capacity" begin
         include("test_heat_capacity.jl")

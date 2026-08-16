@@ -6,8 +6,7 @@ Irreducible (capillary-held) water saturation of the pore space, per
 [kg m-2] at every site that uses it, so only `S_wi` varies between methods.
 
 - `:constant` — `mp.water_irreducible_saturation` at every density (Colbeck, 1974).
-  This is the MATLAB behaviour and the default.
-- `:ColeouLesaffre` — Coléou and Lesaffre (1998) eq. 3 via Langen et al. (2017) eq. 4,
+- `:ColeouLesaffre` — the default. Coléou and Lesaffre (1998) eq. 3 via Langen et al. (2017) eq. 4,
   where irreducible water mass per unit total mass is
   `wmi = 0.057(ρᵢ − ρ)/ρ + 0.017` and
 
@@ -17,12 +16,12 @@ Irreducible (capillary-held) water saturation of the pore space, per
   ~0.069 at ρ = 300 against ~0.163 at ρ = 800 (ρᵢ = 917) — which is where the constant
   value under-retains most, in the percolation zone.
 
-Both methods are gated at `DENSITY_PORE_CLOSEOFF`, where there is no connected pore
-space left to hold water: `:ColeouLesaffre` returns zero there, as the Community Firn
-Model and [`_irreducible_water`](@ref) do. `:constant` is deliberately *not* gated, so
-the default path stays bit-identical to MATLAB. The gate also removes the `ρ → ρᵢ`
-singularity in `S_wi`; the retention product `(ρᵢ − ρ)·S_wi` is finite in that limit,
-but the saturation alone is not.
+`:ColeouLesaffre` is gated at `min(DENSITY_PORE_CLOSEOFF, mp.density_ice)`, where there is
+no connected pore space left to hold water, returning zero there as the Community Firn
+Model and [`_irreducible_water`](@ref) do. `:constant` is deliberately *not* gated, so it
+stays a flat saturation at every density. The gate also removes the `ρ → ρᵢ` singularity
+in `S_wi`, which is why it takes the `min`: with `mp.density_ice` configured below pore
+closeoff the singularity would otherwise sit below the constant threshold.
 
 The gate is the *constant* `DENSITY_PORE_CLOSEOFF`, deliberately not the tunable
 `mp.impermeable_density`. The two thresholds answer different questions: this one is where
@@ -35,7 +34,11 @@ would make lowering the flow criterion silently change retention too.
         return mp.water_irreducible_saturation
     end
     # :ColeouLesaffre
-    density >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return 0.0
+    # `min` with `density_ice` matters only when `density_ice` is configured below
+    # pore closeoff (a legitimate sensitivity test): there the ρ → ρᵢ singularity sits
+    # *below* the constant gate, and without this the saturation is `Inf` and the
+    # retention product `(ρᵢ − ρ)·S_wi` is `NaN`.
+    density >= min(DENSITY_PORE_CLOSEOFF, mp.density_ice) - D_TOLERANCE && return 0.0
     ρi = mp.density_ice
     wmi = 0.057 * (ρi - density) / density + 0.017
     return wmi / (1 - wmi) * ρi * density / (DENSITY_WATER * (ρi - density))

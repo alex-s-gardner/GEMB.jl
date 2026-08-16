@@ -1,4 +1,4 @@
-# Tests for calculate_density - matches MATLAB test_calculate_density.m
+# Tests for calculate_density
 
 # Helper to create a ClimateForcingStep for density tests
 function _make_density_cfs(; dt=86400.0 * 30, precipitation_mean=200.0, temperature_air_mean=250.0)
