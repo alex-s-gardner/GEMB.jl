@@ -344,3 +344,83 @@ end
         cfs, mp4, false)
     @test d4[1] ≈ expected_4 atol = 1e-5
 end
+
+@testset "FaustoFit new snow density" begin
+    _mp(method) = GEMB.ModelParameters(
+        new_snow_method=method,
+        column_dzmin=0.05,
+        density_ice=917.0,
+        albedo_snow=0.85,
+        albedo_method=:GardnerSharp,
+        rain_temperature_threshold=273.15,
+    )
+    mp_fit = _mp(:FaustoFit)
+    mp_const = _mp(:Fausto)
+
+    # The published Fausto et al. (2018) Greenland regression, written out independently of
+    # the implementation. IMAU-FDM applies exactly this form (`initialise_model.f90`).
+    rho0_fausto(T) = 362.1 + 2.78 * (T - 273.15)
+
+    # `fresh_snow_density` reads the *fifth* argument (instantaneous air temperature) for
+    # this method and ignores the three climatological means.
+    for T in (233.15, 240.0, 256.2, 260.0, 273.15)
+        @test GEMB.fresh_snow_density(mp_fit, 260.0, 200.0, 5.0, T) == rho0_fausto(T)
+    end
+    # With no fifth argument it falls back to the climatological mean, which is what
+    # `steady_state_profile` relies on for a well-defined ρ₀.
+    @test GEMB.fresh_snow_density(mp_fit, 248.0, 200.0, 5.0) == rho0_fausto(248.0)
+
+    # `:Fausto`'s bare constant is this same fit evaluated at one fixed temperature. Recorded
+    # as a test so the relationship between the two options cannot drift apart silently.
+    T_equiv = 273.15 + (GEMB.DENSITY_NEW_SNOW_FAUSTO_CONSTANT - 362.1) / 2.78
+    @test T_equiv ≈ 256.2 atol = 0.05
+    @test GEMB.fresh_snow_density(mp_fit, 260.0, 200.0, 5.0, T_equiv) ≈
+          GEMB.fresh_snow_density(mp_const, 260.0, 200.0, 5.0) rtol = 1e-14
+
+    # The four older methods must be bit-identical with and without the new argument: none
+    # of them reads it, so adding it cannot move an existing run.
+    for method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :Kaspers, :KuipersMunneke)
+        mp = _mp(method)
+        @test GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0) ===
+              GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0, 240.0)
+    end
+
+    # Through `calculate_accumulation`: the new cell takes the instantaneous temperature's
+    # density, not the climatological mean's (the two means differ here on purpose).
+    function _fresh_cell(mp; temperature_air)
+        n = 5
+        cfs = _make_accum_cfs(precipitation=50.0, temperature_air=temperature_air,
+            wind_speed=5.0, precipitation_mean=200.0, temperature_air_mean=260.0,
+            wind_speed_mean=5.0)
+        return GEMB.calculate_accumulation(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), cfs, mp, false)
+    end
+
+    (_, dz_a, dens_a, _, re_a, gdn_a, gsp_a, _, _) = _fresh_cell(mp_fit; temperature_air=250.0)
+    @test dens_a[1] ≈ rho0_fausto(250.0) rtol = 1e-14
+    (_, _, dens_b, _, _, _, _, _, _) = _fresh_cell(mp_fit; temperature_air=270.0)
+    @test dens_b[1] ≈ rho0_fausto(270.0) rtol = 1e-14
+    @test dens_a[1] < dens_b[1]                        # colder snow is lighter
+    @test dz_a[1] ≈ 50.0 / dens_a[1] rtol = 1e-14      # mass/density is consistent
+
+    # `:FaustoFit` must take the Crocus wind-dependent grain branch that `:Fausto` takes —
+    # the grain coupling is orthogonal to the density fit, and missing it would silently
+    # change fresh-snow dendricity.
+    (_, _, _, _, re_c, gdn_c, gsp_c, _, _) = _fresh_cell(mp_const; temperature_air=250.0)
+    @test gdn_a[1] == gdn_c[1]
+    @test gsp_a[1] == gsp_c[1]
+    @test re_a[1] == re_c[1]
+    # And those differ from the constants the other methods use, so the test above has teeth.
+    (_, _, _, _, re_d, gdn_d, gsp_d, _, _) = _fresh_cell(_mp(Symbol("350kgm2")); temperature_air=250.0)
+    @test gdn_d[1] == GEMB.GDN_NEW_SNOW
+    @test gdn_a[1] != GEMB.GDN_NEW_SNOW
+
+    # The regression is unbounded below (it reaches 0 at T ≈ 143 K), so the call site clamps.
+    # Far outside any real forcing, but the clamp is what keeps `dz = mass/density` finite.
+    (_, dz_e, dens_e, _, _, _, _, _, _) = _fresh_cell(mp_fit; temperature_air=100.0)
+    @test rho0_fausto(100.0) < 0                        # the bare fit is unphysical here
+    @test dens_e[1] == 1.0
+    @test isfinite(dz_e[1]) && dz_e[1] > 0
+
+    @test GEMB.validate_parameters(mp_fit) === nothing
+end

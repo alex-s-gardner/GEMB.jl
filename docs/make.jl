@@ -16,6 +16,7 @@ makedocs(;
         "Home" => "index.md",
         "Variable Reference" => "variables.md",
         "CFM Comparison" => "cfm_comparison.md",
+        "IMAU-FDM Comparison" => "imau_fdm_comparison.md",
         "API Reference" => "api.md",
     ],
 )

@@ -1,23 +1,41 @@
 """
-    fresh_snow_density(mp::ModelParameters, T_air_mean, precip_mean, wind_speed_mean)
+    fresh_snow_density(mp::ModelParameters, T_air_mean, precip_mean, wind_speed_mean,
+                       T_air=T_air_mean)
 
 Return the density of fresh snow [kg m-3] for the configured `mp.new_snow_method`.
 
-Depends only on climatological means (temperature [K], accumulation [kg m-2 yr-1],
-wind speed [m s-1]), so it is shared by `calculate_accumulation` (per timestep) and
-`initialize_profile` (as the surface density ρ₀ of the steady-state firn profile).
+The first three forcing arguments are climatological means (temperature [K], accumulation
+[kg m-2 yr-1], wind speed [m s-1]), so this is shared by `calculate_accumulation` (per
+timestep) and `initialize_profile` (as the surface density ρ₀ of the steady-state firn
+profile).
 
-Methods: `150kgm2` → 150; `350kgm2` → 350; `:Fausto` → 315; `:Kaspers` and
-`:KuipersMunneke` → temperature/accumulation/wind-dependent fits.
+`T_air` is the *instantaneous* air temperature [K] and is read only by `:FaustoFit`, the
+one method whose fit is meant to apply to the temperature at the moment of snowfall rather
+than to a climatology. It defaults to `T_air_mean` so that the steady-state march — which
+has no instantaneous temperature to offer — gets a well-defined climatological ρ₀ from the
+same call, and so that callers of the four older methods need not pass it.
+
+Methods:
+- `150kgm2` → 150, `350kgm2` → 350: constants.
+- `:Fausto` → 315: the Fausto et al. (2018) Greenland fit frozen at one temperature (it is
+  `:FaustoFit` evaluated at T ≈ 256.2 K). Inherited from MATLAB and kept as the default for
+  reference fidelity.
+- `:FaustoFit` → `362.1 + 2.78·(T_air - CtoK)`: that same fit carrying its temperature
+  dependence, as implemented in IMAU-FDM (`initialise_model.f90`) for its Greenland domain.
+  Unbounded below as published, so callers clamp — see `calculate_accumulation` and
+  `steady_state_profile`.
+- `:Kaspers`, `:KuipersMunneke`: temperature/accumulation/wind-dependent fits.
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
-    precip_mean::Real, wind_speed_mean::Real)
+    precip_mean::Real, wind_speed_mean::Real, T_air::Real=T_air_mean)
     if mp.new_snow_method == Symbol("150kgm2")
         return 150.0
     elseif mp.new_snow_method == Symbol("350kgm2")
         return 350.0
     elseif mp.new_snow_method == :Fausto
-        return 315.0
+        return DENSITY_NEW_SNOW_FAUSTO_CONSTANT
+    elseif mp.new_snow_method == :FaustoFit
+        return DENSITY_NEW_SNOW_FAUSTO_A + DENSITY_NEW_SNOW_FAUSTO_B * (T_air - CtoK)
     elseif mp.new_snow_method == :Kaspers
         return (7.36e-2 + 1.06e-3 * min(T_air_mean, CtoK - T_TOLERANCE) +
                 6.69e-2 * precip_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
@@ -72,10 +90,15 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
         E_total_initial = column_enthalpy(mp, M, temperature, water)
     end
 
-    # Density of fresh snow [kg m-3] (shared with initialize_profile)
-    density_new_snow = fresh_snow_density(mp, cfs.temperature_air_mean,
-        cfs.precipitation_mean, cfs.wind_speed_mean)
-    if mp.new_snow_method == :Fausto
+    # Density of fresh snow [kg m-3] (shared with initialize_profile). The instantaneous air
+    # temperature is passed as the fifth argument for `:FaustoFit`; the other methods ignore
+    # it. Clamped for the same reason `steady_state_profile` clamps its own call: the Fausto
+    # fit is a linear regression with no bounds, so a sufficiently cold forcing step would
+    # otherwise hand a non-positive density to the `dz = mass/density` below.
+    density_new_snow = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
+            cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air),
+        1.0, mp.density_ice)
+    if mp.new_snow_method == :Fausto || mp.new_snow_method == :FaustoFit
         # From Vionnet et al., 2012 (Crocus): wind-dependent grain properties.
         gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
         gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)

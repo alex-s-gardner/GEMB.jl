@@ -73,6 +73,75 @@ end
           [GEMB.thermal_conductivity(260.0, 300.0, mp), GEMB.thermal_conductivity(250.0, 800.0, mp)]
 end
 
+@testset "Calonne2019Air method" begin
+    mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Calonne2019Air)
+    mp_old = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Calonne2019)
+
+    # Independent transcription of IMAU-FDM's `Thermal_Cond` (source/firn_physics.f90), which
+    # is the only one of the three reference models to carry the air-conductivity ratio. Note
+    # it normalizes by the *computed* Yen value at 270.15 K where GEMB and the CFM use the
+    # published literal 2.107 — a 1.15e-4 relative offset that predates this method and
+    # applies equally to `:Calonne2019`, so the reference below uses GEMB's convention.
+    function k_reference(T, ρ)
+        θ = 1 / (1 + exp(-2 * 0.02 * (ρ - 450.0)))
+        k_snow = 0.024 - 1.23e-4 * ρ + 2.5e-6 * ρ^2
+        k_firn = 2.107 + 0.003618 * (ρ - 917.0)
+        K_ice = 9.828 * exp(-5.7e-3 * T)
+        k_air(t) = 2.334e-3 * t^1.5 / (164.54 + t)
+        air_ratio = k_air(T) / k_air(270.15)
+        return (1 - θ) * (K_ice / 2.107) * air_ratio * k_snow + θ * (K_ice / 2.107) * k_firn
+    end
+
+    for T in (220.0, 240.0, 273.15), ρ in (200.0, 450.0, 700.0, 917.0)
+        @test GEMB.thermal_conductivity(T, ρ, mp) ≈ k_reference(T, ρ) rtol = 1e-14
+    end
+
+    # Both ratios are 1 at the fit's reference temperature, so the two 2019 forms coincide
+    # there exactly — the air factor is `k_air(T_ref)/k_air(T_ref)`, not an approximation.
+    for ρ in (150.0, 300.0, 450.0, 600.0, 917.0)
+        @test GEMB.thermal_conductivity(GEMB.CONDUCTIVITY_T_REF, ρ, mp) ==
+              GEMB.thermal_conductivity(GEMB.CONDUCTIVITY_T_REF, ρ, mp_old)
+    end
+
+    # Below the reference temperature air conducts less, so this form is strictly lower than
+    # `:Calonne2019` wherever the snow branch carries weight, and equal where it does not.
+    for T in (220.0, 233.15, 253.15), ρ in (150.0, 300.0, 450.0)
+        @test GEMB.thermal_conductivity(T, ρ, mp) < GEMB.thermal_conductivity(T, ρ, mp_old)
+    end
+    # ~20% at 220 K in low-density snow, falling to under 0.3% by ρ = 550 as θ -> 1.
+    @test GEMB.thermal_conductivity(220.0, 200.0, mp_old) /
+          GEMB.thermal_conductivity(220.0, 200.0, mp) ≈ 1.204 rtol = 1e-3
+    @test GEMB.thermal_conductivity(220.0, 550.0, mp_old) /
+          GEMB.thermal_conductivity(220.0, 550.0, mp) < 1.003
+
+    # The air factor is weighted by (1-θ), so continuity into ice is preserved.
+    for T in (240.0, 273.15)
+        @test GEMB.thermal_conductivity(T, 917.0, mp) ≈ 9.828 * exp(-5.7e-3 * T) rtol = 1e-8
+    end
+
+    # Positive and monotone in density across the full column range, at a cold temperature
+    # where the air factor is furthest from 1.
+    k_profile = [GEMB.thermal_conductivity(233.15, ρ, mp) for ρ in 50.0:5.0:916.0]
+    @test all(k_profile .> 0)
+    @test all(diff(k_profile) .> 0)
+
+    # Vector method agrees with the scalar method
+    @test GEMB.thermal_conductivity([260.0, 250.0], [300.0, 800.0], mp) ==
+          [GEMB.thermal_conductivity(260.0, 300.0, mp), GEMB.thermal_conductivity(250.0, 800.0, mp)]
+
+    # `:Calonne2019` is untouched by the addition: it must still equal the air-free form.
+    function k_reference_noair(T, ρ)
+        θ = 1 / (1 + exp(-2 * 0.02 * (ρ - 450.0)))
+        k_snow = 0.024 - 1.23e-4 * ρ + 2.5e-6 * ρ^2
+        k_firn = 2.107 + 0.003618 * (ρ - 917.0)
+        K_ice = 9.828 * exp(-5.7e-3 * T)
+        return (K_ice / 2.107) * ((1 - θ) * k_snow + θ * k_firn)
+    end
+    for T in (220.0, 240.0, 273.15), ρ in (200.0, 450.0, 700.0, 917.0)
+        @test GEMB.thermal_conductivity(T, ρ, mp_old) == k_reference_noair(T, ρ)
+    end
+end
+
 @testset "Marchenko2019 method" begin
     mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Marchenko2019)
     k_marchenko(ρ) = 0.301e-2 * ρ - 0.724
@@ -116,7 +185,7 @@ end
     mp = GEMB.ModelParameters(thermal_conductivity_method=:NotAMethod)
     @test_throws ErrorException GEMB.thermal_conductivity(260.0, 400.0, mp)
     @test_throws AssertionError GEMB.validate_parameters(mp)
-    for m in (:Sturm, :Calonne, :Calonne2019, :Marchenko2019)
+    for m in (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019)
         @test GEMB.validate_parameters(GEMB.ModelParameters(thermal_conductivity_method=m)) === nothing
     end
 end
