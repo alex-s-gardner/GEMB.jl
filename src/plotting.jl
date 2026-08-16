@@ -11,7 +11,7 @@ The figure has two columns sharing a common (linked) time axis:
   grid with [`gemb_interp`](@ref) and drawn as a heatmap. Colormaps are chosen per
   field and color limits are clipped to robust (2–98%) percentiles for maximum
   contrast. Long runs are strided in time so the raster stays a sensible width.
-  Panels are ordered `temperature`, `density`, `water`, `age`, `grain_radius` —
+  Panels are ordered `temperature`, `density`, `grain_radius`, `water`, `age` —
   physical order, not the order the fields happen to be stored in.
 - **Right — scalar fields.** 1-D variables are grouped by physical theme and shared
   unit (air temperature, energy fluxes, mass fluxes, …) and overplotted as time series
