@@ -154,7 +154,9 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
                     grain_sphericity[i] += F1
                 elseif water[i] > 0 + WATER_TOLERANCE
                     lwci = _grain_lwc(water[i], density[i], dz[i])
-                    F2 = (1.0 / 16.0) * lwci^3.0 * dt_days
+                    # Integer exponent: `^3` and `^3.0` agree bit-for-bit, but the float
+                    # exponent compiles to a `pow` call rather than two multiplies.
+                    F2 = (1.0 / 16.0) * lwci^3 * dt_days
                     grain_sphericity[i] += F2
                 else
                     F3 = 1e9 * exp(-6e3 / temperature[i]) * dt_days

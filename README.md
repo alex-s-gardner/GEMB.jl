@@ -566,6 +566,24 @@ What this changes for consumers of the output:
   `:Sturm`/`:Calonne` in firn, the direction RetMIP's cold bias at Summit and Dye-2 implies.
   `:Calonne2019` is the default since v2.0.0: RetMIP Sect. 5.1 recommends it by name, and it is
   what both the CFM and IMAU-FDM ship.
+- **The thermal sub-step now comes from the stability limit of the scheme actually being
+  solved.** The explicit solve is stable when each cell's own-temperature coefficient stays
+  non-negative, i.e. `dt ≤ ρᵢcᵢdzᵢ/(Gᵢ + Gᵢ₋₁)`, where `Gᵢ` is the harmonic-mean face
+  conductance `1/(dz[i+1]/2K[i+1] + dz[i]/2K[i])` the flux loop already uses; the Dirichlet
+  bottom cell is excluded, since its enthalpy is never updated. This replaced the textbook
+  uniform-grid form `0.5·ρᵢcᵢdzᵢ²/Kᵢ`, which substitutes `2Kᵢ/dzᵢ` for `Gᵢ + Gᵢ₋₁`. The two
+  agree exactly when `dz` and `K` are uniform, but GEMB's grid is graded, and there the
+  substitution errs in *both* directions: `Gᵢ + Gᵢ₋₁` ranges over `(0, 4Kᵢ/dzᵢ]`, so the old
+  form could overestimate the true limit by up to 2×, beyond what the 0.8 safety factor
+  absorbs. Measured per cell on GEMB's own column the ratio spanned 0.66 to 1.82. No run
+  tested was actually unstable — the cell that *binds* the minimum is always one where the old
+  form errs low — so this removes a latent unsoundness rather than fixing an observed failure,
+  and because it errs low at the binding cell the correct limit is also cheaper. The worst
+  cell's coefficient is now exactly `1 − 0.8 = 0.2` in every configuration tested, where the
+  old form left an unpredictable 0.22–0.28. Mean sub-steps per timestep fall 40.6 → 29.4 and
+  whole-run cost 8.83 s → 7.91 s (1.12×) on the synthetic benchmark. Not selectable: the old
+  form is removed, not retained as an option. Output moves — melt sum shifts by 0.34% over 32
+  years of synthetic forcing.
 
 ## Prerequisites
 

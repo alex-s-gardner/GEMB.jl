@@ -29,29 +29,35 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     logHT = log(cfs.temperature_observation_height / zT)
     logHQ = log(cfs.temperature_observation_height / zQ)
 
+    # Squared wind-to-height ratio in the bulk Richardson number, also invariant in
+    # T_surface. Integer exponent: `^2` and `^2.0` agree bit-for-bit but the float
+    # exponent compiles to a `pow` call rather than a multiply.
+    wind_ratio_sq = (wind_speed / cfs.wind_observation_height)^2
+
     return _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs,
-        wind_speed, C, pressure_factor, logM, logHT, logHQ)
+        wind_speed, C, pressure_factor, logM, logHT, logHQ, wind_ratio_sq)
 end
 
 """
-    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, pressure_factor, logM, logHT, logHQ)
+    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, pressure_factor, logM, logHT, logHQ, wind_ratio_sq)
 
 Core of [`turbulent_heat_flux`](@ref) with the sub-timestep-invariant quantities
-(`wind_speed`, bulk coefficient `C`, Exner `pressure_factor`, and the neutral
-roughness logs `logM`/`logHT`/`logHQ`) hoisted to the caller. `calculate_temperature`
+(`wind_speed`, bulk coefficient `C`, Exner `pressure_factor`, the neutral
+roughness logs `logM`/`logHT`/`logHQ`, and the squared wind-to-height ratio
+`wind_ratio_sq`) hoisted to the caller. `calculate_temperature`
 computes these once per timestep and reuses them across all thermal sub-steps,
 where only `T_surface` changes. Numerically identical to the inline form.
 """
 @inline function _turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep,
     wind_speed::Float64, C::Float64, pressure_factor::Float64,
-    logM::Float64, logHT::Float64, logHQ::Float64)
+    logM::Float64, logHT::Float64, logHQ::Float64, wind_ratio_sq::Float64)
 
     # Bulk Richardson Number
     Ri = pressure_factor *
          (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
          (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
-          ((wind_speed / cfs.wind_observation_height)^2.0))
+          wind_ratio_sq)
 
     # Constants for Beljaars and Holtslag (1991)
     a1 = 1.0
