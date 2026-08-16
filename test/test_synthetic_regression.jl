@@ -84,7 +84,18 @@ using GEMB_ClimateForcing
     # deeper, so the column enters the melt season colder and refreezes more of what melts
     # (measured in isolation: melt -570, minimum column temperature +4.25 K). The atols
     # are unchanged, since the cross-platform spread they were sized for has not moved.
-    @test mean_albedo ≈ 0.821926 atol=3e-3      # ~0.37% relative
-    @test total_melt ≈ 10963.944470 atol=120.0  # ~1.1% relative
-    @test total_runoff ≈ 4760.650556 atol=120.0 # ~2.5% relative
+    #
+    # Re-centered for the thermal sub-step stability limit, which now comes from the scheme
+    # actually being solved — `dt ≤ ρᵢcᵢdzᵢ/(Gᵢ + Gᵢ₋₁)` over the harmonic-mean face
+    # conductances, excluding the Dirichlet bottom cell — rather than the textbook
+    # uniform-grid form `0.5·ρᵢcᵢdzᵢ²/Kᵢ`. On the graded grid the old form was not
+    # conservative (per-cell ratio 0.66–1.82); the correct limit is looser at the cell that
+    # binds, so mean sub-steps per timestep fall 40.6 → 29.4. Melt falls 14.6 kg m-2 (-0.13%)
+    # and runoff 8.7 (-0.18%); albedo moves 9e-5. The previous values (0.821926 /
+    # 10963.944470 / 4760.650556) still fall inside these atols; re-centered so the tolerance
+    # budget stays available for the cross-platform spread it was sized for. See
+    # `GEMB._max_safe_dt`.
+    @test mean_albedo ≈ 0.821838 atol=3e-3      # ~0.37% relative
+    @test total_melt ≈ 10949.362828 atol=120.0  # ~1.1% relative
+    @test total_runoff ≈ 4751.946045 atol=120.0 # ~2.5% relative
 end

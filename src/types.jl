@@ -188,6 +188,10 @@ Base.@kwdef struct ModelParameters
     surface_slope::Float64 = 0.0
 
     # --- Thermal Time Stepping ---
+    # The explicit thermal sub-step comes from the stability limit of the scheme actually being
+    # solved, whose face conductances are harmonic means over two half-cells:
+    # `dt ≤ ρᵢcᵢdzᵢ / (Gᵢ + Gᵢ₋₁)`. Not selectable — the textbook uniform-grid form
+    # `0.5·ρ·c·dz²/K` it replaced is not conservative on a graded grid. See `_max_safe_dt`.
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver
 end
 
