@@ -29,7 +29,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.densification_coeffs_M01 in valid_coeffs "Invalid densification_coeffs_M01"
 
     # New snow method
-    @assert mp.new_snow_method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
+    @assert mp.new_snow_method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :FaustoFit, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
 
     # Density of ice
     @assert 800 <= mp.density_ice <= 950 "density_ice must be in [800, 950]"
@@ -61,7 +61,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.surface_roughness_effective_ratio <= 3 "surface_roughness_effective_ratio must be in [0, 3]"
 
     # Thermal conductivity
-    @assert mp.thermal_conductivity_method in (:Sturm, :Calonne, :Calonne2019, :Marchenko2019) "thermal_conductivity_method must be one of: Sturm, Calonne, Calonne2019, Marchenko2019"
+    @assert mp.thermal_conductivity_method in (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019) "thermal_conductivity_method must be one of: Sturm, Calonne, Calonne2019, Calonne2019Air, Marchenko2019"
 
     # Heat capacity
     @assert mp.heat_capacity_method in (:constant, :CuffeyPaterson) "heat_capacity_method must be constant or CuffeyPaterson"

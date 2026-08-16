@@ -72,6 +72,28 @@ const DENSITY_MARBOUTY_MAX = 400.0
 # against this same split.
 const DENSITY_STAGE_TRANSITION = 550.0
 
+# Reference temperature of the Calonne et al. (2019) conductivity regressions [K]. Their
+# eq. 5 rescales each regime fit by the ice (and air) conductivity *relative to its value
+# here*, so both ratios are 1 at this temperature and the fits return their published
+# values. Deliberately not `CtoK`: this is a property of the regression, not the melting
+# point, and the 3 K gap between them is not a rounding artifact.
+const CONDUCTIVITY_T_REF = 270.15
+
+# Reid (1966) thermal conductivity of air, `K = a·T^1.5/(b + T)` [W m-1 K-1]. Read only by
+# `_thermal_conductivity_air`, which supplies the `K_air(T)/K_air(T_ref)` factor on the snow
+# branch of `:Calonne2019Air`.
+const K_AIR_REID_A = 2.334e-3
+const K_AIR_REID_B = 164.54
+
+# Fresh-snow density regression of Fausto et al. (2018), `ρ0 = a + b·(T - CtoK)`
+# [kg m-3, T in K], calibrated for Greenland. Read by `fresh_snow_density` under
+# `new_snow_method = :FaustoFit`. The older `:Fausto` option returns
+# `DENSITY_NEW_SNOW_FAUSTO_CONSTANT`, which is this same fit evaluated at one fixed
+# temperature (T ≈ 256.2 K) — see that function's docstring.
+const DENSITY_NEW_SNOW_FAUSTO_A = 362.1
+const DENSITY_NEW_SNOW_FAUSTO_B = 2.78
+const DENSITY_NEW_SNOW_FAUSTO_CONSTANT = 315.0
+
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
 # (`_seb_annual_melt`), which blends between the dry-snow and ice values.

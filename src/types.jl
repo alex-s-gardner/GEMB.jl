@@ -32,6 +32,10 @@ Base.@kwdef struct ModelParameters
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
     # (the default, and the reference behaviour) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
+    # Fresh-snow density parameterization. `:Fausto` is the Fausto et al. (2018) Greenland
+    # fit frozen at a single temperature (315 kg m-3, inherited from MATLAB); `:FaustoFit` is
+    # that same fit carrying its temperature dependence, as IMAU-FDM implements it. Both also
+    # select the Crocus wind-dependent fresh-grain properties. See `fresh_snow_density`.
     new_snow_method::Symbol = Symbol("350kgm2")
     density_ice::Float64 = 910.0
     rain_temperature_threshold::Float64 = 273.15
@@ -45,8 +49,11 @@ Base.@kwdef struct ModelParameters
 
     # --- Thermal Conductivity ---
     # `:Sturm` (the MATLAB default) and `:Calonne` (Calonne et al., 2011) are density-only
-    # quadratics. `:Calonne2019` and `:Marchenko2019` are additions with no MATLAB
-    # counterpart; Vandecrux et al. (2020) recommend both over the older fits. See
+    # quadratics. `:Calonne2019`, `:Calonne2019Air` and `:Marchenko2019` are additions with
+    # no MATLAB counterpart; Vandecrux et al. (2020) recommend all three over the older fits.
+    # The two 2019 forms differ only in whether the snow branch carries the air-conductivity
+    # ratio (`:Calonne2019Air` does, matching IMAU-FDM; `:Calonne2019` does not, matching the
+    # Community Firn Model), which matters only for cold, low-density snow. See
     # `thermal_conductivity`.
     thermal_conductivity_method::Symbol = :Sturm
 
