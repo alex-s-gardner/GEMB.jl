@@ -1,4 +1,11 @@
+# Manifests. GEMB.jl is a library: `[compat]` in Project.toml is the dependency
+# contract, and a committed Manifest would only pin contributors to one machine's
+# resolve (it records an absolute dev path and a specific julia_version).
 /Manifest.toml
+test/Manifest.toml
+bench/Manifest.toml
+docs/Manifest.toml
+
 .vscode/settings.json
 .DS_Store
 
@@ -27,5 +34,3 @@ PERFORMANCE_COMPARISON.md
 # Test files not in runtests.jl
 test/test_optimization_validation.jl
 .claude/settings.local.json
-test/Manifest.toml
-bench/Manifest.toml
