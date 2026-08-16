@@ -136,11 +136,11 @@ _cmap(v::Symbol) = get(_CMAP, v, :viridis)
 # which orders the right column. Storage order would put `age` last (it was added last) and
 # `dz` second.
 #
-# `water` sits below `grain_radius`: grain radius is set by the dry-snow metamorphism that
-# follows from `temperature` and `density` above it, so those three read as one continuous
-# microstructure block, and `water` then opens the melt-and-refreeze story that `age` closes.
+# `age` sits directly below `temperature`, ahead of the `density`/`grain_radius`
+# microstructure pair that it helps explain: layer age dates the stratigraphy that
+# densification and grain growth then act on, and `water` closes with melt-and-refreeze.
 # Variables absent from this list sort after the listed ones, keeping their stack order.
-const _PROFILE_ORDER = [:temperature, :density, :grain_radius, :water, :age,
+const _PROFILE_ORDER = [:temperature, :age, :density, :grain_radius, :water,
     :grain_dendricity, :grain_sphericity, :dz]
 _prof_rank(v::Symbol) =
     something(findfirst(==(v), _PROFILE_ORDER), length(_PROFILE_ORDER) + 1)
