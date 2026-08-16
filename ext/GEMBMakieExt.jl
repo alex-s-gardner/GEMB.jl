@@ -162,7 +162,7 @@ const _SCALAR_GROUPS = [
     # honest rendering of "there is nothing to plot here", and the reason neither layer is
     # interval-averaged. The aquifer series are flat zero / all-NaN under the
     # `runoff_method = :instantaneous` default, where no water can stand.
-    ("Percolation, ice slabs and standing water",
+    ("Firn properties",
         [:percolation_depth, :ice_slab_depth, :ice_slab_thickness,
             :aquifer_depth, :aquifer_thickness]),
     ("Densification", [:densification_from_compaction, :densification_from_melt]),
@@ -176,6 +176,117 @@ function _group_title(output, theme::AbstractString, members::Vector{Symbol})
     us = unique(first(_display_units(output, v)) for v in members)
     (length(us) == 1 && !isempty(us[1])) || return theme
     return string(theme, " [", us[1], "]")
+end
+
+# Height in points the figure allots each panel row. A rotated y-label is bounded by this,
+# not by the figure's width, so every group title has to stay short enough to read on one
+# line here — which is why the themes above are two or three words, not sentences.
+const _ROW_HEIGHT = 175
+
+#=============================================================================
+# Isochrones: annual accumulation surfaces drawn over the age heatmap.
+=============================================================================#
+
+# The month/day whose annual recurrence is drawn as an isochrone: 1 May in the northern
+# hemisphere, 1 November in the southern, both marking the end of the accumulation season, so
+# each line is that year's snow surface. Chosen from the run's latitude metadata; defaults to
+# the northern date when latitude is absent or unusable, since a wrong-by-half-a-year line is
+# still a valid annual horizon.
+function _isochrone_monthday(md)
+    md === nothing && return (5, 1)
+    lat = md isa AbstractDict ? get(md, "latitude", nothing) :
+          (haskey(md, "latitude") ? md["latitude"] : nothing)
+    return (lat isa Real && isfinite(lat) && lat < 0) ? (11, 1) : (5, 1)
+end
+
+# Legend text naming the date the isochrones mark. Without it the yellow lines are unexplained
+# — and which date they are is hemisphere-dependent, so it cannot be a fixed string.
+function _isochrone_label(md)
+    mo, dy = _isochrone_monthday(md)
+    return string(dy, " ", monthabbr(mo))
+end
+
+# The isochrone levels, as decimal years, for every such date inside the record.
+function _isochrone_dates(times, md)
+    isempty(times) && return Float64[]
+    mo, dy = _isochrone_monthday(md)
+    t0, t1 = first(times), last(times)
+    dates = [DateTime(y, mo, dy) for y in year(t0):year(t1)]
+    filter!(t -> t0 <= t <= t1, dates)
+    return GEMB.datetime2decyear(dates)
+end
+
+# Depth of one isochrone at each timestep: where the column's *deposition year* crosses
+# `level`.
+#
+# The traced field is deposition year (`t - age`), not age. Age is a running clock, so a given
+# age contour slides downward through the firn with time and traces no physical surface.
+# Deposition year is fixed for a parcel of snow and travels with it, so its level set is
+# exactly a buried annual surface.
+#
+# The crossing is solved on the model's own layers rather than on the regridded raster the
+# heatmap draws. Regridding onto the 240-level display grid spreads each crossing over a grid
+# cell, so a contour of it comes out as a band whose width is the grid spacing, not a horizon;
+# and where several horizons fall inside the top metre — any column carrying spinup age — the
+# bands merge into one blob. Solving here is also exact: deposition year is monotonic down the
+# column, so the crossing is a single linear inverse per timestep.
+#
+# `NaN` marks "this horizon is not resolved here", which breaks the line — either the level
+# postdates the record's surface at that time, it lies below the deepest modelled layer, or the
+# bracketing interface is an unconformity (see `max_gap`).
+#
+# `max_gap`, in years, is what keeps the ablation zone honest. There, annual snow rests
+# directly on ice tens of years older, so one layer interface spans that entire age jump and
+# *every* level in the record brackets across it. Without the test each horizon is placed at
+# the same snow/ice contact, and the lines stack into the solid yellow band that gives the
+# ablation zone away. But such an interface is a hiatus: the intervening years were never
+# deposited, or have already melted away, so there is no surface to draw. Interpolating across
+# it would invent a depth for snow that does not exist. Terminating is the honest rendering,
+# and it leaves exactly the horizons the column really preserves.
+function _isochrone_depth(z_col, deposition, level, max_gap)
+    nz, nt = size(deposition)
+    depth = fill(NaN, nt)
+    for j in 1:nt
+        for i in 1:(nz - 1)
+            d1, d2 = deposition[i, j], deposition[i + 1, j]
+            (isnan(d1) || isnan(d2)) && continue
+            # Deposition year decreases with depth (deeper is older), so the crossing is
+            # bracketed when the level sits between a layer and the one beneath it. `>=` on
+            # the upper side catches a level landing exactly on a layer centre.
+            if d1 >= level >= d2
+                # Bracketed, but across a gap too large to be a real annual surface: leave
+                # this timestep blank rather than pinning the horizon to the unconformity.
+                d1 - d2 <= max_gap || break
+                z1, z2 = z_col[i, j], z_col[i + 1, j]
+                w = d1 == d2 ? 0.0 : (d1 - level) / (d1 - d2)
+                depth[j] = z1 + w * (z2 - z1)
+                break
+            end
+        end
+    end
+    return depth
+end
+
+# Draw one thin line per annual horizon over an already-plotted heatmap.
+#
+# A layer interface may legitimately span a couple of years of deposition age once the model
+# has merged thin layers deep in the column, so the gap tolerance is a few times the annual
+# spacing rather than exactly one year — loose enough not to chop up well-resolved firn,
+# tight enough to reject the decades-wide jumps of an ablation surface.
+function _isochrones!(ax, x, z_col, deposition, levels, label; max_gap=3.0)
+    isempty(levels) && return nothing
+    for (k, level) in enumerate(levels)
+        # Only the first line carries the label: every line means the same thing, so labelling
+        # each would repeat one entry per year in the record.
+        lines!(ax, x, _isochrone_depth(z_col, deposition, level, max_gap);
+            color=(:yellow, 0.5), linewidth=0.6, label=k == 1 ? label : nothing)
+    end
+    # Bottom-right: the deep column is the oldest and flattest part of the field, so the legend
+    # covers the least structure there. Opaque background, since the lines it explains are drawn
+    # over a dark colormap that a transparent patch would not read against.
+    axislegend(ax, position=:rb, framevisible=false, labelsize=11,
+        patchsize=(18, 8), padding=(4, 4, 2, 2), backgroundcolor=(:white, 0.75))
+    return nothing
 end
 
 #=============================================================================
@@ -415,7 +526,7 @@ function GEMB.gemb_plot_output(output::DimStack;
     # ---- Figure scaffold --------------------------------------------------
     nprof, ngrp = length(profile_vars), length(scalar_groups)
     nrows = max(nprof, ngrp, 1)
-    fig = Figure(size=(1500, 200 + 175 * nrows), fontsize=14)
+    fig = Figure(size=(1500, 200 + _ROW_HEIGHT * nrows), fontsize=14)
 
     # Header: title + traceability metadata banner.
     _header!(fig[1, 1:2], output, times, z_center, title)
@@ -446,6 +557,15 @@ function GEMB.gemb_plot_output(output::DimStack;
         hm = heatmap!(ax, x_hm, collect(dims(gridded, Z)), parent(gridded');
             colormap=_cmap(v), colorrange=(lo, hi))
         Colorbar(left[i, 2], hm; label=_label(output, v), width=12)
+        # Age is the one profile whose heatmap has annual structure worth marking: overlay the
+        # buried accumulation surfaces. Traced on the native layer centres, not on `gridded` —
+        # see `_isochrone_depth` for why regridding first turns each horizon into a band.
+        if v === :age
+            md = DimensionalData.metadata(output)
+            age_yr = parent(output[:age])[:, tcols] ./ 365.25
+            _isochrones!(ax, x_hm, z_center[:, tcols], reshape(x_hm, 1, :) .- age_yr,
+                _isochrone_dates(times, md), _isochrone_label(md))
+        end
         ylims!(ax, zbot, ztop)
     end
 
