@@ -123,10 +123,10 @@ time series over `Ti`, and 8 profile fields over `Z × Ti`. In the REPL:
 
 ```julia-repl
 julia> output
-┌ 11688×222 DimStack ┐
+┌ 11688×256 DimStack ┐
 ├────────────────────┴─────────────────────────────────────────────────────────────── dims ┐
   ↓ Ti Sampled{Dates.DateTime} [DateTime("1994-01-01T21:00:00"), …, DateTime("2025-12-31T21:00:00")] ForwardOrdered Irregular Points,
-  → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+  → Z  Sampled{Int64} 1:256 ForwardOrdered Regular Points
 ├────────────────────────────────────────────────────────────────────────────────── layers ┤
   :melt                          eltype: Float64 dims: Ti size: 11688
   :runoff                        eltype: Float64 dims: Ti size: 11688
@@ -155,14 +155,14 @@ julia> output
   :temperature_air               eltype: Float64 dims: Ti size: 11688
   :precipitation                 eltype: Float64 dims: Ti size: 11688
   :rain                          eltype: Float64 dims: Ti size: 11688
-  :temperature                   eltype: Float64 dims: Z, Ti size: 222×11688
-  :dz                            eltype: Float64 dims: Z, Ti size: 222×11688
-  :density                       eltype: Float64 dims: Z, Ti size: 222×11688
-  :water                         eltype: Float64 dims: Z, Ti size: 222×11688
-  :grain_radius                  eltype: Float64 dims: Z, Ti size: 222×11688
-  :grain_dendricity              eltype: Float64 dims: Z, Ti size: 222×11688
-  :grain_sphericity              eltype: Float64 dims: Z, Ti size: 222×11688
-  :age                           eltype: Float64 dims: Z, Ti size: 222×11688
+  :temperature                   eltype: Float64 dims: Z, Ti size: 256×11688
+  :dz                            eltype: Float64 dims: Z, Ti size: 256×11688
+  :density                       eltype: Float64 dims: Z, Ti size: 256×11688
+  :water                         eltype: Float64 dims: Z, Ti size: 256×11688
+  :grain_radius                  eltype: Float64 dims: Z, Ti size: 256×11688
+  :grain_dendricity              eltype: Float64 dims: Z, Ti size: 256×11688
+  :grain_sphericity              eltype: Float64 dims: Z, Ti size: 256×11688
+  :age                           eltype: Float64 dims: Z, Ti size: 256×11688
 ├──────────────────────────────────────────────────────────────────────────────── metadata ┤
   Dict{String, Any} with 10 entries:
   "latitude"         => -73.3307

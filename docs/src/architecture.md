@@ -142,7 +142,7 @@ The levers RetMIP does identify for bucket schemes are *when* water is blocked a
 it then leaves, not how deep it goes. Both are exposed:
 
 **The impermeability criterion** — `impermeable_density` and `impermeable_thickness`. See
-[`calculate_melt`](@ref) and the physics notes in the README for the range the participating
+[`calculate_melt`](@ref) and the [Physics notes](@ref "Physics notes") for the range the participating
 models spanned and how it maps onto their skill at the ice-slab site.
 
 **The runoff timescale** — `runoff_method`, with `surface_slope` as the driving hydraulic
