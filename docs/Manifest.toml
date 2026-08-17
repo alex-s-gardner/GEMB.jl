@@ -219,7 +219,7 @@ weakdeps = ["StaticArrays"]
 deps = ["DataInterpolations", "Dates", "DimensionalData", "FillArrays", "JSON", "Statistics"]
 path = "/Users/gardnera/Documents/GitHub/GEMB.jl"
 uuid = "658e70de-abe2-4db6-8b40-f6dcda98d853"
-version = "1.1.0"
+version = "2.0.0"
 
     [deps.GEMB.extensions]
     GEMBMakieExt = "Makie"

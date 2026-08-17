@@ -1,6 +1,7 @@
 /Manifest.toml
 .vscode/settings.json
 .DS_Store
+docs/build/
 
 # Development artifacts
 *.html

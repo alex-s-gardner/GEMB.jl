@@ -15,12 +15,16 @@ const HEAT_CAPACITY_CUFFEY_B = 7.122
 
 const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
 
-# Specific heat capacity of liquid water [J kg-1 K-1]. Carries the sensible heat of
-# *above-freezing* liquid entering the column — i.e. rain — via the two-argument
-# `specific_enthalpy_water(mp, T)`, under the `rain_heat_capacity = :water` default. Pore water
-# in GEMB is carried strictly at the melting point, so this does not appear in the percolation
-# or refreeze budgets; `heat_capacity(mp, T)` remains the ice-matrix value everywhere else.
-# Value from the Community Firn Model (`solver.py`, `c_liq`).
+"""
+    HEAT_CAPACITY_WATER
+
+Specific heat capacity of liquid water [J kg-1 K-1]. Carries the sensible heat of
+*above-freezing* liquid entering the column — i.e. rain — via the two-argument
+`specific_enthalpy_water(mp, T)`, under the `rain_heat_capacity = :water` default. Pore water
+in GEMB is carried strictly at the melting point, so this does not appear in the percolation
+or refreeze budgets; `heat_capacity(mp, T)` remains the ice-matrix value everywhere else.
+Value from the Community Firn Model (`solver.py`, `c_liq`).
+"""
 const HEAT_CAPACITY_WATER = 4219.9
 
 const LF = 0.3345e6        # Latent heat of fusion [J kg-1]
@@ -160,52 +164,60 @@ const Z_TOLERANCE = 1e-9               # column-depth conservation check [m]
 const T_BOTTOM_TOLERANCE = 1e-3        # Dirichlet bottom-cell drift check [K] (verbose only)
 const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offset [K]
 
-# Smallest stable sub-timestep the thermal solver will accept without warning [s]. Below
-# this, the Von Neumann stability limit has collapsed, which in practice means a near-zero
-# `dz` cell rather than a genuinely stiff column.
-#
-# `ExplicitThermal` only. `ImplicitThermal` is unconditionally stable, never consults
-# `_max_safe_dt`, and so never warns however thin a cell becomes.
+"""
+    DT_MIN_WARN
+
+Smallest stable sub-timestep the thermal solver will accept without warning [s]. Below
+this, the Von Neumann stability limit has collapsed, which in practice means a near-zero
+`dz` cell rather than a genuinely stiff column.
+
+`ExplicitThermal` only. `ImplicitThermal` is unconditionally stable, never consults
+`_max_safe_dt`, and so never warns however thin a cell becomes.
+"""
 const DT_MIN_WARN = 1e-4
 
-# Fraction of `_max_safe_dt` the explicit sub-step may use. Default of
-# `mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
-#
-# This is a genuine margin, not a hedge against the diffusive limit being imprecise. That limit
-# is exact for the stencil it is derived from (see `_max_safe_dt`), but it accounts for
-# *diffusion only*. The surface cell also carries the explicitly-evaluated surface energy
-# balance, whose linearization `Λ = dQ_sfc/dT₁ ≤ 0` (see `_surface_energy_balance_slope`) enters
-# cell 1's own-temperature coefficient exactly as a face conductance does:
-#
-#     coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁)
-#
-# `_max_safe_dt` omits `|Λ|`, so the true surface constraint is always stricter than the limit
-# returned, by a factor that the model does not bound: `|Λ|` grows with wind speed (turbulent
-# transfer) and with `T₁³` (longwave), while `ρ₁c₁dz₁` falls as the surface cell thins toward
-# `column_dzmin`. Unlike the graded-grid error the face-based form fixed, this one is
-# one-directional and unbounded, which is why a fixed fraction is the right instrument.
-#
-# 0.8 was inherited from the MATLAB model without a stated derivation. Measured over a year of
-# 3-hourly synthetic forcing at `test_1` (2920 steps, spun-up column, `mp` defaults), the
-# surface amplification factor `dt(G₁+|Λ|)/(ρ₁c₁dz₁)` actually realized was:
-#
-#     factor   median   p99     max     frac > 1   frac > 2   mean n_sub
-#     0.8      0.196    0.609   0.955   0.0000     0.0        24.20
-#     0.95     0.235    0.731   1.146   0.0065     0.0        20.20
-#     1.0      0.235    0.731   1.146   0.0065     0.0        20.17
-#
-# At 0.8 the surface coefficient stays non-negative on every step of that year; at 0.95 it goes
-# negative on 0.65% of them. Negative-but-above-`−1` is damped ringing rather than divergence —
-# outright blow-up needs a factor above 2, which this column never reaches — so 0.8 is not the
-# difference between a run that works and one that does not *here*. It is the margin that keeps
-# the scheme monotone, and the cost of holding it is ~17% more sub-steps on this column
-# (the divisor grid is coarse, so the two often land on the same `dt` regardless).
-#
-# Raising it toward 1.0 is therefore a defensible speed/monotonicity trade on a column resembling
-# the one measured, not a free one, and 1.0 exactly is not safe in general: nothing in the model
-# bounds `|Λ|/G₁`, so a thin, warm, windy surface cell can put the factor past 2. Runs that want
-# the limit removed rather than tightened should use `ImplicitThermal`, which is unconditionally
-# stable and does not consult this at all.
+"""
+    THERMAL_EXPLICIT_SAFETY_FACTOR
+
+Fraction of `_max_safe_dt` the explicit sub-step may use. Default of
+`mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
+
+This is a genuine margin, not a hedge against the diffusive limit being imprecise. That limit
+is exact for the stencil it is derived from (see `_max_safe_dt`), but it accounts for
+*diffusion only*. The surface cell also carries the explicitly-evaluated surface energy
+balance, whose linearization `Λ = dQ_sfc/dT₁ ≤ 0` (see `_surface_energy_balance_slope`) enters
+cell 1's own-temperature coefficient exactly as a face conductance does:
+
+    coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁)
+
+`_max_safe_dt` omits `|Λ|`, so the true surface constraint is always stricter than the limit
+returned, by a factor that the model does not bound: `|Λ|` grows with wind speed (turbulent
+transfer) and with `T₁³` (longwave), while `ρ₁c₁dz₁` falls as the surface cell thins toward
+`column_dzmin`. Unlike the graded-grid error the face-based form fixed, this one is
+one-directional and unbounded, which is why a fixed fraction is the right instrument.
+
+0.8 was inherited from the MATLAB model without a stated derivation. Measured over a year of
+3-hourly synthetic forcing at `test_1` (2920 steps, spun-up column, `mp` defaults), the
+surface amplification factor `dt(G₁+|Λ|)/(ρ₁c₁dz₁)` actually realized was:
+
+    factor   median   p99     max     frac > 1   frac > 2   mean n_sub
+    0.8      0.196    0.609   0.955   0.0000     0.0        24.20
+    0.95     0.235    0.731   1.146   0.0065     0.0        20.20
+    1.0      0.235    0.731   1.146   0.0065     0.0        20.17
+
+At 0.8 the surface coefficient stays non-negative on every step of that year; at 0.95 it goes
+negative on 0.65% of them. Negative-but-above-`−1` is damped ringing rather than divergence —
+outright blow-up needs a factor above 2, which this column never reaches — so 0.8 is not the
+difference between a run that works and one that does not *here*. It is the margin that keeps
+the scheme monotone, and the cost of holding it is ~17% more sub-steps on this column
+(the divisor grid is coarse, so the two often land on the same `dt` regardless).
+
+Raising it toward 1.0 is therefore a defensible speed/monotonicity trade on a column resembling
+the one measured, not a free one, and 1.0 exactly is not safe in general: nothing in the model
+bounds `|Λ|/G₁`, so a thin, warm, windy surface cell can put the factor past 2. Runs that want
+the limit removed rather than tightened should use `ImplicitThermal`, which is unconditionally
+stable and does not consult this at all.
+"""
 const THERMAL_EXPLICIT_SAFETY_FACTOR = 0.8
 
 # --- ImplicitThermal solver ---
@@ -256,67 +268,79 @@ const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
 # on the quadratic path, so `weight` never leaves 1.0 and the update is exactly the Newton step.
 const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
 
-# One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
-# `dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
-# Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the
-# maintenance; one extra call per iteration is cheaper than the accuracy would be worth.
-#
-# Measured, not assumed: the two flux evaluations together are 0.70 s of a 15.2 s run, so this
-# call is not the cost of the implicit path. An analytic replacement that froze the stability
-# coefficients was tried and reverted — it overshoots the true derivative up to 10x and more than
-# doubles the iteration count. See `GEMB._surface_energy_balance_slope`.
-#
-# 1e-4 K rather than the usual `sqrt(eps)` ≈ 1.5e-8: the derivative only sets the convergence
-# *rate*, never the answer (see `_thermal_solve!(::ImplicitThermal, ...)`), so a step large
-# enough to stay well clear of cancellation in the flux difference beats a step chosen to
-# minimize truncation error. It also matches `T_MELT_SWITCH_TOLERANCE`, so the difference does
-# not straddle the melting-point latent-heat switch any more often than the melt switch does.
+"""
+    THERMAL_BC_DERIVATIVE_STEP
+
+One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
+`dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
+Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the
+maintenance; one extra call per iteration is cheaper than the accuracy would be worth.
+
+Measured, not assumed: the two flux evaluations together are 0.70 s of a 15.2 s run, so this
+call is not the cost of the implicit path. An analytic replacement that froze the stability
+coefficients was tried and reverted — it overshoots the true derivative up to 10x and more than
+doubles the iteration count. See `GEMB._surface_energy_balance_slope`.
+
+1e-4 K rather than the usual `sqrt(eps)` ≈ 1.5e-8: the derivative only sets the convergence
+*rate*, never the answer (see `_thermal_solve!(::ImplicitThermal, ...)`), so a step large
+enough to stay well clear of cancellation in the flux difference beats a step chosen to
+minimize truncation error. It also matches `T_MELT_SWITCH_TOLERANCE`, so the difference does
+not straddle the melting-point latent-heat switch any more often than the melt switch does.
+"""
 const THERMAL_BC_DERIVATIVE_STEP = 1e-4
 
-# Target sub-step [s] for `ImplicitThermal`, and the ceiling on the resulting count.
-#
-# Backward Euler is unconditionally stable, so this is an *accuracy* control, not a stability
-# one — the distinction that makes the implicit path cheap. The count is bounded by how fast the
-# surface forcing changes and is independent of the cell count, of `dz`, and of the stiffest
-# cell in the column, unlike the explicit path's ~29 sub-steps.
-#
-# Calibrated on a year of 3-hourly synthetic forcing (264-cell column, no spinup), comparing
-# whole-model output against a finely sub-stepped implicit run at 168.75 s. RMS temperature
-# differences [K] and the annual melt difference:
-#
-#   target [s]   n_sub(3h)   RMS surface   RMS interior   Δmelt      runtime
-#      5400          2          1.164         0.143       -2.46%      —
-#      2700          4          0.526         0.140       -1.66%      —
-#      1800          6          0.419         0.126       -1.19%     3.6 s
-#       900         12          0.341         0.141       -1.03%     5.8 s
-#       450         24          0.272         0.119       -0.08%     9.6 s
-#
-# Runtimes re-measured after the static condensation of the interior rows (2.67x); the accuracy
-# columns are unchanged by it, since it alters only how the same solve is factorized.
-#
-# 900 s is the knee: melt is within ~1% and the surface RMS has come down 3.4x from the
-# two-sub-step case, while halving again costs 79% more runtime for 0.07 K.
-#
-# The interior column is *not* converging in this table — it floors at ~0.13 K regardless of
-# target. That floor is not solver error: `manage_layer_thickness` merges and splits on discrete
-# thickness thresholds, so a single flipped merge changes the deep discretization by more than
-# the time integration does. Whole-model differencing therefore cannot resolve implicit accuracy
-# below ~0.13 K, which is why the surface RMS and the melt total are what this is tuned on.
+"""
+    THERMAL_IMPLICIT_DT_TARGET
+
+Target sub-step [s] for `ImplicitThermal`, and the ceiling on the resulting count.
+
+Backward Euler is unconditionally stable, so this is an *accuracy* control, not a stability
+one — the distinction that makes the implicit path cheap. The count is bounded by how fast the
+surface forcing changes and is independent of the cell count, of `dz`, and of the stiffest
+cell in the column, unlike the explicit path's ~29 sub-steps.
+
+Calibrated on a year of 3-hourly synthetic forcing (264-cell column, no spinup), comparing
+whole-model output against a finely sub-stepped implicit run at 168.75 s. RMS temperature
+differences [K] and the annual melt difference:
+
+  target [s]   n_sub(3h)   RMS surface   RMS interior   Δmelt      runtime
+     5400          2          1.164         0.143       -2.46%      —
+     2700          4          0.526         0.140       -1.66%      —
+     1800          6          0.419         0.126       -1.19%     3.6 s
+      900         12          0.341         0.141       -1.03%     5.8 s
+      450         24          0.272         0.119       -0.08%     9.6 s
+
+Runtimes re-measured after the static condensation of the interior rows (2.67x); the accuracy
+columns are unchanged by it, since it alters only how the same solve is factorized.
+
+900 s is the knee: melt is within ~1% and the surface RMS has come down 3.4x from the
+two-sub-step case, while halving again costs 79% more runtime for 0.07 K.
+
+The interior column is *not* converging in this table — it floors at ~0.13 K regardless of
+target. That floor is not solver error: `manage_layer_thickness` merges and splits on discrete
+thickness thresholds, so a single flipped merge changes the deep discretization by more than
+the time integration does. Whole-model differencing therefore cannot resolve implicit accuracy
+below ~0.13 K, which is why the surface RMS and the melt total are what this is tuned on.
+"""
 const THERMAL_IMPLICIT_DT_TARGET = 900.0
 const THERMAL_IMPLICIT_SUBSTEPS_MAX = 64
 
-# Diagnostic threshold, not a branch tolerance: how far above irreducible a cell must be for
-# `aquifer_diagnostics` to call it saturated. Deliberately loose, and expressed as a fraction
-# of the cell's pore space rather than as a mass.
-#
-# The reason is physical, not arithmetic. `calculate_melt` leaves a retaining cell at exactly
-# its irreducible water, but `calculate_density` then compacts the cell in the same timestep,
-# shrinking the pore space that irreducible water was computed against. The cell is left
-# marginally over-saturated — a genuine excess of order 1e-4 kg m-2 per timestep, which
-# accumulates between melt events. A mass threshold cannot separate that from a thin aquifer,
-# because the two differ in saturation, not in mass: compaction residue sits ~1e-7 of pore
-# space above irreducible, while ponded water reaches 1e-1 to 1. Nothing in the physics reads
-# this; it only decides what `aquifer_diagnostics` reports.
+"""
+    AQUIFER_TOLERANCE
+
+Diagnostic threshold, not a branch tolerance: how far above irreducible a cell must be for
+`aquifer_diagnostics` to call it saturated. Deliberately loose, and expressed as a fraction
+of the cell's pore space rather than as a mass.
+
+The reason is physical, not arithmetic. `calculate_melt` leaves a retaining cell at exactly
+its irreducible water, but `calculate_density` then compacts the cell in the same timestep,
+shrinking the pore space that irreducible water was computed against. The cell is left
+marginally over-saturated — a genuine excess of order 1e-4 kg m-2 per timestep, which
+accumulates between melt events. A mass threshold cannot separate that from a thin aquifer,
+because the two differ in saturation, not in mass: compaction residue sits ~1e-7 of pore
+space above irreducible, while ponded water reaches 1e-1 to 1. Nothing in the physics reads
+this; it only decides what `aquifer_diagnostics` reports.
+"""
 const AQUIFER_TOLERANCE = 1e-3         # standing-water detection [fraction of pore space]
 
 # The "not requested" sentinel for the opt-in per-cell viscosity diagnostic. A shared, empty

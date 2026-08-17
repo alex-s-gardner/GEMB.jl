@@ -18,6 +18,12 @@ makedocs(;
         "CFM Comparison" => "cfm_comparison.md",
         "IMAU-FDM Comparison" => "imau_fdm_comparison.md",
         "API Reference" => "api.md",
+        "Internals" => [
+            "Overview" => "internals.md",
+            "Physics" => "internals_physics.md",
+            "Grid and Column" => "internals_grid.md",
+            "Support" => "internals_support.md",
+        ],
     ],
 )
 

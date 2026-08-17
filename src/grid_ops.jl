@@ -360,21 +360,28 @@ end
     return n + 1
 end
 
-# Choose `i` such that cells `i` and `i+1` are merged.
-#
-# Candidates are ranked by two independent preferences, in this order:
-#
-#   1. **In band** — the combined thickness must still fit the lower cell's `dzmax`, so the
-#      merge is not immediately undone by next timestep's split test.
-#   2. **Deep** — at or below `column_ztop`, leaving the fine near-surface grid (where the
-#      radiation and turbulent-flux gradients live) alone where possible.
-#
-# Within each tier the thinnest pair wins. **In-band must dominate deep** — this ordering is
-# load-bearing. The deep region is a finite budget of cells while accumulation demands a merge
-# thousands of times per year, so a deep-first rule eventually has only the bottom pair to
-# offer and returns it every time, folding the deep column into one monolithic cell (measured:
-# 245 m of a 254.6 m column). In-band first self-corrects, since an over-thick bottom cell is
-# by construction out of band.
+"""
+    _select_merge_pair(dz, dzmax, n, mp) -> Union{Int,Nothing}
+
+Choose `i` such that cells `i` and `i+1` are merged. Returns `nothing` when no merge is
+available (`n < 3`, or only the surface cell would qualify).
+
+Candidates are ranked by two independent preferences, in this order:
+
+ 1. **In band** — the combined thickness must still fit the lower cell's `dzmax`, so the
+    merge is not immediately undone by next timestep's split test.
+ 2. **Deep** — at or below `column_ztop`, leaving the fine near-surface grid (where the
+    radiation and turbulent-flux gradients live) alone where possible.
+
+Within each tier the thinnest pair wins. **In-band must dominate deep** — this ordering is
+load-bearing. The deep region is a finite budget of cells while accumulation demands a merge
+thousands of times per year, so a deep-first rule eventually has only the bottom pair to
+offer and returns it every time, folding the deep column into one monolithic cell (measured:
+245 m of a 254.6 m column). In-band first self-corrects, since an over-thick bottom cell is
+by construction out of band.
+
+See also [`_select_split_cell`](@ref).
+"""
 function _select_merge_pair(dz::Vector{Float64}, dzmax::Vector{Float64},
                             n::Int, mp::ModelParameters)
     n < 3 && return nothing
@@ -397,9 +404,14 @@ function _select_merge_pair(dz::Vector{Float64}, dzmax::Vector{Float64},
     return best[2]
 end
 
-# Choose the cell to split. Ranked by the same two-tier scheme as `_select_merge_pair` (see
-# the note there on why in-band must dominate deep): both halves clearing `dzmin` outranks
-# being below `column_ztop`, and the thickest candidate wins within a tier.
+"""
+    _select_split_cell(dz, dzmin, n, mp) -> Union{Int,Nothing}
+
+Choose the cell to split, or `nothing` when none qualifies. Ranked by the same two-tier
+scheme as [`_select_merge_pair`](@ref) (see the note there on why in-band must dominate
+deep): both halves clearing `dzmin` outranks being below `column_ztop`, and the thickest
+candidate wins within a tier.
+"""
 function _select_split_cell(dz::Vector{Float64}, dzmin::Vector{Float64},
                             n::Int, mp::ModelParameters)
     n < 2 && return nothing

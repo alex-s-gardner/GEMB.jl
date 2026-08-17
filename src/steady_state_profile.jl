@@ -236,6 +236,8 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     )
 end
 
+# `p` is a `DensificationCoeffs`, left unannotated because `calculate_density.jl`
+# (which defines it) is included after this file; `@inline` specializes regardless.
 """
     _march_density_step(p::DensificationCoeffs, ρ, z, b, ρi, dt, T) -> (z, ρ)
 
@@ -253,8 +255,6 @@ each caller: `steady_state_profile` derives it from a target *depth* advance (se
 [`_march_step_depth`](@ref)), while `steady_state_density` uses a fixed age step
 to reproduce the classic Herron & Langway discretization bit-for-bit.
 """
-# `p` is a `DensificationCoeffs`, left unannotated because `calculate_density.jl`
-# (which defines it) is included after this file; `@inline` specializes regardless.
 @inline function _march_density_step(p, ρ::Float64, z::Float64,
     b::Float64, ρi::Float64, dt::Float64, T::Float64)
 

@@ -10,6 +10,7 @@ CurrentModule = GEMB
 ModelParameters
 ClimateForcing
 ClimateForcingStep
+ClimateSummary
 AbstractThermalSolver
 ExplicitThermal
 ImplicitThermal
@@ -22,6 +23,10 @@ initialize_parameters
 initialize_forcing
 forcing_climatology
 initialize_profile
+initialize_climate_summary
+steady_state_profile
+steady_state_density
+fresh_snow_density
 ```
 
 ## Running the Model
@@ -37,6 +42,17 @@ gemb_spinup
 gemb_profile
 gemb_interp
 surface_timeseries
+firn_air_content
+close_off_age
+```
+
+## Plotting
+
+`gemb_plot_output` is exported from GEMB, but its methods live in a package extension
+that loads only once a Makie backend (`CairoMakie`, `GLMakie`, or `WGLMakie`) is present.
+
+```@docs
+gemb_plot_output
 ```
 
 ## GEMB_ClimateForcing Companion
@@ -111,6 +127,8 @@ cf_height_attributes
 ```@docs
 dz2z
 fast_divisors
+datetime2decyear
+decyear2datenum
 ```
 
 ## Index
