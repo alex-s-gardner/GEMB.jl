@@ -1,6 +1,7 @@
 """
     gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
-              n_target=length(state.dz), z_target=sum(state.dz))
+              n_target=length(state.dz), z_target=sum(state.dz),
+              thermal_workspace=ThermalWorkspace())
 
 Perform a single time-step of the GEMB model.
 Matches MATLAB's `gemb_core.m`.
@@ -13,9 +14,15 @@ timestep to change `dz`.
 
 Returns `(state, flux)` where `state` is the updated column state and
 `flux` contains energy/mass budget terms for output accumulation.
+
+`thermal_workspace` is the reusable scratch for the thermal solve (see
+[`ThermalWorkspace`](@ref)). The default allocates a fresh one per call; [`gemb`](@ref)
+passes one down so the buffers are grown once for the whole run. One workspace belongs to
+one column being stepped — give each concurrent thread its own.
 """
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
-    n_target::Int=length(state.dz), z_target::Float64=sum(state.dz))
+    n_target::Int=length(state.dz), z_target::Float64=sum(state.dz),
+    thermal_workspace::ThermalWorkspace=ThermalWorkspace())
     # Destructure state - arrays are mutated in-place by physics functions.
     # This is safe because gemb_driver rebinds state to new_state after each call.
     temperature = state.temperature
@@ -62,7 +69,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # 5. Calculate new temperature-depth profile and turbulent heat flux
     temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
-            shortwave_flux, cfs, mp, verbose)
+            shortwave_flux, cfs, mp, verbose, thermal_workspace)
 
     # 6. Change in thickness of top cell due to evaporation/condensation.
     #    Deposition (positive) is new mass at age 0, so it dilutes the surface cell's age;

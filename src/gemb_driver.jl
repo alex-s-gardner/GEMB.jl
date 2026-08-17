@@ -1,11 +1,19 @@
 """
-    gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters; verbose=false)
+    gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
+         verbose=false, thermal_workspace=ThermalWorkspace())
 
 Run the Glacier Energy and Mass Balance (GEMB) model.
 Matches MATLAB's `gemb.m`.
 
 Returns a DimStack containing time series of surface flux (monolevel)
 and vertical profiles at the specified output frequency.
+
+# Threading
+`profile`, `mp`, and `thermal_workspace` divide cleanly into what a run reads and what it
+writes. `mp` is an immutable description and holds no scratch, so a single `mp` can be read
+by any number of threads stepping columns concurrently. `thermal_workspace` is the mutable
+half: it is reused across timesteps within a run, so each concurrent run needs its own (the
+default gives every call a fresh one). See [`ThermalWorkspace`](@ref).
 
 # Provenance
 The output metadata records where the forcing came from (`dataset`, `latitude`,
@@ -25,7 +33,8 @@ carries `Conventions = "CF-1.11"` alongside the provenance above. See
 layer's attributes. Conformance is at the attribute level: GEMB.jl ships no NetCDF
 writer, so the attributes are there for whichever writer or plotting code consumes them.
 """
-function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters; verbose::Bool=false)
+function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
+    verbose::Bool=false, thermal_workspace::ThermalWorkspace=ThermalWorkspace())
     # Get time information
     time_dim = dims(climate_forcing.temperature_air, Ti)
     times = Vector{DateTime}(time_dim.val)
@@ -198,7 +207,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     # as-is: `ClimateForcing` is a `DimStack`, so `climate_forcing.temperature_air`
     # already infers to a concrete `DimVector`, and integer-indexing one is free
     # (measured indistinguishable from the bare `Vector`).
-    _gemb_time_loop!(output, state, model_parameters, mp, verbose,
+    _gemb_time_loop!(output, state, model_parameters, mp, verbose, thermal_workspace,
         times, output_times, profile_size, z_target, Float64(dt_int),
         climate_forcing.temperature_air,
         climate_forcing.pressure_air,
@@ -293,8 +302,9 @@ function _profile_provenance(profile::DimStack)
 end
 
 """
-    _gemb_time_loop!(output, state, model_parameters, mp, verbose, times,
-                     output_times, profile_size, z_target, dt_f, <forcing arrays/scalars>)
+    _gemb_time_loop!(output, state, model_parameters, mp, verbose, thermal_workspace,
+                     times, output_times, profile_size, z_target, dt_f,
+                     <forcing arrays/scalars>)
 
 Function-barrier inner loop for [`gemb`](@ref). Receives the forcing series as
 arguments so the compiler specializes on their concrete types instead of
@@ -305,6 +315,7 @@ re-dispatching every timestep. Mutates `output` in place.
 hold at every timestep boundary.
 """
 function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
+    thermal_workspace::ThermalWorkspace,
     times::Vector{DateTime}, output_times, profile_size::Int, z_target::Float64,
     dt_f::Float64,
     f_temperature_air::AbstractVector, f_pressure_air::AbstractVector,
@@ -435,7 +446,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
         state, flux = gemb_core(state, forcing_step, model_parameters, verbose;
-            n_target=profile_size, z_target=z_target)
+            n_target=profile_size, z_target=z_target,
+            thermal_workspace=thermal_workspace)
 
         # Sum total thickness
         thickness_added_total += flux.mass_added / density_ice

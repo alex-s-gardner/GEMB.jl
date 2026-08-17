@@ -14,6 +14,7 @@ ClimateSummary
 AbstractThermalSolver
 ExplicitThermal
 ImplicitThermal
+ThermalWorkspace
 ```
 
 ## Initialization

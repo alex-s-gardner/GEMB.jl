@@ -722,3 +722,115 @@ end
     # so any residual under-relaxation left by the damping would show up here as a drift.
     @test all(abs.(t1 .- 260.0) .< T_STEADY_DRIFT_MAX)
 end
+
+# ---------------------------------------------------------------------------------------
+# ThermalWorkspace: reusable scratch, held outside ModelParameters
+#
+# Both schemes draw their working arrays from a `ThermalWorkspace` and reuse them across
+# calls, so the buffers outlive a single solve. That trades allocation for the risk that a
+# later call reads a value the previous one left behind. Keeping the buffers out of the
+# solver — and so out of `mp` — is what lets one `mp` be read by many threads at once; these
+# pin both halves of that arrangement.
+# ---------------------------------------------------------------------------------------
+
+@testset "ThermalWorkspace: reuse cannot carry state between calls" begin
+    # The whole correctness argument for the shared buffers is that every entry is written
+    # before it is read, so a solve cannot see the previous solve's leftovers. Testing it
+    # directly: run column A, then B, then A again through *one* workspace. If any buffer
+    # entry were read before being written, A-after-B would differ from A-first.
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = _temperature_mp(108000000; thermal_solver=solver)
+        cfs = GEMB.ClimateForcingStep(
+            10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+            200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+        ws = ThermalWorkspace()
+        function solve(n)
+            dz, density, temperature, grain_radius = _implicit_column(n)
+            shortwave_flux = [200.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+            return GEMB.calculate_temperature(copy(temperature), dz, density, 0.0,
+                grain_radius, shortwave_flux, cfs, mp, true, ws)[1]
+        end
+
+        a_first = solve(40)
+        solve(25)                      # a shorter column, leaving longer buffers behind
+        a_again = solve(40)
+        @test a_first == a_again        # bit-for-bit, not approximate
+
+        # Same check in the other order: a long column after a short one must not read the
+        # tail the short call never touched.
+        b_first = solve(60)
+        solve(12)
+        @test b_first == solve(60)
+
+        # And a solve drawing on the reused workspace must match one on a fresh workspace,
+        # which is what the defaulted argument gives. Same physics either way.
+        dz, density, temperature, grain_radius = _implicit_column(40)
+        fresh = GEMB.calculate_temperature(copy(temperature), dz, density, 0.0,
+            grain_radius, [200.0 * exp(-3.0 * (i - 1)) for i in 1:40], cfs, mp, true)[1]
+        @test fresh == a_first
+    end
+end
+
+@testset "ThermalWorkspace: instances do not share buffers" begin
+    # One workspace per concurrent run is the documented rule, which is only workable if
+    # separate constructions get separate buffers — pin it, since the advice is worthless
+    # otherwise.
+    a, b = ThermalWorkspace(), ThermalWorkspace()
+    @test a.explicit.H !== b.explicit.H
+    @test a.implicit.rhs !== b.implicit.rhs
+    # The two schemes' buffer sets are distinct too, so switching `thermal_solver` on a
+    # reused workspace cannot alias.
+    @test a.explicit.H !== a.implicit.H
+    # A fresh workspace starts empty and is grown on first use, so construction is cheap and
+    # no column length is baked in at construction time.
+    @test isempty(ThermalWorkspace().explicit.H)
+    @test isempty(ThermalWorkspace().implicit.rhs)
+end
+
+@testset "ThermalWorkspace: one ModelParameters is shared across threads" begin
+    # The design property this whole arrangement exists for: `mp` is a pure description, so
+    # many threads can step columns concurrently against one `mp`, each with its own
+    # workspace. Run the same column serially and on all available threads and demand
+    # bit-identical results — a buffer reachable through `mp` would race and diverge here
+    # (and, on `nthreads() == 1`, this still checks that per-workspace runs agree).
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = _temperature_mp(108000000; thermal_solver=solver)   # one shared, immutable mp
+        cfs = GEMB.ClimateForcingStep(
+            10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+            200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+        # Differing column lengths so the threads resize their buffers to different sizes.
+        lengths = repeat([40, 25, 60, 12], 8)
+        run(n) = begin
+            dz, density, temperature, grain_radius = _implicit_column(n)
+            GEMB.calculate_temperature(copy(temperature), dz, density, 0.0, grain_radius,
+                [200.0 * exp(-3.0 * (i - 1)) for i in 1:n], cfs, mp, true,
+                ThermalWorkspace())[1]
+        end
+        expected = map(run, lengths)
+
+        threaded = Vector{Vector{Float64}}(undef, length(lengths))
+        Threads.@threads for i in eachindex(lengths)
+            threaded[i] = run(lengths[i])
+        end
+        @test threaded == expected
+    end
+end
+
+@testset "ThermalWorkspace: buffers grow but never shrink" begin
+    # `_resize_workspace!` only ever grows, so a long column followed by a short one leaves
+    # the buffers long. Callers index by the column length, never by `length(buffer)`, which
+    # is what makes that safe; this documents the behaviour so a future `resize!` down (which
+    # would churn) is a deliberate change rather than an accident.
+    ws = GEMB._ExplicitWorkspace()
+    GEMB._resize_workspace!(ws, 40)
+    @test length(ws.H) == 40
+    GEMB._resize_workspace!(ws, 10)
+    @test length(ws.H) == 40        # unchanged: shrinking is not a thing it does
+    GEMB._resize_workspace!(ws, 100)
+    @test length(ws.H) == 100
+    @test all(length(b) == 100 for b in GEMB._workspace_buffers(ws))
+end
