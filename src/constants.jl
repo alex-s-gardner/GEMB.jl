@@ -94,12 +94,43 @@ const DENSITY_NEW_SNOW_FAUSTO_A = 362.1
 const DENSITY_NEW_SNOW_FAUSTO_B = 2.78
 const DENSITY_NEW_SNOW_FAUSTO_CONSTANT = 315.0
 
+# Fresh-snow density coefficients for `new_snow_method = :Pahaut` — Pahaut (1975) as
+# implemented in Crocus, via Lafaysse et al. (2026) eq. 35 (their `:V12` option):
+# `max(50, 109 + 6·(T_air - CtoK) + 26·√U)`, with `T_air` [K] and `U` [m s-1] both
+# instantaneous. Alpine seasonal snow rather than a polar ice sheet, so much lighter than
+# the Fausto coefficients above over the same temperature range. The floor is published.
+const DENSITY_NEW_SNOW_PAHAUT_A = 109.0
+const DENSITY_NEW_SNOW_PAHAUT_B = 6.0
+const DENSITY_NEW_SNOW_PAHAUT_C = 26.0
+const DENSITY_NEW_SNOW_PAHAUT_MIN = 50.0
+
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
 # (`_seb_annual_melt`), which blends between the dry-snow and ice values.
 const Z0_SNOW_DRY = 0.00012  # 0.12 mm, dry snow [m]
 const Z0_SNOW_WET = 0.0013   # 1.3 mm, wet snow [m]
 const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
+
+# Bound on the Monin-Obukhov stability parameter `ζ = z/L` in the unstable branch of
+# `_turbulent_heat_flux`. Not from any of the papers cited there: it guards a numerical
+# limit of the bulk formulation rather than adjusting the physics.
+#
+# `ζ` is diagnosed from the bulk Richardson number, which carries `wind_speed^-2`. At the
+# `min_wind_speed = 0.01 m s-1` floor over a melting surface under very cold air the
+# synthetic forcing reaches `Ri ≈ -7.3e5`, i.e. `ζ ≈ -4.9e5`. That is not a stability
+# regime — it is the wind floor showing through — and Monin-Obukhov theory has no
+# observational support anywhere near it (Högström's fits span `|ζ| <~ 2`). Left
+# unbounded, `Ψ_h(ζ)` grows past `log(z_T/z_Q)` and the transfer coefficient
+# `coefHT = logHT - Ψ_h` crosses zero, so the flux diverges and then changes sign; that
+# is what produced a NaN albedo before this bound existed.
+#
+# -100 is two orders of magnitude beyond the calibration range, so it never binds in
+# physically meaningful conditions, and it keeps `coefM` and `coefHT` positive for every
+# roughness GEMB uses (at `ζ = -100`, `Ψ_m = 4.51` and `Ψ_h = 5.73`, against
+# `logHT >= 8.29` for the roughest surface, `Z0_ICE`). Bounding `ζ` rather than clamping
+# the coefficients keeps the fluxes a continuous, monotone function of `T_surface`, which
+# the implicit solver's Newton iteration needs.
+const ZETA_UNSTABLE_MIN = -100.0
 
 # How close to `density_ice` counts as "firn has become ice" when sizing the initial
 # column. Densification laws approach ice *asymptotically*, so no finite depth ever
@@ -153,6 +184,37 @@ const DT_MIN_WARN = 1e-4
 # column still conserves energy exactly, only the surface balance is left slightly unsatisfied.
 const THERMAL_IMPLICIT_T_TOLERANCE = 1e-10
 const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
+
+# Smallest damping weight the surface-row Newton iteration will apply to its own step.
+#
+# Fourteau et al. (2026) Sect. 3.1.3 notes that Newton's method "is not globally convergent" and
+# pairs its fixed iteration cap with a fallback rather than accepting whatever the cap returns.
+# GEMB needs the same guard for the same structural reason, but *not* their remedy: theirs is
+# adaptive timestep halving, driven by the corner points of a regularized water-retention curve
+# that GEMB (a bucket scheme, with no matric potential) does not have.
+#
+# What GEMB's iteration actually does when it fails was measured over a year of 3-hourly
+# synthetic forcing, 3.77M sub-step solves. 39% of solves reached the 20-iteration cap
+# unconverged, and tracing the iterates shows why: they are **limit cycles**, not divergence —
+# 2-cycles and 3-cycles of amplitude ~0.02 K (median; p90 0.105 K, max 2.7 K), many of them
+# straddling 273.15 K, i.e. chattering across the LV/LS latent-heat switch and the emissivity
+# melt switch held outside the loop. Sub-step halving was implemented first and rejected on the
+# measurement: it reduces the residual 26x (0.46 K to 0.017 K median) but converges almost
+# nothing, because the cycle is set by a discontinuity in the residual, not by the step size —
+# failures persisted at the maximum halving depth with mean depth 5.34 of 6.
+#
+# Damping addresses the measured mode directly: the weight is halved whenever a step fails to
+# shrink, which contracts a cycle onto its own mean. It cut non-convergence 44x, from 1,480,242
+# solves to 33,771 (0.9% of solves), at no measurable runtime cost (5.44 s against 5.42 s), and
+# without a fallback path that would have to be maintained.
+#
+# The floor stops the weight underflowing to zero, which would freeze the iterate and report the
+# initial guess as the answer. 2^-10 is ~1e-3: ten halvings is already more than the 20-iteration
+# cap can consume, so this is a guard rather than a tuned value.
+#
+# Converged solves are bit-identical to the undamped iteration: the residual falls monotonically
+# on the quadratic path, so `weight` never leaves 1.0 and the update is exactly the Newton step.
+const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
 
 # One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
 # `dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the

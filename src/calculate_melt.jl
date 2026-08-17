@@ -45,6 +45,56 @@ would make lowering the flow criterion silently change retention too.
 end
 
 """
+    remove_melt!(mp, M, density, dz, i, melt_i) -> dz_cell [m]
+
+Take `melt_i` [kg m-2] of ice out of cell `i` and return the cell's thickness afterwards, the
+value every downstream pore-space expression in the percolation loop of
+[`calculate_melt`](@ref) is written against.
+
+Which of the cell's two geometric variables absorbs the loss is `mp.melt_geometry`:
+
+- `:thickness` (the default) — density is held fixed and the thickness shrinks to
+  `M/ρ`. This is Crocus's treatment (D'Amboise et al., 2017) and GEMB's historical behaviour.
+- `:density` — the thickness is held fixed at `dz[i]` and `density[i]` is lowered to `M/dz`.
+  This is SNOWPACK's treatment (Bartelt and Lehning, 2002) and the one Fourteau et al. (2026)
+  Sect. 2.3 argues is physically correct: melting occurs *within* the snow microstructure,
+  removing ice from the pore walls rather than collapsing the layer, and the observed high
+  density of wet snow is better attributed to the low viscosity of wet snow under overburden —
+  a densification process — than to melt-driven thinning.
+
+`:density` also removes an asymmetry. Refreezing in this loop is already at constant
+thickness (it fills pore space, `density[i] = M[i]/dz_0`), so under `:thickness` a melt-refreeze
+cycle that restores a cell's mass does not restore its geometry, while under `:density` it does.
+
+Both settings conserve mass — only the (`dz`, `ρ`) split of the same `M` differs — so neither
+affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end of
+[`calculate_melt`](@ref), which is why this returns the thickness rather than writing it.
+
+# References
+- Fourteau, K., Brondex, J., Cancès, C., and Dumont, M. (2026). Numerical strategies for
+  representing Richards' equation and its couplings in snowpack models. *Geosci. Model Dev.*,
+  19, 3193–3212. Sect. 2.3.
+- Bartelt, P. and Lehning, M. (2002). A physical SNOWPACK model for the Swiss avalanche
+  warning: Part I. *Cold Reg. Sci. Technol.*, 35, 123–145.
+"""
+@inline function remove_melt!(mp::ModelParameters, M::Vector{Float64},
+    density::Vector{Float64}, dz::Vector{Float64}, i::Int, melt_i::Float64)
+    M[i] = M[i] - melt_i
+    if mp.melt_geometry === :density
+        # A cell that melted out entirely keeps its density, and reports zero thickness. The
+        # cell is deleted on its mass at the end of `calculate_melt`, so the retained density
+        # is never read as a physical value — but it must not be set to zero, because
+        # `irreducible_saturation` divides by density and `melt[i] = min(melt_max, M[i])`
+        # makes `M[i] == 0` reachable. Zero thickness gives zero pore space, which is what
+        # `:thickness` computes for the same cell (`M/ρ = 0`), so the two agree here.
+        M[i] <= WATER_TOLERANCE && return 0.0
+        density[i] = M[i] / dz[i]
+        return dz[i]
+    end
+    return M[i] / density[i]
+end
+
+"""
     calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, rain, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
@@ -355,24 +405,23 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             elseif (density[i] >= (mp.density_ice - D_TOLERANCE)) ||
                    ((density[i] >= d_phc - D_TOLERANCE) && (ice_depth > ice_layer_dzmin + D_TOLERANCE))
 
-                M[i] = M[i] - melt[i]
-                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
+                dz_0 = remove_melt!(mp, M, density, dz, i, melt[i])
+                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * dz_0
                 water_delta[i] = max(min(melt_input, water_irr - water[i]), -water[i])
                 runoff[i] = max(0.0, melt_input - water_delta[i])
 
             # check if no energy to refreeze meltwater
             elseif abs(freeze_max[i]) < D_TOLERANCE
 
-                M[i] = M[i] - melt[i]
-                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
+                dz_0 = remove_melt!(mp, M, density, dz, i, melt[i])
+                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * dz_0
                 water_delta[i] = max(min(melt_input, water_irr - water[i]), -1 * water[i])
                 flux_dn[i+1] = max(0.0, melt_input - water_delta[i])
                 runoff[i] = 0.0
 
             # some or all meltwater refreezes
             else
-                M[i] = M[i] - melt[i]
-                dz_0 = M[i] / density[i]
+                dz_0 = remove_melt!(mp, M, density, dz, i, melt[i])
                 d_max = (mp.density_ice - density[i]) * dz_0
                 freeze1 = min(min(melt_input, d_max), freeze_max[i])
                 M[i] = M[i] + freeze1

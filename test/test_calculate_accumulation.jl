@@ -444,3 +444,98 @@ end
 
     @test GEMB.validate_parameters(mp_fit) === nothing
 end
+
+@testset "Pahaut new snow density" begin
+    _mp(method) = GEMB.ModelParameters(
+        new_snow_method=method,
+        column_dzmin=0.05,
+        density_ice=917.0,
+        albedo_snow=0.85,
+        albedo_method=:GardnerSharp,
+        rain_temperature_threshold=273.15,
+    )
+    mp_pahaut = _mp(:Pahaut)
+
+    # Pahaut (1975) as Crocus implements it, via Lafaysse et al. (2026) eq. 35. Written out
+    # independently of the implementation, in the paper's own form.
+    rho0_pahaut(T, U) = max(50.0, 109.0 + 6.0 * (T - 273.15) + 26.0 * sqrt(U))
+
+    # Reads both instantaneous arguments — the fifth (air temperature) and the sixth (wind
+    # speed) — and ignores all three climatological means.
+    for T in (243.15, 253.15, 263.15, 273.15), U in (0.0, 1.0, 5.0, 12.0)
+        @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, T, U) == rho0_pahaut(T, U)
+    end
+
+    # Two published reference points, computed by hand from eq. 35.
+    @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 273.15, 0.0) ≈ 109.0 rtol = 1e-14
+    # T = -10 C, U = 4 m/s: 109 - 60 + 52 = 101
+    @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 263.15, 4.0) ≈ 101.0 rtol = 1e-14
+
+    # Monotone increasing in both arguments, which is the physical content of the fit:
+    # warmer snowfall gives denser crystals, and wind fragments them.
+    ρ_T = [GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, T, 8.0) for T in 258.0:2.0:273.15]
+    @test all(diff(ρ_T) .> 0)
+    ρ_U = [GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 270.0, U) for U in 0.0:1.0:15.0]
+    @test all(diff(ρ_U) .> 0)
+
+    # The published 50 kg m-3 floor binds in cold, calm air and nowhere warmer.
+    @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 250.0, 0.0) == 50.0
+    @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 200.0, 0.0) == 50.0
+    @test GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 3.0, 273.15, 0.0) > 50.0
+
+    # With neither instantaneous argument it falls back to the climatological means, which is
+    # what `steady_state_profile` relies on for a well-defined ρ₀.
+    @test GEMB.fresh_snow_density(mp_pahaut, 265.0, 200.0, 4.0) == rho0_pahaut(265.0, 4.0)
+
+    # Every method that does not read the sixth argument must be bit-identical with and
+    # without it, so adding it cannot move an existing run.
+    for method in (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit,
+                   :Kaspers, :KuipersMunneke)
+        mp = _mp(method)
+        @test GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0, 250.0) ===
+              GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0, 250.0, 11.0)
+    end
+
+    # Much lighter than the polar fits over their common range: alpine snowfall is warmer,
+    # wetter, and far less wind-packed than a katabatic-scoured ice-sheet surface. This is
+    # the reason the option exists, so it is pinned rather than left implicit.
+    ρ_pahaut = GEMB.fresh_snow_density(mp_pahaut, 260.0, 200.0, 5.0, 263.15, 5.0)
+    ρ_fausto = GEMB.fresh_snow_density(_mp(:FaustoFit), 260.0, 200.0, 5.0, 263.15, 5.0)
+    @test ρ_pahaut < ρ_fausto
+    @test ρ_pahaut ≈ 107.14 atol = 0.01
+    @test ρ_fausto ≈ 334.30 atol = 0.01
+
+    # Through `calculate_accumulation`: the new cell takes the instantaneous forcing's
+    # density, and `dz = mass/density` follows from it.
+    function _fresh_cell(mp; temperature_air, wind_speed)
+        n = 5
+        cfs = _make_accum_cfs(precipitation=50.0, temperature_air=temperature_air,
+            wind_speed=wind_speed, precipitation_mean=200.0, temperature_air_mean=260.0,
+            wind_speed_mean=3.0)
+        return GEMB.calculate_accumulation(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), cfs, mp, false)
+    end
+
+    (_, dz_a, dens_a, _, re_a, gdn_a, gsp_a, _, _) =
+        _fresh_cell(mp_pahaut; temperature_air=268.0, wind_speed=6.0)
+    @test dens_a[1] ≈ rho0_pahaut(268.0, 6.0) rtol = 1e-14
+    @test dz_a[1] ≈ 50.0 / dens_a[1] rtol = 1e-14
+
+    # Wind, not just temperature, must reach the call site — the sixth argument is new, and
+    # passing the climatological mean by mistake would be invisible without this.
+    (_, _, dens_b, _, _, _, _, _, _) =
+        _fresh_cell(mp_pahaut; temperature_air=268.0, wind_speed=12.0)
+    @test dens_b[1] > dens_a[1]
+    @test dens_b[1] ≈ rho0_pahaut(268.0, 12.0) rtol = 1e-14
+
+    # `:Pahaut` takes the Crocus wind-dependent grain branch, being the fresh-snow density
+    # Crocus itself pairs those properties with.
+    (_, _, _, _, re_c, gdn_c, gsp_c, _, _) =
+        _fresh_cell(_mp(:Fausto); temperature_air=268.0, wind_speed=6.0)
+    @test gdn_a[1] == gdn_c[1]
+    @test gsp_a[1] == gsp_c[1]
+    @test re_a[1] == re_c[1]
+    @test gdn_a[1] != GEMB.GDN_NEW_SNOW   # so the test above has teeth
+
+    @test GEMB.validate_parameters(mp_pahaut) === nothing
+end

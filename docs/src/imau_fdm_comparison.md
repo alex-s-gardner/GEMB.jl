@@ -242,6 +242,18 @@ path is 2.4× *slower* on a well-conditioned column (5.75 s vs 2.44 s over a yea
 3-hourly forcing); its value is that its cost is independent of the stiffest cell.
 See [the CFM page](cfm_comparison.md) for the full measurements.
 
+Both of the choices this section turns on were independently arrived at by Fourteau et
+al. (2024), whose framework for coupling a melting-surface energy balance to a
+finite-volume heat equation was published while this comparison was open. Their
+Newton-with-Schur-complement (their eqs. 11–13, and Appendix B, which notes the
+reduction applies to models of GEMB's class) is the same construction as the Newton
+solve on a single scalar after static condensation described above, derived
+independently. Their Sect. 6.4 also quantifies what IMAU-FDM's prescribed Dirichlet
+surface temperature costs: a spurious energy flux of −14.5 W m⁻² for a melting glacier
+surface, changing ablation by 40%. That is the strongest available argument for the
+flux-based application GEMB uses on both paths. See
+[Surface energy balance numerics](index.md#Surface-energy-balance-numerics).
+
 ## Deliberately not adopted
 
 ### `numSnow` window-averaged temperature
@@ -304,3 +316,6 @@ covers the ice-dynamic coupling it does model.
   implementation in SURFEX v7.2. *Geoscientific Model Development*, 5, 773–791.
 - Versteeg, H. K., and Malalasekera, W. (2007). *An Introduction to Computational
   Fluid Dynamics: The Finite Volume Method*, 2nd ed. Pearson.
+- Fourteau, K., Brondex, J., Brun, F., and Dumont, M. (2024). A novel numerical
+  implementation for the surface energy budget of melting snowpacks and glaciers.
+  *Geoscientific Model Development*, 17, 1903–1929.

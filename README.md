@@ -143,8 +143,9 @@ rationale is in its `ModelParameters` docstring (`?ModelParameters`).
 | `mean_temperature_method` | **`:arithmetic`**, `:arrhenius` | How the mean annual temperature driving densification is averaged |
 | `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`; `:Marbouty` stops dead at 400 kg m⁻³ |
 | `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre; RetMIP §5.4 ties the flat 0.07 to under-retention in the percolation zone |
+| `melt_geometry` | **`:thickness`**, `:density` | What melting does to a cell: shrink `dz` at fixed density (Crocus) or lower density at fixed `dz` (SNOWPACK). Only `:density` makes a melt–refreeze cycle return the geometry as well as the mass |
 | `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models run instantaneous. The other two give a drainage timescale and permit firn aquifers |
-| `new_snow_method` | **`:Constant350`**, `:Constant315`, `:Constant150`, `:Fausto`, `:FaustoFit`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350. `:Constant*` are bare constants; `:Fausto`/`:FaustoFit` also select the Crocus wind-dependent fresh-grain properties |
+| `new_snow_method` | **`:Constant350`**, `:Constant315`, `:Constant150`, `:Fausto`, `:FaustoFit`, `:Pahaut`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350. `:Constant*` are bare constants; `:Fausto`/`:FaustoFit`/`:Pahaut` also select the Crocus wind-dependent fresh-grain properties. `:Pahaut` is the only alpine-seasonal-snow fit — prefer it for temperate and mid-latitude glaciers, where the polar fits run too dense |
 | `albedo_method` | **`:GardnerSharp`**, `:BrunLefebre`, `:GreuellKonzelmann`, `:None` | |
 | `emissivity_method` | **`:uniform`**, `:grain_radius_threshold`, `:grain_radius_w_threshold` | |
 | `initialize_age` | **`:steady_state`**, `:zero` | |
@@ -366,6 +367,23 @@ defect exists.
   RetMIP Sect. 5.4 attributes part of the multi-model under-retention in the percolation zone
   to the flat 0.07. Retention is zero at and above pore close-off, as in CFM. `:constant`
   remains available and holds `water_irreducible_saturation` at every density.
+- **Added `melt_geometry`** — what melting does to a cell's geometry. `:thickness` (the
+  default, and what GEMB has always done, as in Crocus) holds density fixed and shrinks `dz`;
+  `:density` holds `dz` fixed and lowers density, as SNOWPACK does and as Fourteau et al.
+  (2026) Sect. 2.3 argues for, on the grounds that the phase change occurs within the
+  microstructure and that the high density of wet snow is better explained by its low
+  viscosity under overburden. Refreezing is at constant thickness under both, so only
+  `:density` returns a cell's geometry along with its mass over a melt–refreeze cycle.
+  Affects melting cells' `dz` and `density`, and through the irreducible-retention capacity
+  their water and runoff. Defaults leave output unchanged.
+- **The implicit thermal solver's surface-row Newton iteration is damped.** The step weight is
+  halved whenever a step fails to shrink, and the least-residual iterate is retained if the
+  iteration cap is reached. Measured over a year of 3-hourly synthetic forcing (3.77M sub-step
+  solves), 39% of solves previously reached the cap without converging, in limit cycles of
+  ~0.02 K median amplitude straddling the latent-heat switch at 273.15 K rather than in
+  divergence; damping cuts that to 0.9% at no measurable runtime cost. Affects
+  `thermal_solver = ImplicitThermal()` only (−0.02% melt on the benchmark run);
+  `ExplicitThermal` and converging solves are bit-identical.
 - **Added `impermeable_density` and `impermeable_thickness`**, exposing the bucket scheme's
   density-based impermeability criterion, which MATLAB hardcodes as `830` kg m⁻³ and `0.1` m in
   `calculate_melt`. Water is routed to runoff at a contiguous run of cells at or above
@@ -585,6 +603,53 @@ What this changes for consumers of the output:
   whole-run cost 8.83 s → 7.91 s (1.12×) on the synthetic benchmark. Not selectable: the old
   form is removed, not retained as an option. Output moves — melt sum shifts by 0.34% over 32
   years of synthetic forcing.
+- **The unstable-branch integrated stability functions are corrected.** Paulson's (1970) closed
+  forms take the *inverse* profile function as their argument, so the exponents are positive:
+  `x_m = (1 − 19ζ)^¼` inverts Högström's (1988) `φ_m = (1 − 19ζ)^−¼`, and likewise
+  `x_h = (1 − 11.6ζ)^½`. Both were previously evaluated with the exponent of `φ` itself, and
+  `Ψ_h` additionally carried Högström's `0.95` `κ_H/κ_M` ratio inside the integral and took
+  `x_h` to the second power. Since `Ψ(ζ) = ∫₀^ζ (1 − φ)/z dz` must vanish at neutral, the `0.95`
+  put `Ψ_h(0) = −0.0999` rather than 0, leaving the turbulent fluxes discontinuous exactly where
+  `T_surface` crosses `T_air` — the crossing the implicit solver's Newton iteration converges
+  onto, and where a jump can leave the surface energy balance with no solution in `T_surface`
+  (Fourteau et al., 2024, *Geosci. Model Dev.* 17, 1903–1929, Appendix D, who move their own
+  branch point to `Ri_b = 0` for this reason). The ratio belongs to the neutral transfer
+  coefficient, not inside the integral. Both branches — this one and the stable Beljaars &
+  Holtslag (1991) eqs. 28 and 32, which was already correct — are now checked against the
+  definition directly, by numerically integrating their own published `φ` and comparing to the
+  closed form, agreeing to 6 decimal places at `ζ = ±0.01, ±0.1, ±1, ±5`. Not selectable: the
+  old form was wrong, not a variant. Output moves, in the direction the correction implies: the
+  corrected `Ψ` is larger, so `coef = log(z/z₀) − Ψ` shrinks and unstable-side exchange
+  strengthens, giving more turbulent cooling and more sublimation at a melting surface. Over 32
+  years of synthetic forcing melt falls 5.3% and runoff 6.0%.
+- **Added `new_snow_method = :Pahaut`** — `max(50, 109 + 6·(T_air − CtoK) + 26·√U)`, Pahaut
+  (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35 (SURFEX/Crocus v3.0.2,
+  their `:V12` option). Not present in MATLAB. The only fresh-snow option here fitted to
+  *alpine seasonal snow* rather than to a polar ice sheet, and the only one carrying a wind
+  dependence at the instantaneous timestep — both dependencies physical: warmer snowfall gives
+  denser crystals, and wind fragments them before and during deposition. It is much lighter
+  than the polar fits over their common range (at −10 °C and 5 m s⁻¹, 107 kg m⁻³ against
+  `:FaustoFit`'s 334), because alpine snowfall is warmer, wetter, and far less wind-packed than
+  the katabatic-scoured surfaces the Greenland and Antarctic fits were regressed on. Prefer it
+  for temperate and mid-latitude glaciers, where the polar fits overestimate fresh-snow
+  density, suppressing the albedo of new snow and speeding its burial. The published 50 kg m⁻³
+  floor is retained; it binds below about −10 °C in calm air. Like `:Fausto`/`:FaustoFit` it
+  also selects the Crocus wind-dependent fresh-grain properties, those being what Crocus itself
+  pairs this density with. Opt-in: the `:Constant350` default is unchanged and every existing
+  run is bit-identical. `fresh_snow_density` gained a sixth argument (instantaneous wind speed)
+  for it, defaulting to the climatological mean so the steady-state initial guess is unaffected.
+- **`ζ` is bounded below by −100 on the unstable branch.** A numerical guard on the bulk
+  formulation, not a change to the physics: `ζ` is diagnosed from the bulk Richardson number,
+  which carries `wind_speed⁻²`, so at the `min_wind_speed = 0.01 m s⁻¹` floor over a melting
+  surface under very cold air the synthetic forcing reaches `ζ ≈ −4.9e5`. That is the wind floor
+  showing through rather than a stability regime, and Monin-Obukhov theory has no observational
+  support anywhere near it (Högström's fits span `|ζ| ≲ 2`). Because the corrected `Ψ` grows
+  without bound where the previous incorrect form happened to saturate, an unbounded `ζ` drives
+  `Ψ_h` past `log(z_T/z_Q)`, so `coefHT` crosses zero and the flux diverges and then changes
+  sign. −100 is two orders of magnitude beyond the calibration range, so it never binds in
+  physically meaningful conditions, and it keeps the transfer coefficients positive for every
+  roughness GEMB uses. Bounding `ζ` rather than clamping the coefficients keeps the fluxes a
+  continuous, monotone function of `T_surface`, which the implicit solver needs.
 
 ## Prerequisites
 
