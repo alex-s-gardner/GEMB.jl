@@ -41,20 +41,70 @@ output = gemb(profile_spunup, cf, mp)
 
 ## Examine results:
 
-# Get a 2D matrix of grid cell centers:
+# `output` is a DimStack: monolevel series over `Ti`, profile fields over `Z x Ti`.
+# Displaying it in the REPL lists every layer with its dimensions and size, and the
+# run's CF global attributes:
+#
+# julia> output
+# ┌ 11688×222 DimStack ┐
+# ├────────────────────┴──────────────────────────────────────────────────── dims ┐
+#   ↓ Ti Sampled{DateTime} [1994-01-01T21:00:00, …, 2025-12-31T21:00:00] ForwardOrdered Irregular Points,
+#   → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+# ├───────────────────────────────────────────────────────────────────── layers ┤
+#   :melt                     eltype: Float64 dims: Ti size: 11688
+#   :runoff                   eltype: Float64 dims: Ti size: 11688
+#   :refreeze                 eltype: Float64 dims: Ti size: 11688
+#   ⋮
+#   :temperature              eltype: Float64 dims: Z, Ti size: 222×11688
+#   :density                  eltype: Float64 dims: Z, Ti size: 222×11688
+#   :age                      eltype: Float64 dims: Z, Ti size: 222×11688
+# ├─────────────────────────────────────────────────────────────────── metadata ┤
+#   "source" => "GEMB.jl", "Conventions" => "CF-1.11", "spinup_performed" => true, …
+# └───────────────────────────────────────────────────────────────────────────────┘
+
+# Each layer carries its own CF metadata, so a value always travels with its units:
+#
+# julia> output[:melt]
+# ┌ 11688-element DimArray{Float64, 1} melt ┐
+# ├─────────────────────────────────────────┴─────────────────────────────── dims ┐
+#   ↓ Ti Sampled{DateTime} [1994-01-01T21:00:00, …, 2025-12-31T21:00:00] ForwardOrdered Irregular Points
+# ├─────────────────────────────────────────────────────────────────── metadata ┤
+#   "units" => "kg m-2", "cell_methods" => "time: sum",
+#   "long_name" => "meltwater produced", "standard_name" => "surface_snow_melt_amount"
+# └───────────────────────────────────────────────────────────────────────────────┘
+#  1994-01-01T21:00:00  11.4082
+#  ⋮
+#  2025-12-31T21:00:00   0.0
+
+# Get a 2D matrix of grid cell centers (Z is a cell index, not a depth):
 z_center = dz2z(parent(output[:dz]))
+
+# Pull the surface row of any profile field:
+#
+# julia> surface_timeseries(output[:temperature])
+#  1994-01-01T21:00:00  272.615
+#  1994-01-02T21:00:00  272.934
+#  ⋮
+#  2025-12-31T21:00:00  261.531
+T_surface = surface_timeseries(output[:temperature])
 
 # Print summary statistics:
 println("Simulation complete!")
 println("  Time steps: ", size(output[:melt], 1))
 println("  Profile layers: ", size(output[:temperature], 1))
 println("  Mean surface albedo: ", round(mean(parent(output[:albedo_broadband])), digits=3))
+println("  Mean surface temperature: ", round(mean(parent(T_surface)), digits=2), " K")
 println("  Total melt: ", round(sum(parent(output[:melt])), digits=2), " kg/m²")
 println("  Total runoff: ", round(sum(parent(output[:runoff])), digits=2), " kg/m²")
+println("  Oldest firn in column: ",
+        round(maximum(parent(output[:age])) / 365.25, digits=1), " yr")
 
-# To visualize results, use a plotting package:
-# using CairoMakie
-# fig = Figure()
-# ax = Axis(fig[1,1], ylabel="Column height (m)")
-# heatmap!(ax, 1:size(z_center,2), z_center[:,1], parent(output[:temperature]))
-# display(fig)
+## Plot the run:
+
+# gemb_plot_output draws the whole run as a diagnostic dashboard: profile fields as
+# heatmaps on the left, scalar time series on the right, sharing a linked time axis.
+# It lives in a package extension, so it needs a Makie backend loaded first.
+using CairoMakie
+fig = gemb_plot_output(output; depthlims=(-10, 0))
+save("gemb_diagnostics.png", fig; px_per_unit=2)
+display(fig)
