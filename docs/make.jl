@@ -1,22 +1,23 @@
 using GEMB
 using Documenter
+using DocumenterVitepress
 
 DocMeta.setdocmeta!(GEMB, :DocTestSetup, :(using GEMB); recursive=true)
 
 makedocs(;
     modules=[GEMB],
     authors="Alex Gardner <alex.s.gardner@jpl.nasa.gov> and contributors",
+    repo="https://github.com/alex-s-gardner/GEMB.jl",
     sitename="GEMB.jl",
-    format=Documenter.HTML(;
-        canonical="https://alex-s-gardner.github.io/GEMB.jl",
-        edit_link="main",
-        assets=String[],
+    format=DocumenterVitepress.MarkdownVitepress(;
+        repo="https://github.com/alex-s-gardner/GEMB.jl",
+        devbranch="main",
+        devurl="dev",
     ),
     pages=[
         "Home" => "index.md",
+        "Model Architecture" => "architecture.md",
         "Variable Reference" => "variables.md",
-        "CFM Comparison" => "cfm_comparison.md",
-        "IMAU-FDM Comparison" => "imau_fdm_comparison.md",
         "API Reference" => "api.md",
         "Internals" => [
             "Overview" => "internals.md",
@@ -29,5 +30,8 @@ makedocs(;
 
 deploydocs(;
     repo="github.com/alex-s-gardner/GEMB.jl",
+    target="build",   # DocumenterVitepress writes the rendered site here
+    branch="gh-pages",
     devbranch="main",
+    push_preview=true,
 )

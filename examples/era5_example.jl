@@ -82,3 +82,34 @@ rh = vapor_pressure_to_relative_humidity(
 println("Simulation complete!")
 println("  Mean surface albedo: ", round(mean(parent(output[:albedo_broadband])), digits=3))
 println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content])), digits=3), " m")
+
+# In the REPL, `output` shows every layer, its dimensions, and the run's CF attributes:
+#
+# julia> output
+# ┌ 11688×222 DimStack ┐
+# ├────────────────────┴──────────────────────────────────────────────────── dims ┐
+#   ↓ Ti Sampled{DateTime} [2020-01-01T21:00:00, …, 2020-12-31T21:00:00] ForwardOrdered Irregular Points,
+#   → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+# ├───────────────────────────────────────────────────────────────────── layers ┤
+#   :melt              eltype: Float64 dims: Ti size: 11688
+#   :firn_air_content  eltype: Float64 dims: Ti size: 11688
+#   ⋮
+#   :temperature       eltype: Float64 dims: Z, Ti size: 222×11688
+#   :age               eltype: Float64 dims: Z, Ti size: 222×11688
+# ├─────────────────────────────────────────────────────────────────── metadata ┤
+#   "dataset" => "era5land", "Conventions" => "CF-1.11", "spinup_performed" => true, …
+# └───────────────────────────────────────────────────────────────────────────────┘
+#
+# and any single layer travels with its units:
+#
+# julia> output[:firn_air_content]
+#   "units" => "m", "cell_methods" => "time: mean",
+#   "long_name" => "firn air content"
+
+## Plot the run
+
+# gemb_plot_output needs a Makie backend loaded (it lives in a package extension).
+using CairoMakie
+fig = gemb_plot_output(output; depthlims=(-20, 0))
+save("era5_diagnostics.png", fig; px_per_unit=2)
+display(fig)

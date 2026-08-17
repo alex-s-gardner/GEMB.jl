@@ -1,321 +1,328 @@
+```@raw html
+---
+layout: home
+
+hero:
+  name: "GEMB.jl"
+  text: "Glacier Energy and Mass Balance"
+  tagline: A column model of firn processes for cryosphere research — surface energy balance, densification, meltwater percolation, and grain metamorphism in one vertical column.
+  image:
+    src: /logo.png
+    alt: GEMB.jl
+  actions:
+    - theme: brand
+      text: Quick Start
+      link: /#Quick-Start
+    - theme: alt
+      text: Model Architecture
+      link: /architecture
+    - theme: alt
+      text: API Reference
+      link: /api
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/alex-s-gardner/GEMB.jl
+
+features:
+  - title: Surface energy balance
+    details: Radiative and turbulent fluxes via Monin-Obukhov similarity theory, coupled to subsurface conduction and solved together.
+  - title: Firn densification
+    details: Compaction from snow through firn to close-off ice, with a choice of empirical and semi-empirical schemes.
+  - title: Meltwater and refreezing
+    details: Tipping-bucket percolation with irreducible retention, ice-slab blocking, and optional delayed runoff for firn aquifers.
+  - title: Grain metamorphism and age
+    details: Effective grain radius, dendricity, and sphericity evolve with the snow; every cell carries a mass-weighted age.
+---
+```
+
 # GEMB.jl
 
 ```@meta
 CurrentModule = GEMB
 ```
 
-The **Glacier Energy and Mass Balance (GEMB)** model is a column model of firn processes for cryosphere research. GEMB.jl is a Julia implementation of the GEMB model, providing high-performance simulation of snow, firn, and ice evolution driven by surface climate forcing.
+GEMB.jl is a Julia implementation of the **Glacier Energy and Mass Balance** model (GEMB —
+the "B" is silent), a one-dimensional model of the surface energy balance and vertical firn
+evolution of glaciers and ice sheets. It couples atmospheric forcing to subsurface
+thermodynamics and densification physics to resolve temperature, density, water content,
+grain properties, and layer age through the column.
 
-GEMB models grain growth, albedo, radiative transfer, thermodynamics, accumulation, melt, layer management, and densification within a vertical snow/firn/ice column.
+GEMB is a column model of intermediate complexity with no horizontal communication,
+prioritizing computational efficiency to accommodate the multi-millennial spin-ups required
+to initialize deep firn columns. It is used for interpreting satellite altimetry, firn and
+ice-core studies, surface mass balance inversion, and uncertainty quantification.
+
+A complete description of version 1.0 of the model is given in
+[Gardner et al., 2023](https://doi.org/10.5194/gmd-16-2277-2023):
+
+> Gardner, A. S., Schlegel, N.-J., and Larour, E.: Glacier Energy and Mass Balance (GEMB): a
+> model of firn processes for cryosphere research, *Geoscientific Model Development*, 16,
+> 2277–2302, [https://doi.org/10.5194/gmd-16-2277-2023](https://doi.org/10.5194/gmd-16-2277-2023), 2023.
+
+GEMB.jl is the reference implementation and is developed independently. It began as a
+translation of an earlier MATLAB version; since v2.0.0 its physics, defaults, and numerics
+are set on their own merits — against the published literature and against the
+[Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) and
+[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM). The
+[MATLAB version](https://github.com/alex-s-gardner/GEMB) is maintained separately and the
+two are no longer expected to agree numerically.
 
 ## Installation
 
-GEMB.jl can be installed from the Julia package manager:
+GEMB.jl is **not yet registered** in the Julia General registry. Install it from GitHub by URL:
 
 ```julia
 using Pkg
-Pkg.add("GEMB")
+Pkg.add(url="https://github.com/alex-s-gardner/GEMB.jl")
 ```
 
-Or in the Pkg REPL (press `]`):
+Climate forcing generation lives in the companion package
+[GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl), also
+unregistered and also installed by URL. It is optional — GEMB consumes any conforming
+`DimStack` — but it is what the examples below use:
 
-```
-pkg> add GEMB
+```julia
+Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 ```
 
 ## Quick Start
 
-Using GEMB requires four basic steps:
+Running GEMB takes four steps:
 
-1. **Define Climate Forcing** -- Use [`initialize_forcing`](@ref) to create forcing from time series data, `simulate_climate_forcing` (from GEMB_ClimateForcing.jl) to generate synthetic test data, or use [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) to download ERA5-Land data.
-2. **Define Model Parameters** -- Use [`initialize_parameters`](@ref) to set and validate model configuration (densification model, albedo method, grid geometry, etc.). It builds and checks a [`ModelParameters`](@ref).
-3. **Initialize a Column** -- Use [`initialize_profile`](@ref) to create an initial profile of temperature, density, grid spacing, and other column properties.
-4. **Run GEMB** -- Pass the profile, climate forcing, and model parameters to the [`gemb`](@ref) function.
+1. **Define climate forcing** — [`initialize_forcing`](@ref) converts a `DimStack` of
+   meteorological time series into a [`ClimateForcing`](@ref).
+2. **Define model parameters** — [`initialize_parameters`](@ref) builds and validates a
+   [`ModelParameters`](@ref).
+3. **Initialize the firn/ice column** — [`initialize_profile`](@ref) sets up the vertical
+   profile of temperature, density, grain properties, and age.
+4. **Run GEMB** — [`gemb`](@ref) loops over the forcing and returns a `DimStack`.
 
 ```julia
 using GEMB
 using GEMB_ClimateForcing
 
-# Initialize model parameters
-mp = initialize_parameters(output_frequency=:daily)
-
-# Generate synthetic climate forcing (3-hour time step) — returns DimStack
-ds = simulate_climate_forcing("test_1", 3)
-cf = GEMB.initialize_forcing(ds)   # convert to ClimateForcing
-
-# Initialize the firn column profile
-profile = initialize_profile(mp, cf)
-
-# Run GEMB
-output = gemb(profile, cf, mp)
-```
-
-The output is a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) containing time series of surface fluxes and vertical profiles at the specified output frequency.
-
-## Using Real Climate Data
-
-For production runs with ERA5-Land reanalysis data, use the [GEMB_ClimateForcing.jl](https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl) package which automatically downloads and formats climate data:
-
-```julia
-# Install GEMB_ClimateForcing (first time only)
-using Pkg
-Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
-
-using GEMB
-using GEMB_ClimateForcing
-
-# Download ERA5-Land data for Summit Station, Greenland
-forcing_data = climate_forcing(:era5land, 72.58, -38.48;
-                                time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
-                                token=ENV["CDS_API_KEY"])
-
-# Convert to GEMB ClimateForcing (core initialize_forcing method)
-cf = GEMB.initialize_forcing(forcing_data)
-
-# Run GEMB
-mp = initialize_parameters(output_frequency=:daily)
-profile = initialize_profile(mp, cf)
-output = gemb(profile, cf, mp)
-```
-
-GEMB_ClimateForcing produces a `DimStack`, which the core `initialize_forcing(::DimStack)` method converts to GEMB's `ClimateForcing` type. `GEMB_ClimateForcing` is an optional companion package — one producer of a conforming DimStack.
-
-## Spinup
-
-For research applications, the column should be spun up to a quasi-steady state before running simulations with transient forcing. Use [`gemb_spinup`](@ref) to repeat the forcing over multiple cycles:
-
-```julia
-using GEMB
-
-using GEMB_ClimateForcing
-
-mp = initialize_parameters(output_frequency=:last)
-
-# Generate synthetic climate forcing (returns DimStack)
+# 1. Climate forcing: synthetic 3-hourly series (a DimStack) → ClimateForcing
 ds = simulate_climate_forcing("test_1", 3)
 cf = GEMB.initialize_forcing(ds)
 
-# Create a single-year climatological average for spinup
-cf_clim = forcing_climatology(cf)
+# 2. Model parameters
+mp = initialize_parameters(output_frequency=:daily)
 
-# Initialize the column and spin up
-profile = initialize_profile(mp, cf_clim)
-spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=5,
-                              convergence_delta_density=0.01)
+# 3. Initialize the firn/ice column
+profile = initialize_profile(mp, cf)
 
-# Convergence is judged on the column-mean density. Two tests are available, and
-# when both are given both must hold: `convergence_delta_density` bounds the change
-# between consecutive cycles, while `convergence_drift_density` bounds the trend —
-# the least-squares slope of column-mean density against cycle over the trailing
-# `drift_window` cycles [kg m⁻³ per cycle]. The trend test is the stricter claim: a
-# column creeping steadily at just under the delta tolerance passes the step test
-# while still densifying.
-spun_up_profile = gemb_spinup(profile, cf_clim, mp; max_iterations=200,
-                              convergence_delta_density=0.01,
-                              convergence_drift_density=0.005)
-
-# The spun-up profile carries provenance: which climatology years were averaged
-# and how the spinup converged (`metadata` is re-exported from DimensionalData).
-metadata(spun_up_profile)   # (spinup_cycles=…, spinup_converged=…, climatology_n_years=…, …)
-
-# Now run with transient forcing
-mp_run = initialize_parameters(output_frequency=:daily)
-output = gemb(spun_up_profile, cf, mp_run)
-
-# That provenance propagates onto the output. A profile run without spinup
-# instead records `spinup_performed => false`.
-metadata(output)
+# 4. Run
+output = gemb(profile, cf, mp)
 ```
 
-## Model Architecture
+## What the output looks like
 
-After climate forcing, model parameters, and the initial state of the column are defined, the `gemb` function calls `gemb_core` for each time step of the climate forcing. At each time step, `gemb_core` calls a series of physics functions that update the column grain size, albedo, shortwave radiation, temperature, accumulation, meltwater, and density. The `manage_layer_thickness` function merges and splits layers to keep thicknesses within their configured bounds and to hold the layer count fixed; total column depth is pinned separately at the end of each time step.
+[`gemb`](@ref) returns a
+[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack`: 27 monolevel
+time series over `Ti`, and 8 profile fields over `Z × Ti`. In the REPL:
 
-### Physics Modules
+```julia-repl
+julia> output
+┌ 11688×222 DimStack ┐
+├────────────────────┴─────────────────────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{Dates.DateTime} [DateTime("1994-01-01T21:00:00"), …, DateTime("2025-12-31T21:00:00")] ForwardOrdered Irregular Points,
+  → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+├────────────────────────────────────────────────────────────────────────────────── layers ┤
+  :melt                          eltype: Float64 dims: Ti size: 11688
+  :runoff                        eltype: Float64 dims: Ti size: 11688
+  :refreeze                      eltype: Float64 dims: Ti size: 11688
+  :evaporation_condensation      eltype: Float64 dims: Ti size: 11688
+  :shortwave_net                 eltype: Float64 dims: Ti size: 11688
+  :longwave_net                  eltype: Float64 dims: Ti size: 11688
+  :heat_flux_sensible            eltype: Float64 dims: Ti size: 11688
+  :heat_flux_latent              eltype: Float64 dims: Ti size: 11688
+  :heat_flux_basal               eltype: Float64 dims: Ti size: 11688
+  :albedo_broadband              eltype: Float64 dims: Ti size: 11688
+  :densification_from_compaction eltype: Float64 dims: Ti size: 11688
+  :densification_from_melt       eltype: Float64 dims: Ti size: 11688
+  :strain_thinning               eltype: Float64 dims: Ti size: 11688
+  :thickness_cumulative          eltype: Float64 dims: Ti size: 11688
+  :firn_air_content              eltype: Float64 dims: Ti size: 11688
+  :firn_air_content_10m          eltype: Float64 dims: Ti size: 11688
+  :firn_air_content_20m          eltype: Float64 dims: Ti size: 11688
+  :close_off_age                 eltype: Float64 dims: Ti size: 11688
+  :percolation_depth             eltype: Float64 dims: Ti size: 11688
+  :valid_profile_length          eltype: Int64   dims: Ti size: 11688
+  :ice_slab_thickness            eltype: Float64 dims: Ti size: 11688
+  :ice_slab_depth                eltype: Float64 dims: Ti size: 11688
+  :aquifer_thickness             eltype: Float64 dims: Ti size: 11688
+  :aquifer_depth                 eltype: Float64 dims: Ti size: 11688
+  :temperature_air               eltype: Float64 dims: Ti size: 11688
+  :precipitation                 eltype: Float64 dims: Ti size: 11688
+  :rain                          eltype: Float64 dims: Ti size: 11688
+  :temperature                   eltype: Float64 dims: Z, Ti size: 222×11688
+  :dz                            eltype: Float64 dims: Z, Ti size: 222×11688
+  :density                       eltype: Float64 dims: Z, Ti size: 222×11688
+  :water                         eltype: Float64 dims: Z, Ti size: 222×11688
+  :grain_radius                  eltype: Float64 dims: Z, Ti size: 222×11688
+  :grain_dendricity              eltype: Float64 dims: Z, Ti size: 222×11688
+  :grain_sphericity              eltype: Float64 dims: Z, Ti size: 222×11688
+  :age                           eltype: Float64 dims: Z, Ti size: 222×11688
+├──────────────────────────────────────────────────────────────────────────────── metadata ┤
+  Dict{String, Any} with 10 entries:
+  "latitude"         => -73.3307
+  "longitude"        => 290.625
+  "source"           => "GEMB.jl"
+  "dataset"          => "synthetic"
+  "spinup_performed" => false
+  "title"            => "GEMB (Glacier Energy and Mass Balance) point simulation output"
+  "Conventions"      => "CF-1.11"
+  ⋮
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-| Module | Description |
-|--------|-------------|
-| `calculate_grain_size` | Evolution of effective grain radius, dendricity, and sphericity |
-| `calculate_albedo` | Snow, firn, and ice albedo from grain radius, density, cloud amount |
-| `calculate_shortwave_radiation` | Vertical distribution of absorbed shortwave radiation |
-| `calculate_temperature` | Temperature profile from energy absorption and thermal diffusion |
-| `calculate_accumulation` | Precipitation and deposition added to the column |
-| `calculate_melt` | Meltwater production, pore water content, grid adjustment |
-| `calculate_density` | Snow/firn densification |
-| `manage_layer_thickness` | Layer splitting and merging to maintain grid constraints |
+Every layer is self-describing: it carries CF-style `units`, `long_name`, `cell_methods`, and
+a `standard_name` where a CF standard name applies exactly.
 
-### Meltwater percolation scheme
+```julia-repl
+julia> output[:melt]
+┌ 11688-element DimArray{Float64, 1} melt ┐
+├─────────────────────────────────────────┴────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{Dates.DateTime} [DateTime("1994-01-01T21:00:00"), …, DateTime("2025-12-31T21:00:00")] ForwardOrdered Irregular Points
+├──────────────────────────────────────────────────────────────────────────────── metadata ┤
+  Dict{String, String} with 5 entries:
+  "units"         => "kg m-2"
+  "cell_methods"  => "time: sum"
+  "long_name"     => "meltwater produced"
+  "standard_name" => "surface_snow_melt_amount"
+  "comment"       => "Column total, including bare-ice melt in the ablation regime."
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+ 1994-01-01T21:00:00  11.4082
+ ⋮
+ 2025-12-31T21:00:00   0.0
+```
 
-GEMB percolates meltwater with a tipping-bucket scheme: water moves cell by cell from the
-surface down, refreezing where cold content allows, retained up to the irreducible water
-content ([`irreducible_saturation`](@ref)), and routed to runoff at a contiguous run of cells
-at or above `impermeable_density` thicker than `impermeable_thickness`. There is no
-preferential-flow (heterogeneous, "piping") domain and no Richards-equation matrix flow, and
-none is planned.
+Index with `DimensionalData` keyword syntax, and pull the surface row of any profile field
+with [`surface_timeseries`](@ref):
 
-That is a deliberate choice, not a missing feature. RetMIP (Vandecrux et al., 2020)
-intercompared nine firn models at four Greenland sites and found that the three models with
-explicit deep or preferential percolation (CFM-Cr, CFM-KM, UppsalaUniDeepPerc) performed worse
-than the bucket schemes at three of the four sites — they infiltrated water too deeply and
-carried a warm bias in firn temperature at the dry-snow site (Summit) and both percolation
-sites (Dye-2 mean error +3.6 to +6.2 °C, KAN\_U +1.8 to +4.7 °C). At Dye-2 in 2016 the CFM
-models percolated to 10 m against 2.5 m observed by upward-looking radar, and built
-multi-metre near-surface ice slabs where none are observed. Their advantage was confined to
-the firn-aquifer site, where only the deep-percolation schemes recharged the aquifer at all.
-RetMIP's conclusion (their Sect. 5.2) is that until the physics of preferential flow in firn
-is better constrained by field and laboratory observation, the more complex schemes do not
-necessarily give better results than simple bucket schemes.
+```julia-repl
+julia> surface_timeseries(output[:temperature])
+┌ 11688-element DimArray{Float64, 1} ┐
+├────────────────────────────────────┴─────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{Dates.DateTime} [DateTime("1994-01-01T21:00:00"), …, DateTime("2025-12-31T21:00:00")] ForwardOrdered Irregular Points
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+ 1994-01-01T21:00:00  272.615
+ 1994-01-02T21:00:00  272.934
+ 1994-01-03T21:00:00  270.271
+ ⋮
+ 2025-12-31T21:00:00  261.531
 
-The levers RetMIP does identify for bucket schemes are *when* water is blocked and *how fast*
-it then leaves, not how deep it goes. Both are exposed:
+julia> output[:density][Z=1:5, Ti=At(DateTime(2020, 7, 1, 21))]   # top five cells
+julia> sum(output[:melt])                                          # column total [kg m-2]
+```
 
-**The impermeability criterion** — `impermeable_density` and `impermeable_thickness`. See
-[`calculate_melt`](@ref) and the physics notes in the README for the range the
-participating models spanned and how it maps onto their skill at the ice-slab site.
+`Z` is a **cell index, not a depth** — the grid is Lagrangian, so cells move with the firn.
+Convert with [`dz2z`](@ref), or regrid onto fixed depths with [`gemb_interp`](@ref).
 
-**The runoff timescale** — `runoff_method`, with `surface_slope` as the driving hydraulic
-gradient. Under the `:instantaneous` default blocked water leaves the
-column within the timestep and no cell can ever hold more than its irreducible water. The
-other two let it pond into the pore space above the barrier and drain laterally over a finite
-timescale:
+## Diagnostic plot
 
-| `runoff_method` | Runoff law | Reference |
-|---|---|---|
-| `:instantaneous` | All blocked water leaves within the timestep | The default; what both comparison models and all three RetMIP bucket lineages use |
-| `:ZuoOerlemans` | `drain = excess · min(1, Δt/τ)`, `τ = c₁ + c₂·exp(−c₃·S)` | Zuo and Oerlemans (1996) eqs. 21–22, coefficients via Langen et al. (2017) |
-| `:Darcy` | `drain = min(excess, ρ_w·Δt·K_sat·K_rel·S)` | Calonne et al. (2012) eq. 6 with van Genuchten (1980) / Yamaguchi et al. (2012) relative permeability |
+With a Makie backend loaded, [`gemb_plot_output`](@ref) draws the whole run — profile fields
+as heatmaps on the left, scalar time series on the right, on a shared time axis:
 
-This is where RetMIP's evidence actually points. The two models with the lowest firn-temperature
-error at the ice-slab site KAN\_U — DMIHH (−1.6 °C) and GEUS (+0.6 °C), against a spread
-reaching +4.7 °C — were both bucket schemes that *delay* runoff rather than models that
-percolate deeper; DMIHH uses the `:ZuoOerlemans` timescale and GEUS a Darcy flux to a virtual
-downslope neighbour. At the other end, DTU runs water off immediately and produced runoff
-unrealistic enough that RetMIP excluded it from their multi-model mean.
+```julia
+using CairoMakie
+fig = gemb_plot_output(output; depthlims=(-10, 0))
+save("gemb_diagnostics.png", fig)
+```
 
-Delayed runoff is also what makes saturated firn representable at all: with the hard
-irreducible clamp of `:instantaneous`, a saturated cell cannot exist, and RetMIP (their
-Sect. 5.4) note that models so constrained "are incapable of modeling actual aquifers" —
-the firn-aquifer site was dropped from their retention evaluation for exactly this reason.
-Aquifers form bottom-up under either delayed method, and the `aquifer_thickness` and
-`aquifer_depth` outputs report the resulting water table. Both are opt-in: they are inert at
-the `:instantaneous` default.
+![GEMB.jl diagnostic output](assets/gemb_output_example.png)
 
-### Surface energy balance numerics
+This is the output of `examples/synthetic_example.jl` — 32 years of synthetic forcing run from
+a column spun up to convergence first (see [Spinup](#Spinup) below), which is why firn air
+content settles into a repeating seasonal cycle instead of drifting through a cold-start
+transient. The banner records that provenance: version, forcing source, time span, cadence,
+spinup window and convergence, and the closed mass budget. Panels take their units from each
+layer's CF metadata, so a label cannot disagree with the data it draws.
 
-Three of GEMB's choices in coupling the surface energy balance to the subsurface heat equation
-are independently endorsed by Fourteau et al. (2024), who set out a finite-volume framework for
-exactly this coupling and test the alternatives against reference solutions. None of this
-required a code change; it is recorded because the reasoning behind each choice is otherwise
-only visible in the docstrings.
+## Spinup
 
-**The surface flux is applied as a flux, not as a Dirichlet temperature.** GEMB imposes the net
-surface energy balance as a flux on the top cell and lets its temperature follow. The alternative
-— forcing the surface temperature and letting the flux follow — is not conservative, and
-Fourteau et al. quantify the cost (their Sect. 6.4 and Fig. 14): the spurious energy flux it
-introduces is −14.5 W m⁻² (σ = 123.5) for a melting glacier surface and +0.34 W m⁻² (σ = 39) for
-a seasonal snowpack, changing simulated ablation by 40% and 8% respectively. GEMB's error here is
-structurally zero rather than small: the solve produces a predictor for the implicit face
-temperatures, which is then applied as one flux per face (`+F` to one cell, `−F` to its
-neighbour), so pairwise cancellation is exact and the column conserves energy to the last bit
-independently of the solve residual. This holds on both the explicit and implicit paths.
+For research applications the column should be spun up to a quasi-steady state before running
+transient forcing. [`forcing_climatology`](@ref) averages complete years into a one-year
+cycle, and [`gemb_spinup`](@ref) repeats it:
 
-**Face conductivity is the harmonic mean of the two cells'.** `1/(dz[i+1]/2K[i+1] + dz[i]/2K[i])`
-— the series resistance of the two half-cells, which is the exact flux for a piecewise-constant
-conductivity, where an arithmetic mean is not. This is Fourteau et al.'s eq. 6 (after Kadioglu et
-al., 2008), and a second independent citation for it after Lafaysse et al. (2026) eq. 90. It
-matters most where GEMB's grid is most graded and where conductivity contrasts are largest, which
-is the near-surface: a thin fresh-snow cell over dense firn.
+```julia
+mp = initialize_parameters(output_frequency=:last)
+cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
 
-**The surface temperature is not an independent unknown.** In Fourteau et al.'s taxonomy GEMB is
-a *Class 1* model — the energy balance is applied to the top control volume, and the surface
-temperature is diagnosed from it (`T_surface = min(CtoK, temperature[1])`) rather than carried as
-its own degree of freedom. This is the same class as SNTHERM, Crocus, CLM, and CryoGrid, and it
-is *coupled*: the surface energy balance and the subsurface conduction are solved together, which
-is what Class 2 skin-layer models (COSIPY, EBFM, SnowModel) give up in exchange for an explicit
-surface. Their proposed scheme has both, and on their coarser meshes Class 1 diverges from the
-reference where the coupled-explicit-surface scheme does not. GEMB's `column_dztop = 0.05 m` sits
-in the regime where that divergence appears in their Figs. 9 and 11, so an explicit surface
-degree of freedom — a third `AbstractThermalSolver` alongside `ExplicitThermal` and
-`ImplicitThermal`, which would leave existing runs bit-identical — remains a real option rather
-than a closed question. It is not implemented.
+profile = initialize_profile(mp, cf_clim)
+spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=200,
+                      convergence_delta_density=0.01,
+                      convergence_drift_density=0.005)
+```
 
-Their Appendix D is the reason the integrated stability functions had to be continuous at neutral
-stability: they move their own branch point to `Ri_b = 0` so that the surface energy balance stays
-a well-posed function of `T_surface`, which is precisely the crossing a Newton iteration converges
-onto. See the corresponding physics note in the README.
+Convergence is judged on column-mean density. Two tests are available, and when both are
+given both must hold: `convergence_delta_density` bounds the change between consecutive
+cycles, while `convergence_drift_density` bounds the *trend* — the least-squares slope of
+column-mean density against cycle over the trailing `drift_window` cycles. The trend test is
+the stricter claim: a column creeping steadily at just under the delta tolerance passes the
+step test while still densifying.
 
-## Output Variables
+The spun-up profile carries its provenance, and that provenance propagates onto the output of
+the transient run:
 
-The output `DimStack` contains monolevel (1D time series) and profile (2D depth-time) variables.
+```julia-repl
+julia> metadata(spun_up)
+(spinup_cycles = …, spinup_converged = …, climatology_n_years = …, …)
 
-Every layer carries CF-style metadata — `units`, `long_name`, `cell_methods`, and a
-`standard_name` where a CF standard name applies exactly — and the stack carries
-`Conventions = "CF-1.11"` alongside the run's provenance. The `cell_methods` column below
-is that attribute: it records how each value was reduced over the output interval, which
-is the difference between a per-interval total, a per-interval average, and a snapshot.
-The table lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes with
+julia> output = gemb(spun_up, cf, initialize_parameters(output_frequency=:daily));
+
+julia> metadata(output)["spinup_performed"]
+true
+```
+
+## Using real climate data
+
+For production runs, `GEMB_ClimateForcing` downloads and formats ERA5-Land reanalysis:
+
+```julia
+using GEMB, GEMB_ClimateForcing
+
+# Summit Station, Greenland
+forcing_data = climate_forcing(:era5land, 72.58, -38.48;
+                               time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
+                               token=ENV["CDS_API_KEY"])
+
+cf = GEMB.initialize_forcing(forcing_data)   # DimStack → ClimateForcing
+
+mp = initialize_parameters(output_frequency=:daily)
+profile = initialize_profile(mp, cf)
+output = gemb(profile, cf, mp)
+```
+
+A `DimStack` is GEMB's neutral, producer-agnostic forcing interface, and
+`initialize_forcing(::DimStack)` is a **core** method — always available, no extension
+required. It validates the required layers, a `DateTime`-indexed `Ti` dimension, and the
+required metadata. Any source that produces a conforming `DimStack` works;
+`GEMB_ClimateForcing` is one such producer.
+
+## Output variables
+
+The `Ti` monolevel series and `Z × Ti` profile fields are documented field by field, with
+units and `cell_methods`, in the [Variable Reference](@ref "GEMB variables"). The table
+itself lives in [`GEMB_CF_ATTRIBUTES`](@ref); read one layer's attributes with
 [`cf_attributes`](@ref).
 
-### Monolevel Outputs (dimensions: `Ti`)
-
-| Variable | Units | `cell_methods` | Description |
-|----------|-------|----------------|-------------|
-| `melt` | kg m⁻² | `time: sum` | Melt mass produced, including bare-ice melt |
-| `runoff` | kg m⁻² | `time: sum` | Meltwater leaving the column |
-| `refreeze` | kg m⁻² | `time: sum` | Meltwater refrozen within the column |
-| `evaporation_condensation` | kg m⁻² | `time: sum` | Net vapour mass exchange: condensation/deposition (+, mass gain) or evaporation/sublimation (−) |
-| `shortwave_net` | W m⁻² | `time: mean` | Net shortwave radiation, positive toward the surface |
-| `longwave_net` | W m⁻² | `time: mean` | Net longwave radiation, positive toward the surface |
-| `heat_flux_sensible` | W m⁻² | `time: mean` | Sensible heat flux, positive toward the surface |
-| `heat_flux_latent` | W m⁻² | `time: mean` | Latent heat flux, positive toward the surface |
-| `albedo_broadband` | 1 | `time: mean` | Broadband surface albedo |
-| `densification_from_compaction` | m | `time: sum` | Thickness lost to dry compaction |
-| `densification_from_melt` | m | `time: sum` | Thickness lost to melt and wet compaction |
-| `strain_thinning` | m | `time: sum` | Thickness lost to horizontal ice-dynamic strain (positive = thinning); zero unless `horizontal_strain_rate` is set |
-| `thickness_cumulative` | m | `time: mean` | Cumulative thickness change since the start of the run |
-| `firn_air_content` | m | `time: mean` | Total air height in the firn column |
-| `firn_air_content_10m` | m | `time: mean` | Air height in the top 10 m, the depth-limited form the firn-core literature reports |
-| `firn_air_content_20m` | m | `time: mean` | Air height in the top 20 m |
-| `percolation_depth` | m | `time: maximum` | Deepest the wetting front reached during the interval; comparable to upward-looking-radar estimates |
-| `ice_slab_thickness` | m | `time: point` | Total thickness of cells at or above `impermeable_density`, whether or not they block flow |
-| `ice_slab_depth` | m | `time: point` | Depth to the top of the shallowest flow-blocking ice slab; `NaN` when none qualifies |
-| `aquifer_thickness` | m | `time: point` | Total thickness of cells holding standing (super-irreducible) water; 0 unless `runoff_method` delays runoff |
-| `aquifer_depth` | m | `time: point` | Depth to the water table, i.e. the shallowest cell above irreducible saturation; `NaN` when the column holds no standing water |
-| `valid_profile_length` | 1 | `time: point` | Number of active vertical levels |
-| `temperature_air` | K | `time: mean` | Near-surface air temperature (forcing summary) |
-| `precipitation` | kg m⁻² | `time: sum` | Total precipitation (forcing summary) |
-| `rain` | kg m⁻² | `time: sum` | Liquid fraction of precipitation; snowfall is `precipitation - rain` |
-
-### Profile Outputs (dimensions: `Z x Ti`)
-
-All profile fields are instantaneous snapshots at the output time (`cell_methods = "time: point"`),
-top-justified with the surface at row 1. `Z` is a 1-based cell index, not a depth — recover
-cell-centre heights with `dz2z(output[:dz])`.
-
-| Variable | Units | Description |
-|----------|-------|-------------|
-| `temperature` | K | Layer temperature |
-| `dz` | m | Layer thickness |
-| `density` | kg m⁻³ | Layer bulk density |
-| `water` | kg m⁻² | Layer liquid (pore) water content |
-| `grain_radius` | mm | Effective grain radius |
-| `grain_dendricity` | 1 | Grain dendricity (0--1) |
-| `grain_sphericity` | 1 | Grain sphericity (0--1) |
-| `age` | d | Mass-weighted mean age of the cell's mass, from column initialization |
+Profile fields are instantaneous snapshots (`cell_methods = "time: point"`), top-justified
+with the surface at row 1: `temperature`, `dz`, `density`, `water`, `grain_radius`,
+`grain_dendricity`, `grain_sphericity`, and `age` — the mass-weighted mean age in decimal
+days of all mass in the cell, matrix plus pore water, measured from column initialization.
+Snowfall, rain, and vapour deposition enter at age 0; meltwater carries the age of the firn it
+melted from.
 
 ## Examples
 
-Example scripts are provided in the `examples/` directory:
+Runnable scripts are in the `examples/` directory:
 
-- **`synthetic_example.jl`**: Complete workflow using synthetic climate forcing (spinup + run)
-- **`era5_example.jl`**: Workflow using ERA5 reanalysis data (with data download instructions)
+- **`examples/synthetic_example.jl`** — complete workflow on synthetic forcing (spinup + run)
+- **`examples/era5_example.jl`** — the same against ERA5 reanalysis, with download instructions
 
-## Citation
+## Author information
 
-Please cite any use of GEMB as:
-
-> Gardner, A. S., Schlegel, N.-J., and Larour, E.: Glacier Energy and Mass Balance (GEMB): a model of firn processes for cryosphere research, Geosci. Model Dev., 16, 2277--2302, [https://doi.org/10.5194/gmd-16-2277-2023](https://doi.org/10.5194/gmd-16-2277-2023), 2023.
-
-## Author Information
-
-The Glacier Energy and Mass Balance (GEMB) model was created by Alex Gardner, with contributions from Nicole-Jeanne Schlegel and Chad Greene. The Julia implementation (GEMB.jl) is available at [https://github.com/alex-s-gardner/GEMB.jl](https://github.com/alex-s-gardner/GEMB.jl).
+GEMB was created by Alex Gardner, with contributions from Nicole-Jeanne Schlegel and Chad
+Greene. The Julia implementation is at
+[github.com/alex-s-gardner/GEMB.jl](https://github.com/alex-s-gardner/GEMB.jl).

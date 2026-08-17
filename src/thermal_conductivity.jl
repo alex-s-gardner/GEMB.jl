@@ -78,8 +78,8 @@ end
     _thermal_conductivity_ice(T) -> K [W m-1 K-1]
 
 Thermal conductivity of pure ice, `9.828*exp(-5.7e-3*T)` (Yen, 1981). Used both for the
-ρ >= density_ice branch and as the temperature scaling inside
-[`_thermal_conductivity_calonne2019`](@ref).
+ρ >= `density_ice` branch and as the temperature scaling inside the
+[`_thermal_conductivity_calonne2019`](@ref) blend.
 """
 @inline _thermal_conductivity_ice(T::Real) = 9.828 * exp(-5.7e-3 * T)
 

@@ -1,3 +1,5 @@
+<img src="docs/src/assets/logo.png" align="right" width="130" alt="GEMB.jl logo: a firn column of grains coarsening with depth, in the Julia colors">
+
 # GEMB.jl: Glacier Energy and Mass Balance Model
 
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://alex-s-gardner.github.io/GEMB.jl/dev/)
@@ -7,7 +9,7 @@
 
 GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance (GEMB, the "B" is silent) model - a comprehensive one-dimensional physical model designed to simulate the surface energy balance and vertical firn evolution of glaciers and ice sheets. It couples atmospheric forcing with subsurface thermodynamics and densification physics to resolve the evolution of temperature, density, water content, and grain properties over time.
 
-GEMB is a column model (no horizontal communication) of intermediate complexity, prioritizing computational efficiency to accommodate the multi-millennial spin-ups required for initializing deep firn columns. It is used for interpreting satellite altimetry data, firn studies, surface mass balance inversion from satellite data, ice core studies, uncertainty quantification and model exploration in cryosphere research. A complete description of GEMB can be found in [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
+GEMB is a column model (no horizontal communication) of intermediate complexity, prioritizing computational efficiency to accommodate the multi-millennial spin-ups required for initializing deep firn columns. It is used for interpreting satellite altimetry data, firn studies, surface mass balance inversion from satellite data, ice core studies, uncertainty quantification and model exploration in cryosphere research. A complete description of version 1.0 of the model is given in [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
 
 GEMB.jl is the reference implementation of GEMB and is developed independently. It began as a translation of an earlier MATLAB version, and since v2.0.0 its physics, defaults, and numerics are set on their own merits — against the published literature and against the two open firn models with a comparable physics surface, the [Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) and [IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM). The [MATLAB version](https://github.com/alex-s-gardner/GEMB) is maintained separately and the two are no longer expected to agree numerically; where GEMB.jl's physics differs from an earlier form or from a published law it is recorded under [Physics notes](#physics-notes).
 
