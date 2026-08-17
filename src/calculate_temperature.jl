@@ -170,8 +170,11 @@ function _thermal_solve!(::ExplicitThermal,
     ## FIND STABLE dt (allocation-free)
     # The Von Neumann limit uses the pointwise heat capacity. Under `:CuffeyPaterson` this is
     # conservative: c_p < 2102 everywhere below the melting point, so the limit only shrinks.
+    # The safety factor is not slack against an imprecise limit — it covers the surface energy
+    # balance's own feedback on cell 1, which `_max_safe_dt` does not see. See
+    # `THERMAL_EXPLICIT_SAFETY_FACTOR`.
     max_safe_dt = _max_safe_dt(temperature, dz, density, K, mp)
-    dt = _find_dt_divisor(max_safe_dt * 0.8, mp.dt_divisors)
+    dt = _find_dt_divisor(max_safe_dt * mp.thermal_explicit_safety_factor, mp.dt_divisors)
 
     ## THERMAL DIFFUSION IN ENTHALPY FORM (Patankar 1980, Ch. 3&4)
     #
@@ -901,6 +904,16 @@ the correct limit is both sound and cheaper.
 Cell `m` is excluded: it is the Dirichlet reservoir, its enthalpy is never updated
 (`Q_sw[m] = 0`, no flux is drawn from it), so it imposes no stability constraint. The old
 form included it.
+
+!!! warning "Diffusion only — the surface cell is under-constrained"
+    Cell 1 also carries the explicitly-evaluated surface energy balance, whose slope
+    `Λ = dQ_sfc/dT₁ ≤ 0` enters its own-temperature coefficient exactly as a face conductance
+    does: `coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`. The `|Λ|` is not included here, so the value
+    returned is always an *over*estimate of the true surface constraint, by a factor the model
+    does not bound. That is what `mp.thermal_explicit_safety_factor` covers, and why it is
+    not simply slack — see [`THERMAL_EXPLICIT_SAFETY_FACTOR`](@ref) for the measured margin.
+    Folding `|Λ|` in here directly is the open option; it would need the surface state, which
+    this function deliberately does not take.
 
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4 (positivity of the

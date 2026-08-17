@@ -41,6 +41,7 @@ August 2026.
 | Dual-domain preferential flow | **gap, deferred by decision** | see below |
 | Darcy lateral drainage | **have**, both, same parameter set | `src/hydrology.jl`, cross-checked against CFM's `hydrconducsat_Calonne` |
 | Ponding / impermeable-layer runoff | **have**, both, independently identical defaults | see below |
+| Percolation ordering within a cell | **open question, not adopted** | see below |
 | Liquid water in thermal conductivity | **gap, deferred** | needs a hot-loop signature change |
 | Liquid water in cell heat capacity | **not applicable** | architecturally incompatible; see below |
 | **Numerics** | | |
@@ -225,6 +226,31 @@ docstring already justifies bucket-only, citing RetMIP
 print "still in development" and only engage after a hardcoded model year 1980.
 GEMB's `:Darcy` lateral-drainage rate law already shares CFM's van
 Genuchten/Yamaguchi/Calonne parameter set (`src/hydrology.jl`).
+
+### Percolation ordering within a cell — an open question, not adopted
+
+Lafaysse et al. (2026) §2.4.18 notes that a bucket scheme may compute the downward
+flux `Fᵢ` either *after* refreezing `rᵢ` (Crocus's order, and GEMB's) or *before*
+it, treating ice layers as impermeable first (Fourteau et al. 2024, "meant to avoid
+liquid water percolation through an entire glacier"). Neither is validated: Fourteau
+never tests the ordering — their §5 concedes their own bucket scheme runs all melt
+off without percolation — and Lafaysse hedges, flagging only "potential impacts on
+glaciers simulations".
+
+Note that Crocus itself has no sub-ice-density barrier at all: in its Algorithm 1 the
+only special case is `ρ = ρ_I`, and even there the excess grows the ice layer's
+thickness rather than being blocked. GEMB pairs Crocus's ordering with an
+`impermeable_density` criterion inherited from the MATLAB model, a combination
+neither upstream model has. That is what made the stale-density barrier test a defect
+rather than a choice, fixed by re-testing impermeability after refreeze.
+
+With that fixed, the two orderings are indistinguishable on GEMB's synthetic forcing:
+the re-test diverts water 14 times per run, and in every case the cell below was
+already a barrier, so the water ran off one cell deeper and the run totals are
+bit-identical. An option is therefore not added — the settings would differ only in
+code, not in output. Worth revisiting with real forcing at an ice-slab site (KAN_U,
+Dye-2), where lenses form *within* permeable firn rather than adjacent to existing
+ones, which is the regime in which the orderings can diverge.
 
 ### Firn air / gas transport and isotope diffusion
 

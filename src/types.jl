@@ -276,6 +276,12 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `0.5·ρ·c·dz²/K`, which is not conservative on a graded grid. See `_max_safe_dt`.
     # `ImplicitThermal` is unconditionally stable and never reads this.
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver
+    # Fraction of `_max_safe_dt` the explicit sub-step is allowed to use. `ExplicitThermal`
+    # only. 1.0 would run at the diffusive limit exactly; the default is below it because
+    # `_max_safe_dt` covers diffusion alone and the surface cell carries a second, unbounded
+    # feedback — see `THERMAL_EXPLICIT_SAFETY_FACTOR`, which documents what the margin is for
+    # and what was measured before choosing it.
+    thermal_explicit_safety_factor::Float64 = THERMAL_EXPLICIT_SAFETY_FACTOR
 end
 
 """
