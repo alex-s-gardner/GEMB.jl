@@ -26,6 +26,8 @@ examples/quick_benchmark.jl
 examples/time_test.jl
 examples/*.txt
 bench/*.txt
+# ...except the numerical baseline, which is only useful if it is shared.
+!bench/opt_bench_snapshot.txt
 
 # Reports (generated during development)
 CROSS_VALIDATION_SUMMARY.md
