@@ -57,25 +57,88 @@ Julia ≥ 1.11 is required. A Makie backend (CairoMakie, GLMakie, or WGLMakie) e
 
 ## Quick Start
 
+Download real forcing, spin the column up to a quasi-steady state, then run it transiently.
+This is the full research workflow — Summit Station, Greenland, on ERA5-Land:
+
 ```julia
 using GEMB
 using GEMB_ClimateForcing
+using Dates
 
-# Climate forcing: synthetic 3-hourly series (a DimStack) → ClimateForcing
-cf = GEMB.initialize_forcing(simulate_climate_forcing("test_1", 3))
+# 1. Climate forcing — download ERA5-Land from the CDS as a DimStack, then convert.
+#    Any conforming DimStack works; GEMB_ClimateForcing is one producer of them.
+forcing_data = climate_forcing(:era5land, 72.58, -38.48;
+                               time_range=(DateTime(2000, 1, 1), DateTime(2020, 12, 31)),
+                               token=ENV["CDS_API_KEY"])
+cf = GEMB.initialize_forcing(forcing_data)
 
-mp = initialize_parameters(output_frequency=:daily)   # parameters, validated at construction
-profile = initialize_profile(mp, cf)                  # the firn/ice column
-output = gemb(profile, cf, mp)                        # returns a DimStack
+# 2. Model parameters, validated at construction
+mp = initialize_parameters(output_frequency=:daily)
 
-T_surface = surface_timeseries(output[:temperature])
+# 3. Spin up on a one-year climatology of the forcing. Deep firn columns need this:
+#    a cold start spends decades drifting before the density profile is meaningful.
+cf_spinup = forcing_climatology(cf)
+profile = initialize_profile(mp, cf_spinup)        # grid is sized to this climate
+profile = gemb_spinup(profile, cf_spinup, mp; max_iterations=200,
+                      convergence_delta_density=0.01)
+
+# 4. Run the transient forcing from the spun-up column
+output = gemb(profile, cf, mp)
 ```
 
-For research applications, spin the column up to a quasi-steady state first with
-[`forcing_climatology`](https://alex-s-gardner.github.io/GEMB.jl/dev/#Spinup) and `gemb_spinup`.
+[`gemb`](https://alex-s-gardner.github.io/GEMB.jl/dev/api) returns a
+[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack` — 27 monolevel
+time series over `Ti`, and 8 profile fields over `Z × Ti`, every layer carrying its own CF
+metadata:
 
-Runnable scripts are in [`examples/`](examples): `synthetic_example.jl` (spinup and run on
-synthetic forcing) and `era5_example.jl` (the same against ERA5 reanalysis).
+```julia-repl
+julia> output
+┌ 7671×222 DimStack ┐
+├───────────────────┴──────────────────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{DateTime} [2000-01-01T21:00:00, …, 2020-12-31T21:00:00] ForwardOrdered Irregular Points,
+  → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+├────────────────────────────────────────────────────────────────────────────── layers ┤
+  :melt                  eltype: Float64 dims: Ti size: 7671
+  :runoff                eltype: Float64 dims: Ti size: 7671
+  :refreeze              eltype: Float64 dims: Ti size: 7671
+  :firn_air_content      eltype: Float64 dims: Ti size: 7671
+  ⋮
+  :temperature           eltype: Float64 dims: Z, Ti size: 222×7671
+  :density               eltype: Float64 dims: Z, Ti size: 222×7671
+  :grain_radius          eltype: Float64 dims: Z, Ti size: 222×7671
+  :age                   eltype: Float64 dims: Z, Ti size: 222×7671
+├──────────────────────────────────────────────────────────────────────────── metadata ┤
+  "dataset" => "era5land", "Conventions" => "CF-1.11", "spinup_performed" => true, …
+└──────────────────────────────────────────────────────────────────────────────────────┘
+
+julia> sum(output[:melt])                                # column total [kg m-2]
+
+julia> surface_timeseries(output[:temperature])           # surface row of a profile field
+
+julia> output[:density][Z=1:5, Ti=At(DateTime(2020, 7, 1, 21))]   # top five cells
+```
+
+`Z` is a **cell index, not a depth** — the grid is Lagrangian, so cells move with the firn.
+Convert with `dz2z`, or regrid onto fixed depths with `gemb_interp`.
+
+With a Makie backend loaded, `gemb_plot_output` draws the whole run — profile fields as
+heatmaps on the left, scalar time series on the right, on a shared time axis:
+
+```julia
+using CairoMakie
+fig = gemb_plot_output(output; depthlims=(-20, 0))
+save("gemb_diagnostics.png", fig; px_per_unit=2)
+```
+
+![GEMB.jl diagnostic output](docs/src/assets/gemb_output_example.png)
+
+Panels take their units from each layer's CF metadata, so a label cannot disagree with the
+data it draws. The banner records the run's provenance: version, forcing source, time span,
+cadence, spinup window and convergence, and the closed mass budget.
+
+Runnable scripts are in [`examples/`](examples): `synthetic_example.jl` (the same workflow on
+synthetic forcing, no CDS key needed) and `era5_example.jl` (the script above, with download
+instructions).
 
 ## Documentation
 
