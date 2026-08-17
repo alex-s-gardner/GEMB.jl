@@ -92,9 +92,10 @@ Full documentation is at **[alex-s-gardner.github.io/GEMB.jl](https://alex-s-gar
 
 ## Testing
 
-```julia
-using Pkg
-Pkg.test("GEMB")
+From a clone of this repository:
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
 Validation comes from four sources: closed-form checks where a scheme has an analytic
