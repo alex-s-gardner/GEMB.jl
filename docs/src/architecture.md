@@ -67,7 +67,10 @@ caught at validation. A third scheme is a new subtype plus one method, with no c
 to edit.
 
 **Immutable parameters.** [`ModelParameters`](@ref) is immutable; construct a new instance to
-change a setting.
+change a setting. It is also a pure *description*, holding no scratch of its own, so one `mp`
+can be read by any number of threads stepping columns concurrently. Reusable scratch lives
+separately, in a per-run [`ThermalWorkspace`](@ref) passed to [`gemb`](@ref); the workspace is
+the mutable half, and each concurrent run needs its own.
 
 **Conservation as a test.** With `verbose=true`, `gemb_core` validates mass and energy
 conservation every timestep.

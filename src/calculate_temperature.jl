@@ -1,5 +1,5 @@
 """
-    calculate_temperature(temperature, dz, density, water_surface, grain_radius, shortwave_flux, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    calculate_temperature(temperature, dz, density, water_surface, grain_radius, shortwave_flux, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool, workspace=ThermalWorkspace())
 
 Compute new temperature profile accounting for energy absorption and thermal diffusion.
 
@@ -14,6 +14,10 @@ Sub-time steps are determined by Von Neumann stability analysis.
 
 Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation)`.
 
+`workspace` supplies the solver's scratch buffers (see [`ThermalWorkspace`](@ref)). The default
+allocates a fresh one per call, which is convenient for a one-off call but allocates every time;
+`gemb` passes a single workspace down for the whole run.
+
 # References
 - Bougamont, M., et al. (2005). (Surface roughness).
 - Foken, T. (2008). Micrometeorology. (Roughness lengths).
@@ -23,7 +27,8 @@ Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, he
 function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water_surface::Float64,
     grain_radius::Vector{Float64}, shortwave_flux::Vector{Float64},
-    cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
+    workspace::ThermalWorkspace=ThermalWorkspace())
 
     # Note: temperature is modified in-place by the thermal solver.
 
@@ -84,7 +89,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
         heat_flux_basal_out, evaporation_condensation_out =
         _thermal_solve!(mp.thermal_solver, temperature, dz, density, K, shortwave_flux,
-            water_surface, grain_radius, sfc, cfs, mp, verbose)
+            water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
 
     return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, heat_flux_basal_out, evaporation_condensation_out
 end
@@ -132,11 +137,12 @@ invariants every scheme must honour.
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 3-4.
 """
-function _thermal_solve!(::ExplicitThermal,
+function _thermal_solve!(solver::ExplicitThermal,
     temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, K::Vector{Float64}, shortwave_flux::Vector{Float64},
     water_surface::Float64, grain_radius::Vector{Float64},
-    sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
+    workspace::ThermalWorkspace)
 
     m = length(density)
 
@@ -196,10 +202,15 @@ function _thermal_solve!(::ExplicitThermal,
     # J kg-1 that the inverse map wants. The `:constant` inverse is itself a division by
     # `c`, so that constant is folded into the same reciprocal and
     # `temperature_from_scaled_enthalpy` becomes the identity — no division on the inner loop.
-    M_inv = Vector{Float64}(undef, m)    # 1 / (cell mass * enthalpy scale)
-    H = Vector{Float64}(undef, m)        # cell enthalpy [J m-2] — carried across sub-steps
-    Q_sw = Vector{Float64}(undef, m)     # SW energy absorbed per sub-step [J m-2]
-    A_face = Vector{Float64}(undef, m - 1)  # face conductance * dt [J m-2 K-1]
+    # Buffers come from the caller's workspace and are reused across timesteps, so this allocates
+    # only on the first call (see `_resize_workspace!`). `A_face` needs `m-1` entries but is grown
+    # to `m` with the rest — one extra Float64 buys a single-length workspace, and the loops below
+    # bound on `m`, never on `length(A_face)`.
+    ws = _resize_workspace!(_solver_workspace(solver, workspace), m)
+    M_inv = ws.M_inv      # 1 / (cell mass * enthalpy scale)
+    H = ws.H              # cell enthalpy [J m-2] — carried across sub-steps
+    Q_sw = ws.Q_sw        # SW energy absorbed per sub-step [J m-2]
+    A_face = ws.A_face    # face conductance * dt [J m-2 K-1]
 
     h_scale = enthalpy_temperature_scale(mp)
     @inbounds for i in 1:m
@@ -595,11 +606,12 @@ one thin cell — while the implicit count does not move. That is the reason to 
 - Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces.
   *J. Appl. Meteorol.* 30, 327-341.
 """
-function _thermal_solve!(::ImplicitThermal,
+function _thermal_solve!(solver::ImplicitThermal,
     temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, K::Vector{Float64}, shortwave_flux::Vector{Float64},
     water_surface::Float64, grain_radius::Vector{Float64},
-    sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
+    workspace::ThermalWorkspace)
 
     m = length(density)
     n = m - 1                     # unknowns: cells 1 … m-1; cell m is the Dirichlet reservoir
@@ -612,13 +624,17 @@ function _thermal_solve!(::ImplicitThermal,
         THERMAL_IMPLICIT_SUBSTEPS_MAX)
     dt = cfs.dt / n_sub
 
-    M = Vector{Float64}(undef, n)         # cell mass [kg m-2]
-    H = Vector{Float64}(undef, n)         # cell enthalpy [J m-2] — the prognostic
-    Q_sw = Vector{Float64}(undef, n)      # SW absorbed per sub-step [J m-2]
-    A_face = Vector{Float64}(undef, n)    # face conductance * dt [J m-2 K-1]
-    rhs = Vector{Float64}(undef, n)       # right-hand side, then the Thomas solution
-    sup = Vector{Float64}(undef, n)       # eliminated superdiagonal
-    T_it = Vector{Float64}(undef, n)      # current Newton iterate
+    # Buffers come from the caller's workspace and are reused across timesteps, so this allocates
+    # only on the first call (see `_resize_workspace!`). Every loop below bounds on `n`, so buffers
+    # left long by an earlier, longer column stay correct.
+    ws = _resize_workspace!(_solver_workspace(solver, workspace), n)
+    M = ws.M              # cell mass [kg m-2]
+    H = ws.H              # cell enthalpy [J m-2] — the prognostic
+    Q_sw = ws.Q_sw        # SW absorbed per sub-step [J m-2]
+    A_face = ws.A_face    # face conductance * dt [J m-2 K-1]
+    rhs = ws.rhs          # right-hand side, then the Thomas solution
+    sup = ws.sup          # eliminated superdiagonal
+    T_it = ws.T_it        # current Newton iterate
 
     @inbounds for i in 1:n
         M[i] = density[i] * dz[i]

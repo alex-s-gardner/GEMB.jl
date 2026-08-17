@@ -14,22 +14,88 @@ central branch to extend.
 The interface a subtype must implement is
 
     _thermal_solve!(solver, temperature, dz, density, K, shortwave_flux,
-                    water_surface, grain_radius, sfc, cfs, mp, verbose)
+                    water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
         -> (longwave_upward, heat_flux_sensible, heat_flux_latent,
             heat_flux_basal, evaporation_condensation)
 
 updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
-the last in kg m-2 accumulated over the step). Two invariants bind every implementation: the
-bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged, and the
+the last in kg m-2 accumulated over the step). Three invariants bind every implementation: the
+bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged; the
 returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
-energy and mass budgets against them.
+energy and mass budgets against them; and every buffer entry drawn from `workspace` must be
+written before it is read, since the workspace arrives holding a previous timestep's values.
 
-Subtypes are singletons today. They are structs rather than symbols so that a scheme can later
-carry its own preallocated workspace as fields without touching any dispatch site.
+Subtypes are singletons: `isbits`, immutable, and carrying no state. A scheme's scratch buffers
+live in a separate per-run [`ThermalWorkspace`](@ref) rather than in the solver, so a
+`ModelParameters` stays a pure, freely shareable description of *what* to compute — one `mp` can
+be read by any number of threads stepping columns concurrently. The workspace is the mutable
+half, and each concurrent run needs its own.
 
 See [`ExplicitThermal`](@ref) and [`ImplicitThermal`](@ref).
 """
 abstract type AbstractThermalSolver end
+
+"""
+    _ExplicitWorkspace()
+
+Scratch buffers for `_thermal_solve!(::ExplicitThermal, ...)`. Named for the quantities in that
+scheme's algebra; see the solver for what each holds.
+
+Empty on construction and grown to the column by [`_resize_workspace!`](@ref) on first use.
+"""
+struct _ExplicitWorkspace
+    M_inv::Vector{Float64}   # 1 / (cell mass * enthalpy scale)
+    H::Vector{Float64}       # cell enthalpy [J m-2]
+    Q_sw::Vector{Float64}    # SW absorbed per sub-step [J m-2]
+    A_face::Vector{Float64}  # face conductance * dt [J m-2 K-1]
+end
+
+_ExplicitWorkspace() = _ExplicitWorkspace(Float64[], Float64[], Float64[], Float64[])
+
+"""
+    _ImplicitWorkspace()
+
+Scratch buffers for `_thermal_solve!(::ImplicitThermal, ...)`. All seven are sized to the `m-1`
+unknowns (the bottom cell is a Dirichlet reservoir, outside the solve).
+
+Empty on construction and grown to the column by [`_resize_workspace!`](@ref) on first use.
+"""
+struct _ImplicitWorkspace
+    M::Vector{Float64}       # cell mass [kg m-2]
+    H::Vector{Float64}       # cell enthalpy [J m-2] — the prognostic
+    Q_sw::Vector{Float64}    # SW absorbed per sub-step [J m-2]
+    A_face::Vector{Float64}  # face conductance * dt [J m-2 K-1]
+    rhs::Vector{Float64}     # right-hand side, then the Thomas solution
+    sup::Vector{Float64}     # eliminated superdiagonal
+    T_it::Vector{Float64}    # current Newton iterate
+end
+
+_ImplicitWorkspace() = _ImplicitWorkspace(ntuple(_ -> Float64[], 7)...)
+
+"""
+    _resize_workspace!(ws, n) -> ws
+
+Grow every buffer in `ws` to length `n`, or leave it alone if it is already that long.
+
+`resize!` keeps the underlying capacity, so the column length is reached on the first timestep
+and every later call is a no-op. The buffers hold no state between timesteps — each is fully
+written before it is read — so the contents after a grow are deliberately undefined.
+
+Callers index by `m`/`n` computed from the column, never by `length(buffer)`, so a buffer that is
+longer than needed (a column that shrank) is still correct.
+"""
+function _resize_workspace!(ws::Union{_ExplicitWorkspace,_ImplicitWorkspace}, n::Int)
+    for buffer in _workspace_buffers(ws)
+        length(buffer) < n && resize!(buffer, n)
+    end
+    return ws
+end
+
+# Split out so `_resize_workspace!` stays a single method over both workspace types. `fieldnames`
+# would need a generated function to stay type-stable; an explicit tuple is clearer and inlines.
+_workspace_buffers(ws::_ExplicitWorkspace) = (ws.M_inv, ws.H, ws.Q_sw, ws.A_face)
+_workspace_buffers(ws::_ImplicitWorkspace) =
+    (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it)
 
 """
     ExplicitThermal()
@@ -38,6 +104,8 @@ Explicit finite-volume thermal scheme, sub-stepped to the Von Neumann stability 
 (see `GEMB._max_safe_dt`). The default. Conserves energy to the last bit — diffusion is applied
 as one flux per face with opposite signs to the two adjacent cells — at the cost of a sub-step
 count set by the single stiffest cell in the column.
+
+A stateless singleton; the scheme's scratch buffers live in a [`ThermalWorkspace`](@ref).
 
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 3-4.
@@ -51,11 +119,51 @@ Backward-Euler thermal scheme on a tridiagonal system, solved by the Thomas algo
 Unconditionally stable, so it needs no stability sub-stepping and is insensitive to thin
 layers; `mp.dt_divisors` and `GEMB._max_safe_dt` are unused on this path.
 
+A stateless singleton; the scheme's scratch buffers live in a [`ThermalWorkspace`](@ref).
+
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4.
 - Thomas, L. H. (1949). *Elliptic Problems in Linear Difference Equations over a Network*.
 """
 struct ImplicitThermal <: AbstractThermalSolver end
+
+"""
+    ThermalWorkspace()
+
+Per-run scratch space for the thermal solver, holding the buffers each scheme's algebra needs so
+that a timestep allocates nothing after the first.
+
+This is the mutable half of the split that keeps [`ModelParameters`](@ref) shareable: `mp`
+describes *what* to compute and can be read concurrently by any number of threads, while a
+`ThermalWorkspace` is *where one run scratches* and must not be shared between concurrent runs.
+
+Both schemes' buffer sets are carried, so a workspace is valid for either
+[`ExplicitThermal`](@ref) or [`ImplicitThermal`](@ref) and costs nothing for the scheme not in
+use (both start empty; only the one actually run is ever grown).
+
+`gemb` creates one per call automatically, so single-threaded use never mentions this type.
+Callers stepping columns concurrently should give each thread its own:
+
+```julia
+Threads.@threads for i in eachindex(columns)
+    ws = ThermalWorkspace()          # one per thread, not one per package
+    outputs[i] = gemb(columns[i], forcings[i], mp; thermal_workspace=ws)
+end
+```
+
+Reusing one across *sequential* runs is fine and saves the first-timestep growth.
+"""
+struct ThermalWorkspace
+    explicit::_ExplicitWorkspace
+    implicit::_ImplicitWorkspace
+end
+
+ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace())
+
+# Which buffer set a scheme draws from. One method per solver, so a new scheme adds its own
+# workspace type and one accessor rather than editing a branch.
+_solver_workspace(::ExplicitThermal, ws::ThermalWorkspace) = ws.explicit
+_solver_workspace(::ImplicitThermal, ws::ThermalWorkspace) = ws.implicit
 
 """
     ModelParameters

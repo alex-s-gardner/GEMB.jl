@@ -54,6 +54,9 @@ When neither is given the spinup always runs `max_iterations` cycles.
 - `drift_window`: trailing cycles the drift slope is fitted over (default
   $SPINUP_DRIFT_WINDOW). Must be ≥ 2.
 - `verbose`: print a convergence message when early exit occurs.
+- `thermal_workspace`: reusable thermal-solve scratch, shared across every cycle of this
+  spinup. One belongs to one column; give each concurrent thread its own
+  (see [`ThermalWorkspace`](@ref)).
 
 Derived from MATLAB's `gemb_spinup.m`; the drift criterion and the whole-column mean
 have no MATLAB counterpart.
@@ -63,7 +66,8 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      convergence_delta_density=nothing,
                      convergence_drift_density=nothing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
-                     verbose::Bool=false)
+                     verbose::Bool=false,
+                     thermal_workspace::ThermalWorkspace=ThermalWorkspace())
 
     if convergence_drift_density !== nothing && drift_window < 2
         error("drift_window must be at least 2 to fit a slope, got $drift_window")
@@ -92,7 +96,7 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
 
     for cycle in 1:max_iterations
         cycles_run = cycle
-        out = gemb(current_profile, cf, mp_spinup)
+        out = gemb(current_profile, cf, mp_spinup; thermal_workspace=thermal_workspace)
         current_profile = gemb_profile(out)
 
         checking || continue
