@@ -57,33 +57,44 @@ Julia ≥ 1.11 is required. A Makie backend (CairoMakie, GLMakie, or WGLMakie) e
 
 ## Quick Start
 
-Download real forcing, spin the column up to a quasi-steady state, then run it transiently.
-This is the full research workflow — Summit Station, Greenland, on ERA5-Land:
+Get forcing, spin the column up to a quasi-steady state, then run it transiently. This is
+[`examples/synthetic_example.jl`](examples/synthetic_example.jl) — 32 years of 3-hourly
+synthetic forcing, and the run that produced the figure at the bottom of this section:
 
 ```julia
 using GEMB
 using GEMB_ClimateForcing
-using Dates
 
-# 1. Climate forcing — download ERA5-Land from the CDS as a DimStack, then convert.
-#    Any conforming DimStack works; GEMB_ClimateForcing is one producer of them.
-forcing_data = climate_forcing(:era5land, 72.58, -38.48;
-                               time_range=(DateTime(2000, 1, 1), DateTime(2020, 12, 31)),
-                               token=ENV["CDS_API_KEY"])
-cf = GEMB.initialize_forcing(forcing_data)
+# 1. Climate forcing — a DimStack, converted to a ClimateForcing. Any conforming
+#    DimStack works; GEMB_ClimateForcing is one producer of them.
+cf = GEMB.initialize_forcing(simulate_climate_forcing("test_1", 3))
 
 # 2. Model parameters, validated at construction
 mp = initialize_parameters(output_frequency=:daily)
 
 # 3. Spin up on a one-year climatology of the forcing. Deep firn columns need this:
 #    a cold start spends decades drifting before the density profile is meaningful.
-cf_spinup = forcing_climatology(cf)
-profile = initialize_profile(mp, cf_spinup)        # grid is sized to this climate
-profile = gemb_spinup(profile, cf_spinup, mp; max_iterations=200,
-                      convergence_delta_density=0.01)
+cf_climatology = forcing_climatology(cf)
+profile = initialize_profile(mp, cf_climatology)   # grid is sized to this climate
+profile_spunup = gemb_spinup(profile, cf_climatology, mp;
+                             max_iterations=75, convergence_delta_density=0.01)
 
 # 4. Run the transient forcing from the spun-up column
-output = gemb(profile, cf, mp)
+output = gemb(profile_spunup, cf, mp)
+```
+
+To drive it with real climate instead, swap step 1 for an ERA5-Land download from the
+Copernicus CDS — everything downstream is unchanged
+([`examples/era5_example.jl`](examples/era5_example.jl)):
+
+```julia
+using Dates
+
+# Summit Station, Greenland
+forcing_data = climate_forcing(:era5land, 72.58, -38.48;
+                               time_range=(DateTime(2020, 1, 1), DateTime(2020, 12, 31)),
+                               token=ENV["CDS_API_KEY"])
+cf = GEMB.initialize_forcing(forcing_data)
 ```
 
 [`gemb`](https://alex-s-gardner.github.io/GEMB.jl/dev/api) returns a
@@ -93,22 +104,22 @@ metadata:
 
 ```julia-repl
 julia> output
-┌ 7671×222 DimStack ┐
-├───────────────────┴──────────────────────────────────────────────────────────── dims ┐
-  ↓ Ti Sampled{DateTime} [2000-01-01T21:00:00, …, 2020-12-31T21:00:00] ForwardOrdered Irregular Points,
-  → Z  Sampled{Int64} 1:222 ForwardOrdered Regular Points
+┌ 11688×256 DimStack ┐
+├────────────────────┴─────────────────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{DateTime} [1994-01-01T21:00:00, …, 2025-12-31T21:00:00] ForwardOrdered Irregular Points,
+  → Z  Sampled{Int64} 1:256 ForwardOrdered Regular Points
 ├────────────────────────────────────────────────────────────────────────────── layers ┤
-  :melt                  eltype: Float64 dims: Ti size: 7671
-  :runoff                eltype: Float64 dims: Ti size: 7671
-  :refreeze              eltype: Float64 dims: Ti size: 7671
-  :firn_air_content      eltype: Float64 dims: Ti size: 7671
+  :melt                  eltype: Float64 dims: Ti size: 11688
+  :runoff                eltype: Float64 dims: Ti size: 11688
+  :refreeze              eltype: Float64 dims: Ti size: 11688
+  :firn_air_content      eltype: Float64 dims: Ti size: 11688
   ⋮
-  :temperature           eltype: Float64 dims: Z, Ti size: 222×7671
-  :density               eltype: Float64 dims: Z, Ti size: 222×7671
-  :grain_radius          eltype: Float64 dims: Z, Ti size: 222×7671
-  :age                   eltype: Float64 dims: Z, Ti size: 222×7671
+  :temperature           eltype: Float64 dims: Z, Ti size: 256×11688
+  :density               eltype: Float64 dims: Z, Ti size: 256×11688
+  :grain_radius          eltype: Float64 dims: Z, Ti size: 256×11688
+  :age                   eltype: Float64 dims: Z, Ti size: 256×11688
 ├──────────────────────────────────────────────────────────────────────────── metadata ┤
-  "dataset" => "era5land", "Conventions" => "CF-1.11", "spinup_performed" => true, …
+  "source" => "GEMB.jl", "Conventions" => "CF-1.11", "spinup_performed" => true, …
 └──────────────────────────────────────────────────────────────────────────────────────┘
 
 julia> sum(output[:melt])                                # column total [kg m-2]
@@ -126,7 +137,7 @@ heatmaps on the left, scalar time series on the right, on a shared time axis:
 
 ```julia
 using CairoMakie
-fig = gemb_plot_output(output; depthlims=(-20, 0))
+fig = gemb_plot_output(output; depthlims=(-10, 0))
 save("gemb_diagnostics.png", fig; px_per_unit=2)
 ```
 
