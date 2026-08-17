@@ -95,7 +95,20 @@ using GEMB_ClimateForcing
     # 10963.944470 / 4760.650556) still fall inside these atols; re-centered so the tolerance
     # budget stays available for the cross-platform spread it was sized for. See
     # `GEMB._max_safe_dt`.
-    @test mean_albedo ≈ 0.821838 atol=3e-3      # ~0.37% relative
-    @test total_melt ≈ 10949.362828 atol=120.0  # ~1.1% relative
-    @test total_runoff ≈ 4751.946045 atol=120.0 # ~2.5% relative
+    #
+    # Re-pinned for the corrected unstable-branch integrated stability functions. Paulson's
+    # (1970) `Ψ` takes the *inverse* profile function as its argument, so the exponents are
+    # positive, not negative; the previous form also carried Högström's (1988) `0.95`
+    # `κ_H/κ_M` ratio inside the integral, which put `Ψ_h(0) = -0.0999` instead of 0 and left
+    # the fluxes discontinuous at neutral stability. Both branches now reproduce
+    # `Ψ(ζ) = ∫₀^ζ (1 - φ)/z dz` under numerical integration of their own published `φ`. The
+    # corrected `Ψ` is larger, so `coef` shrinks and unstable-side turbulent exchange
+    # strengthens: melt falls 576.4 kg m-2 (-5.3%) and runoff 283.8 (-6.0%), the expected sign
+    # (more turbulent cooling and more sublimation at a melting surface). Albedo moves 9e-4.
+    # This exceeds the atols, which is why it is a re-pin rather than a re-centering; the atols
+    # themselves are unchanged, the cross-platform spread they were sized for having not moved.
+    # See `GEMB._turbulent_heat_flux` and `GEMB.ZETA_UNSTABLE_MIN`.
+    @test mean_albedo ≈ 0.822755 atol=3e-3      # ~0.36% relative
+    @test total_melt ≈ 10372.968525 atol=120.0  # ~1.2% relative
+    @test total_runoff ≈ 4468.185615 atol=120.0 # ~2.7% relative
 end

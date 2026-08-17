@@ -200,6 +200,50 @@ Aquifers form bottom-up under either delayed method, and the `aquifer_thickness`
 `aquifer_depth` outputs report the resulting water table. Both are opt-in: they are inert at
 the `:instantaneous` default.
 
+### Surface energy balance numerics
+
+Three of GEMB's choices in coupling the surface energy balance to the subsurface heat equation
+are independently endorsed by Fourteau et al. (2024), who set out a finite-volume framework for
+exactly this coupling and test the alternatives against reference solutions. None of this
+required a code change; it is recorded because the reasoning behind each choice is otherwise
+only visible in the docstrings.
+
+**The surface flux is applied as a flux, not as a Dirichlet temperature.** GEMB imposes the net
+surface energy balance as a flux on the top cell and lets its temperature follow. The alternative
+— forcing the surface temperature and letting the flux follow — is not conservative, and
+Fourteau et al. quantify the cost (their Sect. 6.4 and Fig. 14): the spurious energy flux it
+introduces is −14.5 W m⁻² (σ = 123.5) for a melting glacier surface and +0.34 W m⁻² (σ = 39) for
+a seasonal snowpack, changing simulated ablation by 40% and 8% respectively. GEMB's error here is
+structurally zero rather than small: the solve produces a predictor for the implicit face
+temperatures, which is then applied as one flux per face (`+F` to one cell, `−F` to its
+neighbour), so pairwise cancellation is exact and the column conserves energy to the last bit
+independently of the solve residual. This holds on both the explicit and implicit paths.
+
+**Face conductivity is the harmonic mean of the two cells'.** `1/(dz[i+1]/2K[i+1] + dz[i]/2K[i])`
+— the series resistance of the two half-cells, which is the exact flux for a piecewise-constant
+conductivity, where an arithmetic mean is not. This is Fourteau et al.'s eq. 6 (after Kadioglu et
+al., 2008), and a second independent citation for it after Lafaysse et al. (2026) eq. 90. It
+matters most where GEMB's grid is most graded and where conductivity contrasts are largest, which
+is the near-surface: a thin fresh-snow cell over dense firn.
+
+**The surface temperature is not an independent unknown.** In Fourteau et al.'s taxonomy GEMB is
+a *Class 1* model — the energy balance is applied to the top control volume, and the surface
+temperature is diagnosed from it (`T_surface = min(CtoK, temperature[1])`) rather than carried as
+its own degree of freedom. This is the same class as SNTHERM, Crocus, CLM, and CryoGrid, and it
+is *coupled*: the surface energy balance and the subsurface conduction are solved together, which
+is what Class 2 skin-layer models (COSIPY, EBFM, SnowModel) give up in exchange for an explicit
+surface. Their proposed scheme has both, and on their coarser meshes Class 1 diverges from the
+reference where the coupled-explicit-surface scheme does not. GEMB's `column_dztop = 0.05 m` sits
+in the regime where that divergence appears in their Figs. 9 and 11, so an explicit surface
+degree of freedom — a third `AbstractThermalSolver` alongside `ExplicitThermal` and
+`ImplicitThermal`, which would leave existing runs bit-identical — remains a real option rather
+than a closed question. It is not implemented.
+
+Their Appendix D is the reason the integrated stability functions had to be continuous at neutral
+stability: they move their own branch point to `Ri_b = 0` so that the surface energy balance stays
+a well-posed function of `T_surface`, which is precisely the crossing a Newton iteration converges
+onto. See the corresponding physics note in the README.
+
 ## Output Variables
 
 The output `DimStack` contains monolevel (1D time series) and profile (2D depth-time) variables.

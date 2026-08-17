@@ -278,6 +278,13 @@ memory-streaming floor, and the binding stability cell is not an outlier — the
 second-tightest limit is only 1.08× the tightest, so there is no pathological cell
 to rescue.
 
+Both properties are the ones Fourteau et al. (2024) identify as load-bearing in the
+finite-volume framing of this coupling — conservative flux application rather than a
+Dirichlet surface temperature, and harmonic-mean face conductivity. Their taxonomy
+also places GEMB and CFM in the same class, and leaves an explicit surface degree of
+freedom as a live third option; see
+[Surface energy balance numerics](index.md#Surface-energy-balance-numerics).
+
 Where the implicit scheme does win is the case the explicit limit cannot bound: a
 single 1e-4 m refrozen lens drops the explicit limit from 903 s to 3.98 s (227×)
 while the implicit count does not move. That robustness, not throughput, is the
@@ -332,3 +339,6 @@ strictly more useful. Not a gap.
   Intercomparison Project (RetMIP). *The Cryosphere*, 14, 3785–3810.
 - Oraschewski, F. M., and Grinsted, A. (2022). Modeling enhanced firn
   densification due to strain softening. *The Cryosphere*, 16, 2683–2700.
+- Fourteau, K., Brondex, J., Brun, F., and Dumont, M. (2024). A novel numerical
+  implementation for the surface energy budget of melting snowpacks and glaciers.
+  *Geoscientific Model Development*, 17, 1903–1929.

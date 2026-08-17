@@ -98,7 +98,10 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # T ≈ 256.2 K); `:FaustoFit` is the same fit carrying its temperature dependence, as
     # IMAU-FDM implements it — though note IMAU-FDM drives it from a one-year running-mean
     # temperature on its Greenland domain, where `:FaustoFit` uses the instantaneous value.
-    # Both also select the Crocus wind-dependent fresh-grain properties.
+    # Both also select the Crocus wind-dependent fresh-grain properties, as does `:Pahaut`.
+    # `:Pahaut` is the alpine-seasonal-snow alternative to those polar fits — Pahaut (1975) as
+    # Crocus implements it, temperature- and wind-dependent at the instantaneous timestep, and
+    # much lighter over the same range. Prefer it for temperate and mid-latitude glaciers.
     # See `fresh_snow_density`.
     new_snow_method::Symbol = :Constant350
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model

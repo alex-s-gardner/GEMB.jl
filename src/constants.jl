@@ -94,12 +94,43 @@ const DENSITY_NEW_SNOW_FAUSTO_A = 362.1
 const DENSITY_NEW_SNOW_FAUSTO_B = 2.78
 const DENSITY_NEW_SNOW_FAUSTO_CONSTANT = 315.0
 
+# Fresh-snow density coefficients for `new_snow_method = :Pahaut` — Pahaut (1975) as
+# implemented in Crocus, via Lafaysse et al. (2026) eq. 35 (their `:V12` option):
+# `max(50, 109 + 6·(T_air - CtoK) + 26·√U)`, with `T_air` [K] and `U` [m s-1] both
+# instantaneous. Alpine seasonal snow rather than a polar ice sheet, so much lighter than
+# the Fausto coefficients above over the same temperature range. The floor is published.
+const DENSITY_NEW_SNOW_PAHAUT_A = 109.0
+const DENSITY_NEW_SNOW_PAHAUT_B = 6.0
+const DENSITY_NEW_SNOW_PAHAUT_C = 26.0
+const DENSITY_NEW_SNOW_PAHAUT_MIN = 50.0
+
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
 # (`_seb_annual_melt`), which blends between the dry-snow and ice values.
 const Z0_SNOW_DRY = 0.00012  # 0.12 mm, dry snow [m]
 const Z0_SNOW_WET = 0.0013   # 1.3 mm, wet snow [m]
 const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
+
+# Bound on the Monin-Obukhov stability parameter `ζ = z/L` in the unstable branch of
+# `_turbulent_heat_flux`. Not from any of the papers cited there: it guards a numerical
+# limit of the bulk formulation rather than adjusting the physics.
+#
+# `ζ` is diagnosed from the bulk Richardson number, which carries `wind_speed^-2`. At the
+# `min_wind_speed = 0.01 m s-1` floor over a melting surface under very cold air the
+# synthetic forcing reaches `Ri ≈ -7.3e5`, i.e. `ζ ≈ -4.9e5`. That is not a stability
+# regime — it is the wind floor showing through — and Monin-Obukhov theory has no
+# observational support anywhere near it (Högström's fits span `|ζ| <~ 2`). Left
+# unbounded, `Ψ_h(ζ)` grows past `log(z_T/z_Q)` and the transfer coefficient
+# `coefHT = logHT - Ψ_h` crosses zero, so the flux diverges and then changes sign; that
+# is what produced a NaN albedo before this bound existed.
+#
+# -100 is two orders of magnitude beyond the calibration range, so it never binds in
+# physically meaningful conditions, and it keeps `coefM` and `coefHT` positive for every
+# roughness GEMB uses (at `ζ = -100`, `Ψ_m = 4.51` and `Ψ_h = 5.73`, against
+# `logHT >= 8.29` for the roughest surface, `Z0_ICE`). Bounding `ζ` rather than clamping
+# the coefficients keeps the fluxes a continuous, monotone function of `T_surface`, which
+# the implicit solver's Newton iteration needs.
+const ZETA_UNSTABLE_MIN = -100.0
 
 # How close to `density_ice` counts as "firn has become ice" when sizing the initial
 # column. Densification laws approach ice *asymptotically*, so no finite depth ever
