@@ -16,10 +16,12 @@ has no instantaneous temperature to offer — gets a well-defined climatological
 same call, and so that callers of the four older methods need not pass it.
 
 Methods:
-- `150kgm2` → 150, `350kgm2` → 350: constants.
+- `:Constant150` → 150, `:Constant315` → 315, `:Constant350` → 350: constants.
 - `:Fausto` → 315: the Fausto et al. (2018) Greenland fit frozen at one temperature (it is
   `:FaustoFit` evaluated at T ≈ 256.2 K). Inherited from MATLAB and kept as the default for
-  reference fidelity.
+  reference fidelity. Numerically equal to `:Constant315`, but `:Fausto` additionally selects
+  the Crocus wind-dependent fresh-grain properties below, where `:Constant315` does not — use
+  `:Constant315` for a bare 315 kg m-3 with the default grain properties.
 - `:FaustoFit` → `362.1 + 2.78·(T_air - CtoK)`: that same fit carrying its temperature
   dependence, as implemented in IMAU-FDM (`initialise_model.f90`) for its Greenland domain.
   Unbounded below as published, so callers clamp — see `calculate_accumulation` and
@@ -28,9 +30,11 @@ Methods:
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     precip_mean::Real, wind_speed_mean::Real, T_air::Real=T_air_mean)
-    if mp.new_snow_method == Symbol("150kgm2")
+    if mp.new_snow_method == :Constant150
         return 150.0
-    elseif mp.new_snow_method == Symbol("350kgm2")
+    elseif mp.new_snow_method == :Constant315
+        return 315.0
+    elseif mp.new_snow_method == :Constant350
         return 350.0
     elseif mp.new_snow_method == :Fausto
         return DENSITY_NEW_SNOW_FAUSTO_CONSTANT

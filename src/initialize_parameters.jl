@@ -29,7 +29,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.densification_coeffs_M01 in valid_coeffs "Invalid densification_coeffs_M01"
 
     # New snow method
-    @assert mp.new_snow_method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :FaustoFit, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
+    @assert mp.new_snow_method in (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
 
     # Density of ice
     @assert 800 <= mp.density_ice <= 950 "density_ice must be in [800, 950]"
