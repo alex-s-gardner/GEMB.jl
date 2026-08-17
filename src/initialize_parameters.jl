@@ -63,6 +63,14 @@ function validate_parameters(mp::ModelParameters)
     # Thermal conductivity
     @assert mp.thermal_conductivity_method in (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019) "thermal_conductivity_method must be one of: Sturm, Calonne, Calonne2019, Calonne2019Air, Marchenko2019"
 
+    # Explicit thermal sub-step safety factor. Bounded in (0, 1]: it scales a limit that is
+    # already an upper bound, so exceeding 1 would run the explicit scheme knowingly unstable,
+    # and 0 would collapse `dt` to the smallest divisor available. 1.0 is admitted — it runs at
+    # the diffusive limit exactly, which is a defensible trade on columns whose surface feedback
+    # is small, but it leaves nothing for the surface-balance term `_max_safe_dt` omits.
+    # See `THERMAL_EXPLICIT_SAFETY_FACTOR`.
+    @assert 0 < mp.thermal_explicit_safety_factor <= 1 "thermal_explicit_safety_factor must be in (0, 1] (got $(mp.thermal_explicit_safety_factor)); it scales an upper bound on the stable sub-step, so a value above 1 runs `ExplicitThermal` knowingly unstable — use `thermal_solver=ImplicitThermal()` for a scheme with no step limit"
+
     # Heat capacity
     @assert mp.heat_capacity_method in (:constant, :CuffeyPaterson) "heat_capacity_method must be constant or CuffeyPaterson"
     @assert 1500 <= mp.heat_capacity_ice <= 2500 "heat_capacity_ice must be in [1500, 2500]"

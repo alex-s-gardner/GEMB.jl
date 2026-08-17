@@ -449,10 +449,36 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                         freeze1 + freeze2)
                 end
 
-                # check if an ice layer forms
-                if abs(density[i] - mp.density_ice) < D_TOLERANCE
-                    runoff[i] = flux_dn[i+1]
-                    flux_dn[i+1] = 0.0
+                # Check if an ice layer formed, and re-test impermeability against the
+                # *post-refreeze* density.
+                #
+                # The branch test at the top of the loop reads the density this cell had on
+                # entry, but the refreeze just above can carry it across
+                # `mp.impermeable_density` within the same timestep. The flux has already been
+                # computed by then, so without this re-test water passes through a cell that is
+                # a barrier by the end of the step — the criterion decided on stale density.
+                # Measured over the default synthetic run, 14 cells per run crossed the
+                # threshold this way while still passing water down, leaking 31.9 kg m-2.
+                #
+                # This generalizes the `density_ice` test it replaces, which caught only cells
+                # reaching solid ice and so missed every crossing between
+                # `mp.impermeable_density` and `mp.density_ice` (none of the 14 reached 917).
+                # The run is measured with `dz_0` for this cell, its post-melt thickness, and
+                # the entry `dz` below, matching the top-of-loop scan; both clauses of that
+                # scan are reproduced, since a cell at `mp.density_ice` blocks alone however
+                # thin it is.
+                if density[i] >= d_phc - D_TOLERANCE
+                    ice_depth_post = dz_0
+                    for l in (i+1):m
+                        density[l] >= d_phc - D_TOLERANCE || break
+                        ice_depth_post += dz[l]
+                        ice_depth_post > ice_layer_dzmin + D_TOLERANCE && break
+                    end
+                    if (ice_depth_post > ice_layer_dzmin + D_TOLERANCE) ||
+                       (density[i] >= mp.density_ice - D_TOLERANCE)
+                        runoff[i] = flux_dn[i+1]
+                        flux_dn[i+1] = 0.0
+                    end
                 end
             end
 

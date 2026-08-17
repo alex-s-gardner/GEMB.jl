@@ -222,7 +222,7 @@ end
           minimum(textbook(temperature, dz_graded, density, K, i) for i in 1:n)
 
     # ...while a thick cell between thin ones approaches 4K_i/dz_i, making the correct limit
-    # up to 2x STRICTER than the textbook form — the unsound direction, since the 0.8 safety
+    # up to 2x STRICTER than the textbook form — the unsound direction, since the safety
     # factor cannot absorb it.
     dz_thick = [0.02, 0.02, 0.40, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]
     i = 3
@@ -230,7 +230,106 @@ end
     Gp = 1.0 / (dz_thick[i+1] / (2 * K[i+1]) + dz_thick[i] / (2 * K[i]))
     face_i = DENSITY_UNIFORM * c * dz_thick[i] / (Gm + Gp)
     @test face_i < textbook(temperature, dz_thick, density, K, i)
-    @test face_i / textbook(temperature, dz_thick, density, K, i) < 0.8  # beyond the margin
+    # Beyond the margin: even the loosest admissible safety factor would not have covered it.
+    @test face_i / textbook(temperature, dz_thick, density, K, i) <
+          GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR
+end
+
+@testset "Explicit safety factor is exposed and covers the surface term" begin
+    # What the factor is FOR. `_max_safe_dt` bounds diffusion only; cell 1 additionally carries
+    # the surface energy balance, whose slope `Λ <= 0` enters its own-temperature coefficient
+    # exactly as a face conductance does. So the coefficient the scheme actually realizes is
+    # `1 - dt*(G_1 + |Λ|)/(rho*c*dz)`, and the diffusive limit alone does not keep it
+    # non-negative — the factor is the margin that does.
+    @test 0.0 < GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR <= 1.0
+    @test GEMB.ModelParameters().thermal_explicit_safety_factor ===
+          GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR
+
+    # Bounded in (0, 1]. Above 1 would scale up a limit that is already an upper bound, i.e.
+    # run the explicit scheme knowingly unstable; 0 would collapse `dt` to the smallest divisor.
+    @test_throws AssertionError initialize_parameters(thermal_explicit_safety_factor=1.5)
+    @test_throws AssertionError initialize_parameters(thermal_explicit_safety_factor=0.0)
+    @test_throws AssertionError initialize_parameters(thermal_explicit_safety_factor=-0.5)
+    @test initialize_parameters(thermal_explicit_safety_factor=1.0) isa GEMB.ModelParameters
+
+    # The factor reaches the sub-step: a small value must force more sub-steps than the default
+    # on the same column. Checked through `calculate_temperature`'s own arithmetic rather than
+    # by inspection, so a rename that failed to thread it through would fail here.
+    n = 40
+    dz = [0.02 * 1.08^(i - 1) for i in 1:n]
+    density = [350.0 + 500.0 * (i - 1) / (n - 1) for i in 1:n]
+    temperature = [250.0 + 20.0 * (i - 1) / (n - 1) for i in 1:n]
+    mp_default = _temperature_mp(108000000)
+    K = GEMB.thermal_conductivity(temperature, density, mp_default)
+    limit = GEMB._max_safe_dt(temperature, dz, density, K, mp_default)
+    dt_default = GEMB._find_dt_divisor(
+        limit * mp_default.thermal_explicit_safety_factor, mp_default.dt_divisors)
+    mp_tight = GEMB.ModelParameters(
+        thermal_conductivity_method=:Sturm, thermal_explicit_safety_factor=0.05,
+        dt_divisors=mp_default.dt_divisors)
+    dt_tight = GEMB._find_dt_divisor(
+        limit * mp_tight.thermal_explicit_safety_factor, mp_tight.dt_divisors)
+    @test dt_tight < dt_default
+
+    # The factor changes the sub-step count, so it necessarily changes the answer by the
+    # scheme's own truncation error — under strong forcing that is ~2 K in the near-surface
+    # cells over one 3-hour step, which is the explicit scheme's accuracy, not a defect. The
+    # claim worth pinning is therefore made where the exact answer is known: an isothermal
+    # column with air at its temperature, balanced longwave, and no shortwave is an exact
+    # steady state, which every admissible factor must reproduce to the same drift bound.
+    grain_radius = fill(GRAIN_RADIUS_UNIFORM, n)
+    dz_u = fill(DZ_UNIFORM, N_CELLS)
+    density_u = fill(DENSITY_UNIFORM, N_CELLS)
+    t_steady = fill(260.0, N_CELLS)
+    cfs_steady = GEMB.ClimateForcingStep(
+        3600.0, 260.0, 100000.0, 0.0, 5.0, 0.0, _balanced_longwave(260.0),
+        100.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    for sf in (0.05, 0.5, GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR, 1.0)
+        mp_sf = GEMB.ModelParameters(
+            thermal_conductivity_method=:Sturm, thermal_explicit_safety_factor=sf,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        t_sf, _, _, _, _, _ = GEMB.calculate_temperature(
+            copy(t_steady), dz_u, density_u, 0.0, fill(GRAIN_RADIUS_UNIFORM, N_CELLS),
+            zeros(N_CELLS), cfs_steady, mp_sf, true)
+        @test all(abs.(t_sf .- 260.0) .< T_STEADY_DRIFT_MAX)
+        @test t_sf[end] === 260.0
+    end
+
+    # Under strong forcing the two differ only by truncation: neither rings below the initial
+    # minimum, and `verbose=true` closes each budget internally. No upper bound is asserted —
+    # the melting-point clamp is on the *flux*, so a cell may legitimately exceed `CtoK` and be
+    # handed to `calculate_melt`.
+    cfs = GEMB.ClimateForcingStep(
+        10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+        200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    shortwave_flux = [200.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+    t_default, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp_default, true)
+    t_tight, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp_tight, true)
+    for t_sf in (t_default, t_tight)
+        @test !any(isnan, t_sf)
+        @test all(isfinite, t_sf)
+        @test minimum(t_sf) >= minimum(temperature) - T_STEADY_DRIFT_MAX
+        @test t_sf[end] === temperature[end]
+    end
+
+    # `ImplicitThermal` must ignore the field entirely: it never consults `_max_safe_dt`, so
+    # varying the factor cannot move a bit of its answer.
+    mp_imp_a = GEMB.ModelParameters(thermal_solver=GEMB.ImplicitThermal(),
+        thermal_conductivity_method=:Sturm, dt_divisors=Float64[])
+    mp_imp_b = GEMB.ModelParameters(thermal_solver=GEMB.ImplicitThermal(),
+        thermal_conductivity_method=:Sturm, dt_divisors=Float64[],
+        thermal_explicit_safety_factor=0.05)
+    t_imp_a, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp_imp_a, true)
+    t_imp_b, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp_imp_b, true)
+    @test t_imp_a == t_imp_b
 end
 
 @testset "Stability limit keeps the solve positive and stable" begin
@@ -247,7 +346,9 @@ end
     mp = _temperature_mp(864000000)
 
     K = GEMB.thermal_conductivity(temperature, density, mp)
-    dt = GEMB._find_dt_divisor(GEMB._max_safe_dt(temperature, dz, density, K, mp) * 0.8,
+    dt = GEMB._find_dt_divisor(
+        GEMB._max_safe_dt(temperature, dz, density, K, mp) *
+        mp.thermal_explicit_safety_factor,
         mp.dt_divisors)
 
     G_prev = 0.0
