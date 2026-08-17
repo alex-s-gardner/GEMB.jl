@@ -186,7 +186,7 @@ The test target needs GEMB_ClimateForcing.jl checked out as a sibling directory,
 
 `bench/opt_bench.jl` runs the representative hot path — a 75-year climatological spinup
 followed by a 32-year transient run, **~107 model-years at 3-hourly resolution** on a single
-column — in **5.7 s** (Apple M2 Max, minimum of 3 runs after warmup). It also emits a
+column — in **6.4 s** (Apple M2 Max, Julia 1.12, minimum of 7 runs after warmup). It also emits a
 per-field numerical snapshot, so an optimization can be checked for bit-level equivalence
 against a baseline rather than only for speed.
 
