@@ -65,6 +65,7 @@ export DimArray, DimStack, Ti, Z, metadata
 
 # Exports
 export ModelParameters, ClimateForcing, ClimateForcingStep
+export AbstractThermalSolver, ExplicitThermal, ImplicitThermal
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
 export gemb_plot_output

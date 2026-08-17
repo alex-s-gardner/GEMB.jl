@@ -31,6 +31,37 @@ For anything that accumulates or balances joules, use [`specific_enthalpy`](@ref
 end
 
 """
+    chord_heat_capacity(mp::ModelParameters, T1, T2) -> c_chord [J kg-1 K-1]
+
+Heat capacity that makes the enthalpy difference between two temperatures an exact product:
+
+    specific_enthalpy(mp, T2) - specific_enthalpy(mp, T1) == c_chord * (T2 - T1)
+
+For `c_p = a + bT` the enthalpy is `h = aT + (b/2)T²`, so the secant slope of `h` between `T1`
+and `T2` is `a + b·(T1 + T2)/2` — the heat capacity evaluated at the *midpoint*. This is an
+algebraic identity, not a linearization: `h` is quadratic, so its chord slope is exact for any
+`T1`, `T2`, however far apart. Under `:constant` it is `mp.heat_capacity_ice`, and it reduces to
+[`heat_capacity`](@ref)`(mp, T)` when `T1 == T2`.
+
+This is what lets an implicit thermal solver carry enthalpy as the conserved quantity while
+solving a *linear* system in temperature. Writing `M·c_p(T_old)·(T_new − T_old)` instead — the
+obvious lagged form — injects a spurious `(b/2)(T_new − T_old)²` of energy per step, which is the
+error the [`specific_enthalpy`](@ref) warning describes in its per-cell form. Only the midpoint
+evaluation cancels it.
+
+`c_p > 0` over the physical range, so `c_chord > 0` and the diagonal it scales stays positive.
+
+See [`specific_enthalpy`](@ref) for the enthalpy this is the chord slope of.
+"""
+@inline function chord_heat_capacity(mp::ModelParameters, T1::Real, T2::Real)
+    if mp.heat_capacity_method === :constant
+        return mp.heat_capacity_ice
+    end
+    return HEAT_CAPACITY_CUFFEY_A +
+           HEAT_CAPACITY_CUFFEY_B * (0.5 * (Float64(T1) + Float64(T2)))
+end
+
+"""
     specific_enthalpy(mp::ModelParameters, T) -> h [J kg-1]
 
 Specific enthalpy of the ice matrix at temperature `T` [K], measured from a 0 K

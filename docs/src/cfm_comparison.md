@@ -44,7 +44,7 @@ August 2026.
 | Liquid water in thermal conductivity | **gap, deferred** | needs a hot-loop signature change |
 | Liquid water in cell heat capacity | **not applicable** | architecturally incompatible; see below |
 | **Numerics** | | |
-| Implicit tridiagonal thermal solver | **gap, deferred** — highest-value future work | see below |
+| Implicit tridiagonal thermal solver | **implemented, opt-in** (`ImplicitThermal`) | see below |
 | Multi-resolution subgrids | **not applicable** | GEMB solves this differently |
 | Analytic Herron–Langway spin-up | **not a gap** | GEMB's march is more general |
 | **Ice-core capabilities** | | |
@@ -243,14 +243,48 @@ stage. Out of scope this pass. Worth recording that GEMB already has
 `:ArthernB` was validated against CFM's `Arthern2010T` to 1e-8 (`README.md`
 deviation 3) — the cross-validation path exists and works.
 
-### Implicit tridiagonal thermal solver — highest-value future work
+### Implicit tridiagonal thermal solver — implemented, opt-in
 
-The single largest numerics opportunity. GEMB's explicit Von Neumann limit gives
-roughly 12–50 sub-steps per 3-hourly forcing step in practice (worst case a dense
-cell at `column_dzmin = 0.025` m), against ~3 on a freshly built grid, over a
-~240–265 cell column. The limit is *global*, so one pathological refrozen lens
-slows the whole column. Deferred by scope decision. The cheaper alternative is to
-raise `column_dzmin`: the limit is quadratic in `dz`, so 0.025 → 0.05 m is ~4×.
+Closed. `ImplicitThermal` (`src/calculate_temperature.jl`) is a backward-Euler
+scheme on the same tridiagonal system, selected by dispatch on
+`mp.thermal_solver`. `ExplicitThermal` remains the default and is bit-identical
+to before, so existing runs are unaffected.
+
+The blocker CFM's structure did not resolve was the nonlinear surface row, which
+IMAU-FDM's tridiagonal also lacks an analogue for; see
+[the IMAU-FDM page](imau_fdm_comparison.md). GEMB linearizes it with Newton into
+the matrix diagonal (`Λ ≤ 0`, which strengthens diagonal dominance). Because the
+residual is built from the *true* nonlinear flux at each iterate, the linearized
+terms cancel at convergence — so the slope affects only the convergence rate, never
+the answer.
+
+Two properties were kept that a naive tridiagonal solve would lose:
+
+- **Bit-level energy conservation.** The solved field is used as a predictor of the
+  implicit face temperatures, then applied as one flux per face (`+F`/`−F` to the
+  adjacent cells), exactly as the explicit path does. Pairwise cancellation is
+  exact, so the column conserves independently of the solve residual, the Newton
+  tolerance, and `c_p(T)`. No tolerance was widened.
+- **The Dirichlet bottom cell is untouched by construction**, being excluded from
+  the unknowns rather than solved and restored.
+
+The expected speedup did **not** materialize, which is the honest result. Measured
+over a year of 3-hourly forcing on a 264-cell column: explicit 2.44 s, implicit
+5.75 s at the calibrated default. Removing the stability constraint cuts sub-steps
+only ~2.4× (≈26 explicit vs 12 implicit for accuracy), and the 4.19 Newton
+iterations per sub-step more than consume that. Profiling also shows why the
+explicit path is hard to beat here: its inner loop runs at 1.03× a pure
+memory-streaming floor, and the binding stability cell is not an outlier — the
+second-tightest limit is only 1.08× the tightest, so there is no pathological cell
+to rescue.
+
+Where the implicit scheme does win is the case the explicit limit cannot bound: a
+single 1e-4 m refrozen lens drops the explicit limit from 903 s to 3.98 s (227×)
+while the implicit count does not move. That robustness, not throughput, is the
+reason to have it.
+
+The cheaper lever noted here originally still stands independently: the limit is
+quadratic in `dz`, so raising `column_dzmin` from 0.025 → 0.05 m is ~4×.
 
 ### Strain softening
 

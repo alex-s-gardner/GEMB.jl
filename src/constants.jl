@@ -132,7 +132,76 @@ const T_MELT_SWITCH_TOLERANCE = 1e-4   # emissivity melt-switch temperature offs
 # Smallest stable sub-timestep the thermal solver will accept without warning [s]. Below
 # this, the Von Neumann stability limit has collapsed, which in practice means a near-zero
 # `dz` cell rather than a genuinely stiff column.
+#
+# `ExplicitThermal` only. `ImplicitThermal` is unconditionally stable, never consults
+# `_max_safe_dt`, and so never warns however thin a cell becomes.
 const DT_MIN_WARN = 1e-4
+
+# --- ImplicitThermal solver ---
+#
+# Newton convergence on the surface energy balance. The iterate is the surface temperature, so
+# the tolerance is in kelvin, and 1e-10 matches `T_TOLERANCE`: converging harder than the
+# branch boundaries elsewhere in the model can resolve buys nothing. Convergence is quadratic
+# once the residual is small, so this typically costs one iteration more than 1e-6 would.
+#
+# The iteration count is a safety net, not an expected path. Divergence is not possible in the
+# usual sense — the linearized surface slope `Λ ≤ 0` strengthens an already diagonally dominant
+# M-matrix — but the two discontinuities held outside the loop (the emissivity melt switch and
+# the LV/LS latent-heat switch at `turbulent_heat_flux.jl:107`) can make the residual chatter
+# at the melting point rather than settle. Stopping at 20 and accepting the last iterate is
+# correct there: the flux actually applied is the true nonlinear flux at that iterate, so the
+# column still conserves energy exactly, only the surface balance is left slightly unsatisfied.
+const THERMAL_IMPLICIT_T_TOLERANCE = 1e-10
+const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
+
+# One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
+# `dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
+# Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the
+# maintenance; one extra call per iteration is cheaper than the accuracy would be worth.
+#
+# Measured, not assumed: the two flux evaluations together are 0.70 s of a 15.2 s run, so this
+# call is not the cost of the implicit path. An analytic replacement that froze the stability
+# coefficients was tried and reverted — it overshoots the true derivative up to 10x and more than
+# doubles the iteration count. See `GEMB._surface_energy_balance_slope`.
+#
+# 1e-4 K rather than the usual `sqrt(eps)` ≈ 1.5e-8: the derivative only sets the convergence
+# *rate*, never the answer (see `_thermal_solve!(::ImplicitThermal, ...)`), so a step large
+# enough to stay well clear of cancellation in the flux difference beats a step chosen to
+# minimize truncation error. It also matches `T_MELT_SWITCH_TOLERANCE`, so the difference does
+# not straddle the melting-point latent-heat switch any more often than the melt switch does.
+const THERMAL_BC_DERIVATIVE_STEP = 1e-4
+
+# Target sub-step [s] for `ImplicitThermal`, and the ceiling on the resulting count.
+#
+# Backward Euler is unconditionally stable, so this is an *accuracy* control, not a stability
+# one — the distinction that makes the implicit path cheap. The count is bounded by how fast the
+# surface forcing changes and is independent of the cell count, of `dz`, and of the stiffest
+# cell in the column, unlike the explicit path's ~29 sub-steps.
+#
+# Calibrated on a year of 3-hourly synthetic forcing (264-cell column, no spinup), comparing
+# whole-model output against a finely sub-stepped implicit run at 168.75 s. RMS temperature
+# differences [K] and the annual melt difference:
+#
+#   target [s]   n_sub(3h)   RMS surface   RMS interior   Δmelt      runtime
+#      5400          2          1.164         0.143       -2.46%      —
+#      2700          4          0.526         0.140       -1.66%      —
+#      1800          6          0.419         0.126       -1.19%     3.6 s
+#       900         12          0.341         0.141       -1.03%     5.8 s
+#       450         24          0.272         0.119       -0.08%     9.6 s
+#
+# Runtimes re-measured after the static condensation of the interior rows (2.67x); the accuracy
+# columns are unchanged by it, since it alters only how the same solve is factorized.
+#
+# 900 s is the knee: melt is within ~1% and the surface RMS has come down 3.4x from the
+# two-sub-step case, while halving again costs 79% more runtime for 0.07 K.
+#
+# The interior column is *not* converging in this table — it floors at ~0.13 K regardless of
+# target. That floor is not solver error: `manage_layer_thickness` merges and splits on discrete
+# thickness thresholds, so a single flipped merge changes the deep discretization by more than
+# the time integration does. Whole-model differencing therefore cannot resolve implicit accuracy
+# below ~0.13 K, which is why the surface RMS and the melt total are what this is tuned on.
+const THERMAL_IMPLICIT_DT_TARGET = 900.0
+const THERMAL_IMPLICIT_SUBSTEPS_MAX = 64
 
 # Diagnostic threshold, not a branch tolerance: how far above irreducible a cell must be for
 # `aquifer_diagnostics` to call it saturated. Deliberately loose, and expressed as a fraction

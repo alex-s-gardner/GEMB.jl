@@ -20,7 +20,9 @@ const GRAIN_RADIUS_UNIFORM = 0.5 # [mm]
 units of 1e-4 s, matching how `dt_divisors` is built from `fast_divisors` (integer
 divisors of the timestep, rescaled by 1e-4 to get seconds).
 """
-function _temperature_mp(dt_total_ms::Int; emissivity::Float64=0.97)
+function _temperature_mp(dt_total_ms::Int; emissivity::Float64=0.97,
+    thermal_solver::GEMB.AbstractThermalSolver=GEMB.ExplicitThermal(),
+    heat_capacity_method::Symbol=:constant)
     GEMB.ModelParameters(
         density_ice=917.0,
         emissivity=emissivity,
@@ -29,6 +31,8 @@ function _temperature_mp(dt_total_ms::Int; emissivity::Float64=0.97)
         emissivity_grain_radius_threshold=10.0,
         surface_roughness_effective_ratio=0.1,
         thermal_conductivity_method=:Sturm,
+        heat_capacity_method=heat_capacity_method,
+        thermal_solver=thermal_solver,
         dt_divisors=Float64.(GEMB.fast_divisors(dt_total_ms)) ./ 10000
     )
 end
@@ -275,4 +279,268 @@ end
     @test minimum(t_out) >= minimum(t_in) - T_STEADY_DRIFT_MAX
     @test maximum(t_out) <= maximum(t_in) + T_STEADY_DRIFT_MAX
     @test t_out[end] == t_in[end]   # Dirichlet bottom cell untouched
+end
+
+# ---------------------------------------------------------------------------------------
+# ImplicitThermal
+#
+# The two testsets above are explicit-specific: they exercise `_max_safe_dt` and the Von
+# Neumann positivity condition, neither of which exists on the implicit path. Everything
+# below is the implicit solver's own contract.
+# ---------------------------------------------------------------------------------------
+
+"""
+    _implicit_column(n)
+
+Graded, thermally varied column shared by the implicit testsets: `dz` from 0.02 m to ~0.37 m
+at n = 40, density increasing with depth, temperature increasing with depth.
+"""
+function _implicit_column(n::Int=40)
+    dz = [0.02 * 1.08^(i - 1) for i in 1:n]
+    density = [350.0 + 500.0 * (i - 1) / max(1, n - 1) for i in 1:n]
+    temperature = [250.0 + 20.0 * (i - 1) / max(1, n - 1) for i in 1:n]
+    grain_radius = fill(GRAIN_RADIUS_UNIFORM, n)
+    return dz, density, temperature, grain_radius
+end
+
+@testset "Implicit solver: Dirichlet cell is bit-unchanged" begin
+    # The invariant `AbstractThermalSolver` binds every implementation to, and the one the
+    # `!=` check inside the solver and `gemb_core`'s drift check both rely on. Bit-exact,
+    # not approximate: cell m is never an unknown of the tridiagonal system.
+    for n in (2, 3, 40, 265), hcm in (:constant, :CuffeyPaterson)
+        dz, density, temperature, grain_radius = _implicit_column(n)
+        mp = _temperature_mp(108000000; thermal_solver=GEMB.ImplicitThermal(),
+            heat_capacity_method=hcm)
+        cfs = GEMB.ClimateForcingStep(
+            10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+            200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+        t_in = copy(temperature)
+        shortwave_flux = [200.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+        t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+            copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp, true)
+        @test t_out[end] === t_in[end]
+    end
+end
+
+@testset "Implicit solver: energy budget closes" begin
+    # `verbose=true` asserts conservation internally, but "didn't throw" is a weak
+    # statement. Close the budget here explicitly against the same tolerance the solver
+    # uses, so a widened tolerance inside cannot hide a leak.
+    for hcm in (:constant, :CuffeyPaterson)
+        n = 40
+        dz, density, temperature, grain_radius = _implicit_column(n)
+        mp = _temperature_mp(108000000; thermal_solver=GEMB.ImplicitThermal(),
+            heat_capacity_method=hcm)
+        shortwave_flux = [200.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+        cfs = GEMB.ClimateForcingStep(
+            10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+            200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+
+        M = density .* dz
+        E_initial = GEMB.column_enthalpy(mp, M, temperature)
+        t_out, lw_up, shf, lhf, basal, _ = GEMB.calculate_temperature(
+            copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp, true)
+        E_final = GEMB.column_enthalpy(mp, M, t_out)
+
+        # Supplied over the whole forcing step. `lw_up` is returned as a positive magnitude
+        # of an outgoing flux, hence the minus sign.
+        E_supplied = (sum(shortwave_flux) + cfs.longwave_downward - lw_up + shf + lhf +
+                      basal) * cfs.dt
+        @test E_final - E_initial ≈ E_supplied atol = GEMB.energy_tolerance(E_initial)
+    end
+end
+
+@testset "Implicit solver: no new extremum (maximum principle)" begin
+    # The system matrix is an irreducibly diagonally dominant M-matrix, so A^-1 >= 0 and
+    # the solve cannot manufacture an over/undershoot. Forced neutrally (air at the surface
+    # temperature, balanced longwave, no shortwave) so diffusion is the only active process
+    # and the bound is tight — 1e-9, against the explicit path's 1.0 K allowance.
+    n = 40
+    dz, density, temperature, grain_radius = _implicit_column(n)
+    mp = _temperature_mp(864000000; thermal_solver=GEMB.ImplicitThermal())
+    T_air = temperature[1]
+    cfs = GEMB.ClimateForcingStep(
+        86400.0, T_air, 100000.0, 0.0, 5.0, 0.0,
+        _balanced_longwave(T_air),
+        100.0, T_air, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    t_in = copy(temperature)
+    t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, zeros(n), cfs, mp, true)
+
+    @test !any(isnan, t_out)
+    @test minimum(t_out) >= minimum(t_in) - 1e-9
+    @test maximum(t_out) <= maximum(t_in) + 1e-9
+    @test all(t_out .<= GEMB.CtoK)
+    @test t_out[end] === t_in[end]
+end
+
+@testset "Implicit solver: m == 2, the one-unknown system" begin
+    # `calculate_temperature` admits m == 2, which leaves exactly one unknown — the `n == 1`
+    # branch, where cell 1 is simultaneously the surface row and the row that carries the
+    # Dirichlet reservoir term. Neither the elimination loop nor the back-substitution runs.
+    dz = [0.05, 0.20]
+    density = [400.0, 700.0]
+    temperature = [255.0, 265.0]
+    grain_radius = fill(GRAIN_RADIUS_UNIFORM, 2)
+    mp = _temperature_mp(36000000; thermal_solver=GEMB.ImplicitThermal())
+    cfs = GEMB.ClimateForcingStep(
+        3600.0, 265.0, 100000.0, 0.0, 5.0, 100.0, 250.0,
+        200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    t_out, _, _, _, basal, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, [100.0, 0.0], cfs, mp, true)
+    @test !any(isnan, t_out)
+    @test t_out[end] === 265.0
+    @test t_out[1] > 255.0        # warmed by the flux and the warmer reservoir below
+    @test basal > 0.0             # heat flows up from the warmer bottom cell
+end
+
+@testset "Implicit solver: unaffected by a thin lens" begin
+    # The structural claim. A 1e-4 m cell collapses the explicit stability limit, while the
+    # implicit path neither consults the limit nor changes cost. Also pins that
+    # `dt_divisors = Float64[]` is accepted here, which would `BoundsError` under
+    # `ExplicitThermal`.
+    n = 40
+    dz, density, temperature, grain_radius = _implicit_column(n)
+    dz[n÷2] = 1e-4
+    cfs = GEMB.ClimateForcingStep(
+        10800.0, 265.0, 100000.0, 0.0, 5.0, 200.0, 300.0,
+        200.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    shortwave_flux = [200.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+
+    # No `dt_divisors` at all, which the explicit path cannot run without.
+    mp = GEMB.ModelParameters(thermal_solver=GEMB.ImplicitThermal(),
+        thermal_conductivity_method=:Sturm, dt_divisors=Float64[])
+    t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp, true)
+    @test !any(isnan, t_out)
+    @test t_out[end] === temperature[end]
+
+    # The explicit limit really has collapsed on this column, so the contrast is real:
+    # measured 3.98 s with the lens against 903 s without it, a factor of 227 in sub-step
+    # count for one thin cell. The implicit run above took `n_sub` from
+    # `THERMAL_IMPLICIT_DT_TARGET` alone and never saw either number.
+    K = GEMB.thermal_conductivity(temperature, density, mp)
+    dz_no_lens = [0.02 * 1.08^(i - 1) for i in 1:n]
+    dt_lens = GEMB._max_safe_dt(temperature, dz, density, K, mp)
+    dt_no_lens = GEMB._max_safe_dt(temperature, dz_no_lens, density, K, mp)
+    @test dt_lens ≈ 3.979 atol = 0.01
+    @test dt_no_lens / dt_lens > 200.0
+end
+
+@testset "Implicit solver: melting-point clamp and melt switch" begin
+    # The surface balance is non-smooth at CtoK — the `min(CtoK, T1)` clamp flattens every
+    # flux and every derivative — and `emissivity_method = :grain_radius_w_threshold` adds a
+    # second discontinuity there. Held outside the Newton loop; this pins that the solve
+    # still lands, conserves, and never pushes a cell above the melting point.
+    n = 40
+    dz, density, temperature, grain_radius = _implicit_column(n)
+    fill!(temperature, GEMB.CtoK - 1e-6)      # sitting on the clamp
+    mp = GEMB.ModelParameters(
+        thermal_solver=GEMB.ImplicitThermal(),
+        emissivity_method=:grain_radius_w_threshold,
+        emissivity_grain_radius_threshold=10.0,
+        thermal_conductivity_method=:Sturm,
+        dt_divisors=Float64[],
+    )
+    cfs = GEMB.ClimateForcingStep(
+        10800.0, 275.0, 100000.0, 0.0, 5.0, 600.0, 320.0,
+        400.0, 274.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    t_in = copy(temperature)
+    t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.5, grain_radius,
+        [600.0 * exp(-3.0 * (i - 1)) for i in 1:n], cfs, mp, true)
+    @test !any(isnan, t_out)
+    @test t_out[end] === t_in[end]
+    # Strong melt-season forcing drives the surface up, but the clamp is on the *flux*, not
+    # on the temperature: the cell may exceed CtoK, which is what `calculate_melt` consumes.
+    @test t_out[1] > t_in[1]
+
+    # The slope is exactly zero once clamped — the flux no longer sees T1 at all.
+    sfc = GEMB._ThermalSurface(1.3, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY,
+        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 5.0, 0.16 * 5.0, 1.0,
+        log(2.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
+        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), (5.0 / 2.0)^2)
+    @test GEMB._surface_energy_balance_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs,
+        -300.0, 10.0, 5.0) === 0.0
+    # Below the clamp it is strictly negative — the property that strengthens the diagonal.
+    lw, shf, lhf, _, _ = GEMB._surface_energy_balance(260.0, 0.97, sfc, cfs)
+    slope = GEMB._surface_energy_balance_slope(260.0, 0.97, sfc, cfs, lw, shf, lhf)
+    @test slope < 0.0
+
+    # The finite-difference slope must track the balance it differentiates. Loose (5%) only
+    # because the two turbulent components are clamped at ≤ 0 independently; the longwave term
+    # is analytic. An *analytic* turbulent slope that froze the Beljaars-Holtslag transfer
+    # coefficients was tried and reverted — it overshoots by up to 10x, which more than doubles
+    # the Newton iteration count. See the note in `_surface_energy_balance_slope`.
+    _Q(T) = let (lw2, s, l, _, _) = GEMB._surface_energy_balance(T, 0.97, sfc, cfs)
+        lw2 + s + l
+    end
+    fd = (_Q(260.0 + 1e-3) - _Q(260.0 - 1e-3)) / 2e-3
+    @test slope ≈ fd rtol = 0.05
+end
+
+@testset "Implicit solver: steady state is a fixed point" begin
+    # An isothermal column with air at its temperature, balanced longwave, and no shortwave
+    # is an exact steady state of the continuous problem, so backward Euler — which is exact
+    # on steady states regardless of step size — must reproduce it to within the turbulent
+    # flux residual alone. Tighter than the explicit path's equivalent for the same reason.
+    n = N_CELLS
+    dz = fill(DZ_UNIFORM, n)
+    density = fill(DENSITY_UNIFORM, n)
+    temperature = fill(260.0, n)
+    grain_radius = fill(GRAIN_RADIUS_UNIFORM, n)
+    mp = _temperature_mp(36000000; thermal_solver=GEMB.ImplicitThermal())
+    cfs = GEMB.ClimateForcingStep(
+        3600.0, 260.0, 100000.0, 0.0, 5.0, 0.0, _balanced_longwave(260.0),
+        100.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, zeros(n), cfs, mp, false)
+    @test abs(t_out[1] - 260.0) < T_STEADY_DRIFT_MAX
+    @test all(abs.(t_out .- 260.0) .< T_STEADY_DRIFT_MAX)
+end
+
+@testset "Implicit solver: chord capacity conserves under :CuffeyPaterson" begin
+    # The reason `chord_heat_capacity` exists. With a temperature-dependent c_p the lagged
+    # form `c_p(T_old)` injects (b/2)*dT^2 per cell per step; the chord form does not. Drive
+    # a large surface swing (the case where dT is biggest) and require the column enthalpy
+    # to close far tighter than that spurious term would allow.
+    n = 40
+    dz, density, temperature, grain_radius = _implicit_column(n)
+    mp = _temperature_mp(108000000; thermal_solver=GEMB.ImplicitThermal(),
+        heat_capacity_method=:CuffeyPaterson)
+    cfs = GEMB.ClimateForcingStep(
+        10800.0, 275.0, 100000.0, 0.0, 10.0, 800.0, 330.0,
+        400.0, 274.0, 10.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    shortwave_flux = [800.0 * exp(-3.0 * (i - 1)) for i in 1:n]
+    M = density .* dz
+    E_initial = GEMB.column_enthalpy(mp, M, temperature)
+    t_out, lw_up, shf, lhf, basal, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp, true)
+    E_final = GEMB.column_enthalpy(mp, M, t_out)
+    E_supplied = (sum(shortwave_flux) + cfs.longwave_downward - lw_up + shf + lhf +
+                  basal) * cfs.dt
+    @test E_final - E_initial ≈ E_supplied atol = GEMB.energy_tolerance(E_initial)
+
+    # The surface really did swing far enough for the lagged form to have mattered: the
+    # spurious term (b/2)*dT^2 per kg would exceed the tolerance many times over.
+    dT_surface = abs(t_out[1] - temperature[1])
+    @test dT_surface > 5.0
+    @test M[1] * (GEMB.HEAT_CAPACITY_CUFFEY_B / 2) * dT_surface^2 >
+          100 * GEMB.energy_tolerance(E_initial)
 end

@@ -4,6 +4,60 @@ import DimensionalData as DD
 using Dates
 
 """
+    AbstractThermalSolver
+
+Supertype for the schemes that advance the subsurface temperature profile over one forcing
+timestep. The concrete subtype held by `ModelParameters.thermal_solver` selects the scheme by
+dispatch, so a new scheme is a new subtype plus one `GEMB._thermal_solve!` method — there is no
+central branch to extend.
+
+The interface a subtype must implement is
+
+    _thermal_solve!(solver, temperature, dz, density, K, shortwave_flux,
+                    water_surface, grain_radius, sfc, cfs, mp, verbose)
+        -> (longwave_upward, heat_flux_sensible, heat_flux_latent,
+            heat_flux_basal, evaporation_condensation)
+
+updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
+the last in kg m-2 accumulated over the step). Two invariants bind every implementation: the
+bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged, and the
+returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
+energy and mass budgets against them.
+
+Subtypes are singletons today. They are structs rather than symbols so that a scheme can later
+carry its own preallocated workspace as fields without touching any dispatch site.
+
+See [`ExplicitThermal`](@ref) and [`ImplicitThermal`](@ref).
+"""
+abstract type AbstractThermalSolver end
+
+"""
+    ExplicitThermal()
+
+Explicit finite-volume thermal scheme, sub-stepped to the Von Neumann stability limit
+(see `GEMB._max_safe_dt`). The default. Conserves energy to the last bit — diffusion is applied
+as one flux per face with opposite signs to the two adjacent cells — at the cost of a sub-step
+count set by the single stiffest cell in the column.
+
+# References
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 3-4.
+"""
+struct ExplicitThermal <: AbstractThermalSolver end
+
+"""
+    ImplicitThermal()
+
+Backward-Euler thermal scheme on a tridiagonal system, solved by the Thomas algorithm.
+Unconditionally stable, so it needs no stability sub-stepping and is insensitive to thin
+layers; `mp.dt_divisors` and `GEMB._max_safe_dt` are unused on this path.
+
+# References
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4.
+- Thomas, L. H. (1949). *Elliptic Problems in Linear Difference Equations over a Network*.
+"""
+struct ImplicitThermal <: AbstractThermalSolver end
+
+"""
     ModelParameters
 
 All GEMB model configuration parameters with validation.
@@ -12,8 +66,12 @@ Construct with keyword arguments; unspecified fields use defaults.
 Defaults follow the recommendations of the two firn-model intercomparisons (Vandecrux et
 al., 2020, RetMIP; Lundin et al., 2017, FirnMICE) and, where those are silent, the shipped
 defaults of the Community Firn Model and IMAU-FDM. See the parameter table in `README.md`.
+
+Parameterized on the thermal solver type so that `thermal_solver` is concretely typed and the
+scheme is resolved at compile time. `::ModelParameters` in a signature still matches every
+instance.
 """
-Base.@kwdef struct ModelParameters
+Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # --- General ---
     run_prefix::String = "default"
 
@@ -188,11 +246,19 @@ Base.@kwdef struct ModelParameters
     # a gradient, not degrees.
     surface_slope::Float64 = 0.0
 
+    # --- Thermal Solver ---
+    # Which scheme advances the temperature profile. Selected by type, not by symbol, so the
+    # choice is resolved at compile time and a new scheme needs no branch here — see
+    # `AbstractThermalSolver`. `ExplicitThermal` is the default and the only scheme whose
+    # output the regression fingerprints are pinned to.
+    thermal_solver::S = ExplicitThermal()
+
     # --- Thermal Time Stepping ---
-    # The explicit thermal sub-step comes from the stability limit of the scheme actually being
-    # solved, whose face conductances are harmonic means over two half-cells:
-    # `dt ≤ ρᵢcᵢdzᵢ / (Gᵢ + Gᵢ₋₁)`. Not selectable — the textbook uniform-grid form
-    # `0.5·ρ·c·dz²/K` it replaced is not conservative on a graded grid. See `_max_safe_dt`.
+    # Read by `ExplicitThermal` only. That scheme's sub-step comes from the stability limit of
+    # the scheme actually being solved, whose face conductances are harmonic means over two
+    # half-cells: `dt ≤ ρᵢcᵢdzᵢ / (Gᵢ + Gᵢ₋₁)` — not the textbook uniform-grid form
+    # `0.5·ρ·c·dz²/K`, which is not conservative on a graded grid. See `_max_safe_dt`.
+    # `ImplicitThermal` is unconditionally stable and never reads this.
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver
 end
 
