@@ -1,10 +1,13 @@
-<img src="docs/src/assets/logo.png" align="right" width="130" alt="GEMB.jl logo: a firn column of grains coarsening with depth, in the Julia colors">
-
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://alex-s-gardner.github.io/GEMB.jl/dev/)
 [![Build Status](https://github.com/alex-s-gardner/GEMB.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/alex-s-gardner/GEMB.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 # GEMB.jl: Glacier Energy and Mass Balance Model
+
+<!-- The logo floats after the h1, not before it: GitHub gives h1/h2 a full-width
+     bottom border, and a float placed above the heading gets that rule drawn
+     straight through it. -->
+<img src="docs/src/assets/logo.png" align="right" width="130" alt="GEMB.jl logo: a firn column of grains coarsening with depth, in the Julia colors">
 
 GEMB.jl is a Julia implementation of the Glacier Energy and Mass Balance (GEMB, the "B" is
 silent) model — a one-dimensional model of the surface energy balance and vertical firn
