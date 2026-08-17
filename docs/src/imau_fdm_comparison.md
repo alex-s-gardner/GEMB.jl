@@ -39,7 +39,7 @@ read in August 2026.
 | Spinup convergence criterion | **GEMB richer** | GEMB tests drift slope as well as per-cycle delta |
 | Heat capacity, physical constants | **agreement** | same `152.5 + 7.122·T`, `g`, `Ec`, `Eg`, `ρ_i`, `T_melt` |
 | Ligtenberg `M0`/`M1` calibration | **GEMB ahead** | 9 calibration sets vs IMAU-FDM's 2 |
-| Implicit tridiagonal thermal solver | **gap, deferred** | interior rows transfer; the surface row does not — see below |
+| Implicit tridiagonal thermal solver | **implemented** (`ImplicitThermal`) | interior rows transferred; the surface row needed Newton — see below |
 
 ## What GEMB adopted
 
@@ -206,27 +206,43 @@ hardcodes throughout. `g = 9.81`, `Ec = 60000`, `Eg = 42400`, `ρ_i = 917`,
 `DAYS_PER_YEAR_DENSIFICATION = 365.0` is the ~0.07% standing offset already
 recorded in `README.md` deviation 4 — no new action.
 
+## Adopted later — numerics
+
+### Implicit tridiagonal thermal solver — implemented, with the surface row resolved
+
+This finding is now closed, and the prediction it made held up: the interior rows
+transferred directly, and the surface row was the entire difficulty.
+
+IMAU-FDM's `Solve_Temp_Imp` (`firn_physics.f90:169-241`) is attractively compact:
+~70 lines, θ-weighted, Thomas algorithm, following Versteeg & Malalasekera. It is
+**not** a drop-in, for the reason recorded here originally. Line 219 builds the
+surface boundary as `Su = 2·kip·Ts/DZ` — a *prescribed* Dirichlet surface
+temperature. GEMB solves a nonlinear surface energy balance (longwave, turbulent
+fluxes), plus shortwave penetrating to depth, so the surface row needs
+linearization and outer iteration, and the shortwave source has no analogue in
+IMAU-FDM's tridiagonal at all. The bottom boundary does match: both models hold a
+fixed bottom cell.
+
+GEMB's `ImplicitThermal` (`src/calculate_temperature.jl`) resolves the surface row
+with Newton rather than lagged Picard — a lagged surface flux *diverges*, since the
+fixed-point gain `|dQ/dT₁|·Δt/(M₁c)` exceeds 1 for a centimetre-scale surface cell
+at any Δt of interest. The flux is linearized into the diagonal as
+`Q(T₁) ≈ Q_k + Λ_k(T₁ − T_{1,k})` with `Λ ≤ 0`, which *strengthens* diagonal
+dominance. Because `Q_k` is the true nonlinear flux at the iterate, the two `Λ`
+terms cancel at convergence, so the slope's accuracy affects only the convergence
+rate and never the converged answer.
+
+Being confined to row 1, the nonlinearity also permits static condensation: the
+interior is eliminated bottom-up once per sub-step and Newton iterates on a single
+scalar equation, which measured 2.67× faster than re-sweeping the column per
+iteration.
+
+`ExplicitThermal` remains the default and is bit-identical to before. The implicit
+path is 2.4× *slower* on a well-conditioned column (5.75 s vs 2.44 s over a year of
+3-hourly forcing); its value is that its cost is independent of the stiffest cell.
+See [the CFM page](cfm_comparison.md) for the full measurements.
+
 ## Deliberately not adopted
-
-### Implicit tridiagonal thermal solver — the interior transfers, the surface does not
-
-The CFM pass flagged an implicit thermal solver as GEMB's highest-value numerics
-opportunity, and IMAU-FDM's `Solve_Temp_Imp` (`firn_physics.f90:169-241`) is
-attractively compact: ~70 lines, θ-weighted, Thomas algorithm, following Versteeg
-& Malalasekera. GEMB currently uses an explicit, Von Neumann sub-stepped enthalpy
-solve.
-
-**It is not a drop-in.** Line 219 builds the surface boundary as
-`Su = 2·kip·Ts/DZ` — a *prescribed* Dirichlet surface temperature. GEMB solves a
-nonlinear surface energy balance (longwave, turbulent fluxes) in
-`calculate_temperature.jl`, plus shortwave penetrating to depth, so the surface row
-would need linearization and outer iteration, and the shortwave source term has no
-analogue in IMAU-FDM's tridiagonal at all. The bottom boundary does match: both
-models hold a fixed bottom cell.
-
-The useful half of the finding is that the **interior** rows transfer directly.
-That lowers the cost of the eventual implementation below what the CFM assessment
-assumed, but it does not make it small.
 
 ### `numSnow` window-averaged temperature
 

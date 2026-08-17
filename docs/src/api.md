@@ -10,6 +10,9 @@ CurrentModule = GEMB
 ModelParameters
 ClimateForcing
 ClimateForcingStep
+AbstractThermalSolver
+ExplicitThermal
+ImplicitThermal
 ```
 
 ## Initialization

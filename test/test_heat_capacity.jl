@@ -76,6 +76,48 @@ end
     @test T * GEMB.heat_capacity(mp, T) == GEMB.specific_enthalpy(mp, T)
 end
 
+@testset "chord_heat_capacity is exact" begin
+    # The defining identity: h(T2) - h(T1) == c_chord*(T2 - T1), exactly, for any pair.
+    # An implicit thermal solver relies on this to conserve enthalpy while solving a linear
+    # system in temperature, so it is pinned to round-off over the whole physical range and
+    # both heat-capacity methods.
+    for m in (_hc_const(), _hc_cp())
+        for T1 in 200.0:6.1:GEMB.CtoK, T2 in 200.0:6.1:GEMB.CtoK
+            c = GEMB.chord_heat_capacity(m, T1, T2)
+            dh = GEMB.specific_enthalpy(m, T2) - GEMB.specific_enthalpy(m, T1)
+            @test c * (T2 - T1) ≈ dh atol = 1e-9
+            # Symmetric in its arguments, and positive.
+            @test c === GEMB.chord_heat_capacity(m, T2, T1)
+            @test c > 0.0
+        end
+        # T1 == T2 degenerates to the pointwise heat capacity (both sides of the identity
+        # vanish there, so it needs checking directly).
+        for T in (200.0, 240.0, GEMB.CtoK)
+            @test GEMB.chord_heat_capacity(m, T, T) === GEMB.heat_capacity(m, T)
+        end
+    end
+
+    # Under :constant it is the constant, independent of both arguments.
+    mp = _hc_const()
+    @test GEMB.chord_heat_capacity(mp, 200.0, GEMB.CtoK) === mp.heat_capacity_ice
+
+    # Under :CuffeyPaterson it is the MIDPOINT value, not the endpoint one. Using
+    # `heat_capacity(mp, T1)` instead — the obvious lagged form — injects a spurious
+    # (b/2)*dT^2 per step; this pins both the correct value and the size of that error.
+    cp = _hc_cp()
+    T1, T2 = 250.0, 262.0
+    @test GEMB.chord_heat_capacity(cp, T1, T2) === GEMB.heat_capacity(cp, 0.5 * (T1 + T2))
+    dh = GEMB.specific_enthalpy(cp, T2) - GEMB.specific_enthalpy(cp, T1)
+    lagged = GEMB.heat_capacity(cp, T1) * (T2 - T1)
+    @test dh - lagged ≈ (GEMB.HEAT_CAPACITY_CUFFEY_B / 2) * (T2 - T1)^2 rtol = 1e-10
+    @test dh - lagged ≈ 512.8 atol = 0.1     # J kg-1 for a 12 K step, per step
+
+    # The chord slope is exact even for an extreme span, where a linearization would not be.
+    c = GEMB.chord_heat_capacity(cp, 150.0, GEMB.CtoK)
+    @test c * (GEMB.CtoK - 150.0) ≈
+          GEMB.specific_enthalpy(cp, GEMB.CtoK) - GEMB.specific_enthalpy(cp, 150.0) atol = 1e-9
+end
+
 @testset "temperature_from_specific_enthalpy round-trips" begin
     for m in (_hc_const(), _hc_cp())
         for T in 180.0:0.5:GEMB.CtoK
