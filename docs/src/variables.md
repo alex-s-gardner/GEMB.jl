@@ -57,7 +57,7 @@ Below is a list of variables used by GEMB.
 | longwave\_net                         | W m<sup>-2</sup>  | Net longwave radiation.                                                                                                                          |
 | mass\_added                           | kg m<sup>-2</sup> | Mass added (positive) or removed (negative) by manage\_layers.                                                                                  |
 | melt                                  | kg m<sup>-2</sup> | Melt mass                                                                                                                                        |
-| new\_snow\_method                     | string            | Fresh snow density model (e.g., "350kgm2", "Fausto").                                                                                            |
+| new\_snow\_method                     | string            | Fresh snow density model (e.g., :Constant350, :Fausto).                                                                                            |
 | output\_frequency                     | string            | Output resolution: "daily", "monthly", "all", or "last".                                                                                                 |
 | output\_padding                       | integer value     | Extra vertical levels for grid resizing (default: 1000).                                                                                         |
 | percolation\_depth                    | m                 | Deepest the meltwater wetting front reached during the output interval (an interval maximum, not a mean). Comparable to upward-looking-radar estimates. Zero when no water moved.        |

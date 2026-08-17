@@ -87,7 +87,7 @@ end
 end
 
 @testset "fresh snow enters at age 0" begin
-    mp = initialize_parameters(new_snow_method=Symbol("150kgm2"), column_dzmin=0.05)
+    mp = initialize_parameters(new_snow_method=:Constant150, column_dzmin=0.05)
     @testset "new cell" begin
         # 50 kg m-2 at 150 kg m-3 is 0.33 m, well above dzmin => its own cell.
         n = 5

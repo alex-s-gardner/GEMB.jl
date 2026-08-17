@@ -33,15 +33,16 @@ Base.@kwdef struct ModelParameters
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
     # (the default) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
-    # Fresh-snow density parameterization. The default `"350kgm2"` is a constant 350 kg m-3,
-    # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Fausto` is the Fausto et al.
+    # Fresh-snow density parameterization. The default `:Constant350` is a constant 350 kg m-3,
+    # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Constant150` and
+    # `:Constant315` are the other bare constants. `:Fausto` is the Fausto et al.
     # (2018) Greenland fit frozen at a single temperature (315 kg m-3, that fit evaluated at
     # T ≈ 256.2 K); `:FaustoFit` is the same fit carrying its temperature dependence, as
     # IMAU-FDM implements it — though note IMAU-FDM drives it from a one-year running-mean
     # temperature on its Greenland domain, where `:FaustoFit` uses the instantaneous value.
     # Both also select the Crocus wind-dependent fresh-grain properties.
     # See `fresh_snow_density`.
-    new_snow_method::Symbol = Symbol("350kgm2")
+    new_snow_method::Symbol = :Constant350
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
     # Calonne (2019) conductivity and Barnola (1991) densification fits were built against.

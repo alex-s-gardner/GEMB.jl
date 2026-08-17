@@ -38,7 +38,7 @@ end
     age = zeros(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -72,7 +72,7 @@ end
     density_snow = 150.0
 
     mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -115,7 +115,7 @@ end
     density_snow = 150.0
 
     mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -161,7 +161,7 @@ end
     age = zeros(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -212,7 +212,7 @@ end
     # `rain_heat_capacity = :ice` reproduces the pre-Fix-5 convention exactly, so the old
     # reference is retained as the check that the gate is a faithful selector.
     mp_ice = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"), column_dzmin=0.05, density_ice=917.0,
+        new_snow_method=:Constant150, column_dzmin=0.05, density_ice=917.0,
         albedo_snow=0.85, albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15, rain_heat_capacity=:ice,
     )
@@ -238,7 +238,7 @@ end
     age = zeros(n)
 
     mp = GEMB.ModelParameters(
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -282,9 +282,9 @@ end
         precipitation_mean=precipitation_mean, temperature_air_mean=temperature_air_mean,
         wind_speed_mean=wind_speed_mean)
 
-    # Method 1: "350kgm2"
+    # Method 1: :Constant350
     mp1 = GEMB.ModelParameters(
-        new_snow_method=Symbol("350kgm2"),
+        new_snow_method=:Constant350,
         column_dzmin=0.05,
         density_ice=917.0,
         albedo_snow=0.85,
@@ -296,6 +296,26 @@ end
         grain_dendricity, grain_sphericity, age,
         cfs, mp1, false)
     @test d1[1] == 350.0
+
+    # :Constant315 — the bare constant, numerically equal to :Fausto but without the
+    # Crocus wind-dependent fresh-grain properties that :Fausto also selects.
+    mp1b = GEMB.ModelParameters(
+        new_snow_method=:Constant315,
+        column_dzmin=0.05,
+        density_ice=917.0,
+        albedo_snow=0.85,
+        albedo_method=:GardnerSharp,
+        rain_temperature_threshold=273.15,
+    )
+    (_, _, d1b, _, re1b, gdn1b, gsp1b, _, _) = GEMB.calculate_accumulation(
+        t_vec, dz, density, water, grain_radius,
+        grain_dendricity, grain_sphericity, age,
+        cfs, mp1b, false)
+    @test d1b[1] == 315.0
+    # ...and the default grain properties, not the Crocus wind-dependent ones.
+    @test re1b[1] == GEMB.RE_NEW_SNOW
+    @test gdn1b[1] == GEMB.GDN_NEW_SNOW
+    @test gsp1b[1] == GEMB.GSP_NEW_SNOW
 
     # Method 2: "Fausto"
     mp2 = GEMB.ModelParameters(
@@ -379,7 +399,7 @@ end
 
     # The four older methods must be bit-identical with and without the new argument: none
     # of them reads it, so adding it cannot move an existing run.
-    for method in (Symbol("150kgm2"), Symbol("350kgm2"), :Fausto, :Kaspers, :KuipersMunneke)
+    for method in (:Constant150, :Constant315, :Constant350, :Fausto, :Kaspers, :KuipersMunneke)
         mp = _mp(method)
         @test GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0) ===
               GEMB.fresh_snow_density(mp, 260.0, 200.0, 5.0, 240.0)
@@ -411,7 +431,7 @@ end
     @test gsp_a[1] == gsp_c[1]
     @test re_a[1] == re_c[1]
     # And those differ from the constants the other methods use, so the test above has teeth.
-    (_, _, _, _, re_d, gdn_d, gsp_d, _, _) = _fresh_cell(_mp(Symbol("350kgm2")); temperature_air=250.0)
+    (_, _, _, _, re_d, gdn_d, gsp_d, _, _) = _fresh_cell(_mp(:Constant350); temperature_air=250.0)
     @test gdn_d[1] == GEMB.GDN_NEW_SNOW
     @test gdn_a[1] != GEMB.GDN_NEW_SNOW
 

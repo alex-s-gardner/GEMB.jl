@@ -45,7 +45,7 @@ function _make_core_mp(; dt=3600.0, column_depth_max=0.9)
         column_depth_max=column_depth_max,
         column_ztop=2.0,
         column_zy=1.1,
-        new_snow_method=Symbol("150kgm2"),
+        new_snow_method=:Constant150,
         density_ice=917.0,
         water_irreducible_saturation=0.07,
         densification_method=:HerronLangway,
