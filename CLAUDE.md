@@ -264,9 +264,8 @@ Two things follow from GEMB.jl being independent of the MATLAB model:
   is a deliberate, separately-argued act — the four default changes in v2.0.0 are the
   worked example.
 
-If a change moves model output, add a one-line entry to the **Physics notes** subsection of
-`README.md` stating what changed and what it affects, concisely and factually. Do not
-editorialize. If the change also alters the synthetic regression fingerprint beyond its
+If a change moves model output, add a one-line entry to `docs/src/physics_notes.md` stating
+what changed and what it affects, concisely and factually. Do not editorialize. If the change also alters the synthetic regression fingerprint beyond its
 tolerances, re-pin `test/test_synthetic_regression.jl` and append the reason and the
 measured deltas to the history at the top of that file.
 

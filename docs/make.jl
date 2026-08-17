@@ -17,6 +17,8 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "Model Architecture" => "architecture.md",
+        "Model Parameters" => "parameters.md",
+        "Physics Notes" => "physics_notes.md",
         "Variable Reference" => "variables.md",
         "API Reference" => "api.md",
         "Internals" => [

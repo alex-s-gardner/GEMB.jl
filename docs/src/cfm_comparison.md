@@ -58,8 +58,8 @@ Reading CFM against GEMB surfaced a small set of findings that are *not* about
 CFM's extra capabilities but about places where GEMB's own physics was internally
 inconsistent, or where a cheap, well-cited parameterization was missing. Those
 were fixed. Each is gated on a `ModelParameters` `Symbol` so the prior behaviour
-remains reproducible bit-for-bit, and each appears in the **Physics notes**
-section of `README.md`.
+remains reproducible bit-for-bit, and each appears in the
+[Physics notes](@ref "Physics notes").
 
 ### Fix 1 — densification driven by mean snowfall, not mean precipitation
 
@@ -124,7 +124,7 @@ setting**, particularly with `:ArthernB`.
 
 Measured effect, synthetic forcing, 75-cycle climatological spinup then a 32-year
 3-hourly transient with `densification_method=:ArthernB` — final mean column
-density, against the 877.7 kg m⁻³ reference in `README.md` deviation 1:
+density, against the 877.7 kg m⁻³ reference in [Physics notes](@ref "Physics notes") deviation 1:
 
 | `grain_growth_method` | mean column density | median grain radius |
 |---|---|---|
@@ -266,7 +266,7 @@ GEMB — the two are coupled decisions.
 stage. Out of scope this pass. Worth recording that GEMB already has
 `:Barnola1991`, an `Arthern2010T`-equivalent (`:ArthernB`), `:GSFC2020`,
 `:Simonsen2013`, `:Ligtenberg`, `:Crocus` and `:CrocusPure`, and that GEMB's
-`:ArthernB` was validated against CFM's `Arthern2010T` to 1e-8 (`README.md`
+`:ArthernB` was validated against CFM's `Arthern2010T` to 1e-8 ([Physics notes](@ref "Physics notes")
 deviation 3) — the cross-validation path exists and works.
 
 ### Implicit tridiagonal thermal solver — implemented, opt-in
@@ -344,7 +344,7 @@ strictly more useful. Not a gap.
 - **`GRAVITY`**: CFM 9.8, GEMB 9.81.
 - **Seconds per year**: CFM `31557600`; GEMB uses a deliberate
   `DAYS_PER_YEAR_DENSIFICATION = 365.0` (`src/constants.jl`). The resulting ~0.1%
-  standing offset is already recorded in `README.md` deviation 4.
+  standing offset is already recorded in the [Physics notes](@ref "Physics notes") as deviation 4.
 - **Surface grain size**: CFM uses Linow (2012) (`physics.py:1508`); GEMB uses a
   fixed `RE_NEW_SNOW`.
 - **Ponding thresholds**: CFM's `RhoImp = 830` and `ThickImp = 0.1` match GEMB's

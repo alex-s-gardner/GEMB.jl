@@ -44,7 +44,7 @@ read in August 2026.
 ## What GEMB adopted
 
 Both findings land as **new `Symbol` option values**, leaving the defaults of the day
-bit-identical. Neither appears in `README.md`'s **Physics notes** section, because neither
+bit-identical. Neither appears in the [Physics notes](@ref "Physics notes"), because neither
 changed a default when it was added. (`:Calonne2019` later *became* the default in v2.0.0,
 for the separate reasons recorded there.)
 
@@ -204,7 +204,7 @@ hardcodes throughout. `g = 9.81`, `Ec = 60000`, `Eg = 42400`, `ρ_i = 917`,
 `T_melt = 273.15` all match (`settings/*/constants.toml`). IMAU-FDM's
 `days_per_year = 365.25` against GEMB's deliberate
 `DAYS_PER_YEAR_DENSIFICATION = 365.0` is the ~0.07% standing offset already
-recorded in `README.md` deviation 4 — no new action.
+recorded in the [Physics notes](@ref "Physics notes") as deviation 4 — no new action.
 
 ## Adopted later — numerics
 
