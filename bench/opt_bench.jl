@@ -1,4 +1,11 @@
 # Optimization benchmark + numerical snapshot driver (skill: julia_optimize)
+#
+#   julia --project=bench bench/opt_bench.jl                    # compare against the baseline
+#   SAVE_SNAPSHOT=1 julia --project=bench bench/opt_bench.jl    # re-pin the baseline
+#
+# `opt_bench_snapshot.txt` is tracked, so an optimization is checked against the
+# baseline everyone else measured. Re-pin only when a change is *meant* to move the
+# numbers, and say what moved them in the commit message.
 using GEMB
 using GEMB_ClimateForcing  # synthetic forcing lives in the companion package
 using BenchmarkTools
