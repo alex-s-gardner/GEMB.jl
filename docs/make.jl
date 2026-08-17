@@ -28,9 +28,14 @@ makedocs(;
     ],
 )
 
-deploydocs(;
+# DocumenterVitepress.deploydocs, *not* Documenter.deploydocs: since DV 0.2 the two are
+# incompatible, because one build can emit several version folders (v1.2.3, v1.2, v1,
+# stable) that VitePress renders into numbered subdirectories of `target`. Documenter's
+# own deploydocs uploads `target` verbatim, which publishes those intermediates
+# (`build/1/`, `build/.documenter/`) instead of the site itself, and every page 404s.
+DocumenterVitepress.deploydocs(;
     repo="github.com/alex-s-gardner/GEMB.jl",
-    target="build",   # DocumenterVitepress writes the rendered site here
+    target=joinpath(@__DIR__, "build"),
     branch="gh-pages",
     devbranch="main",
     push_preview=true,
