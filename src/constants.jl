@@ -185,6 +185,37 @@ const DT_MIN_WARN = 1e-4
 const THERMAL_IMPLICIT_T_TOLERANCE = 1e-10
 const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
 
+# Smallest damping weight the surface-row Newton iteration will apply to its own step.
+#
+# Fourteau et al. (2026) Sect. 3.1.3 notes that Newton's method "is not globally convergent" and
+# pairs its fixed iteration cap with a fallback rather than accepting whatever the cap returns.
+# GEMB needs the same guard for the same structural reason, but *not* their remedy: theirs is
+# adaptive timestep halving, driven by the corner points of a regularized water-retention curve
+# that GEMB (a bucket scheme, with no matric potential) does not have.
+#
+# What GEMB's iteration actually does when it fails was measured over a year of 3-hourly
+# synthetic forcing, 3.77M sub-step solves. 39% of solves reached the 20-iteration cap
+# unconverged, and tracing the iterates shows why: they are **limit cycles**, not divergence —
+# 2-cycles and 3-cycles of amplitude ~0.02 K (median; p90 0.105 K, max 2.7 K), many of them
+# straddling 273.15 K, i.e. chattering across the LV/LS latent-heat switch and the emissivity
+# melt switch held outside the loop. Sub-step halving was implemented first and rejected on the
+# measurement: it reduces the residual 26x (0.46 K to 0.017 K median) but converges almost
+# nothing, because the cycle is set by a discontinuity in the residual, not by the step size —
+# failures persisted at the maximum halving depth with mean depth 5.34 of 6.
+#
+# Damping addresses the measured mode directly: the weight is halved whenever a step fails to
+# shrink, which contracts a cycle onto its own mean. It cut non-convergence 44x, from 1,480,242
+# solves to 33,771 (0.9% of solves), at no measurable runtime cost (5.44 s against 5.42 s), and
+# without a fallback path that would have to be maintained.
+#
+# The floor stops the weight underflowing to zero, which would freeze the iterate and report the
+# initial guess as the answer. 2^-10 is ~1e-3: ten halvings is already more than the 20-iteration
+# cap can consume, so this is a guard rather than a tuned value.
+#
+# Converged solves are bit-identical to the undamped iteration: the residual falls monotonically
+# on the quadratic path, so `weight` never leaves 1.0 and the update is exactly the Newton step.
+const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
+
 # One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
 # `dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
 # Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the

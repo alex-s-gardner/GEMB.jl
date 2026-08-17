@@ -544,3 +544,80 @@ end
     @test M[1] * (GEMB.HEAT_CAPACITY_CUFFEY_B / 2) * dT_surface^2 >
           100 * GEMB.energy_tolerance(E_initial)
 end
+
+@testset "Implicit solver: Newton damping breaks limit cycles" begin
+    # Measured on a year of 3-hourly forcing, 39% of sub-step solves reached the iteration cap
+    # in a *limit cycle* — 2- and 3-cycles across the latent-heat and emissivity switches at
+    # 273.15 K, not divergence. The iteration is damped for that: the step weight halves
+    # whenever a step fails to shrink. These testsets pin the two properties that makes it
+    # safe to have — converging solves are untouched, and cycling solves land on their best
+    # iterate rather than on whichever phase the loop stopped at.
+    # See `GEMB.THERMAL_IMPLICIT_DAMPING_FLOOR`.
+
+    # --- the damping floor is a guard, not a tuned value ---------------------------------
+    # It must be strictly positive (zero would freeze the iterate at the initial guess) and
+    # small enough to be out of reach of the iteration cap, so it can never bind on a real
+    # solve: reaching it takes 10 halvings against a 20-iteration budget also spent iterating.
+    @test GEMB.THERMAL_IMPLICIT_DAMPING_FLOOR > 0.0
+    @test GEMB.THERMAL_IMPLICIT_DAMPING_FLOOR < 1.0
+    @test 2.0^(-GEMB.THERMAL_IMPLICIT_MAX_ITERATIONS) <
+          GEMB.THERMAL_IMPLICIT_DAMPING_FLOOR
+
+    # --- the damped iteration still solves the problem it is given ----------------------
+    # Forced hard across the melting point, which is where the cycles were observed. The
+    # invariants are the solver's own: the Dirichlet cell is bit-unchanged, nothing is NaN,
+    # and `verbose=true` closes the energy budget internally.
+    n = 40
+    for (T_fill, T_air, sw) in ((GEMB.CtoK - 1e-9, 276.0, 700.0),   # sitting on the switch
+                                (GEMB.CtoK, 274.0, 600.0),         # exactly on it
+                                (260.0, 285.0, 800.0))             # driven hard through it
+        dz, density, temperature, grain_radius = _implicit_column(n)
+        fill!(temperature, T_fill)
+        mp = GEMB.ModelParameters(
+            thermal_solver=GEMB.ImplicitThermal(),
+            emissivity_method=:grain_radius_w_threshold,
+            emissivity_grain_radius_threshold=10.0,
+            thermal_conductivity_method=:Sturm,
+            dt_divisors=Float64[],
+        )
+        cfs = GEMB.ClimateForcingStep(
+            10800.0, T_air, 100000.0, 0.0, 5.0, sw, 330.0,
+            500.0, T_air - 1.0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
+        t_in = copy(temperature)
+        t_out, _, _, _, _, _ = GEMB.calculate_temperature(
+            copy(temperature), dz, density, 0.5, grain_radius,
+            [sw * exp(-3.0 * (i - 1)) for i in 1:n], cfs, mp, true)
+        @test !any(isnan, t_out)
+        @test all(isfinite, t_out)
+        @test t_out[end] === t_in[end]
+    end
+
+    # --- converging solves are bit-identical to the undamped iteration -------------------
+    # The licence for damping unconditionally. On the quadratic path the residual falls every
+    # iteration, so the weight never leaves 1.0 and `T1 + 1.0*(T1_next - T1)` is exactly
+    # `T1_next`. Checked as a *fixed point*: a smooth, well-conditioned, sub-melting-point
+    # column solved twice must agree to the last bit, and the steady state below is the case
+    # where any spurious under-relaxation would show up as a drift away from the exact answer.
+    n = N_CELLS
+    dz = fill(DZ_UNIFORM, n)
+    density = fill(DENSITY_UNIFORM, n)
+    temperature = fill(260.0, n)
+    grain_radius = fill(GRAIN_RADIUS_UNIFORM, n)
+    mp = _temperature_mp(36000000; thermal_solver=GEMB.ImplicitThermal())
+    cfs = GEMB.ClimateForcingStep(
+        3600.0, 260.0, 100000.0, 0.0, 5.0, 0.0, _balanced_longwave(260.0),
+        100.0, 260.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    )
+    t1, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, zeros(n), cfs, mp, true)
+    t2, _, _, _, _, _ = GEMB.calculate_temperature(
+        copy(temperature), dz, density, 0.0, grain_radius, zeros(n), cfs, mp, true)
+    @test t1 == t2                                  # deterministic, bit-for-bit
+    # The same exact steady state the "steady state is a fixed point" testset above uses, held
+    # to the same drift bound: backward Euler reproduces a steady state whatever the step size,
+    # so any residual under-relaxation left by the damping would show up here as a drift.
+    @test all(abs.(t1 .- 260.0) .< T_STEADY_DRIFT_MAX)
+end

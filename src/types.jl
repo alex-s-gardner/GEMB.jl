@@ -166,6 +166,19 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `irreducible_saturation`.
     water_irreducible_method::Symbol = :ColeouLesaffre
     water_irreducible_saturation::Float64 = 0.07
+    # What melting does to a cell's geometry. Refreezing is at constant thickness under both
+    # settings; this field only concerns the melt half of the phase change.
+    #
+    # `:thickness` (the default) holds density fixed and shrinks `dz`, which is Crocus's
+    # treatment and what GEMB has always done. `:density` holds `dz` fixed and lowers density,
+    # which is SNOWPACK's treatment and the one Fourteau et al. (2026) Sect. 2.3 argues for:
+    # the phase change happens *within* the microstructure, so it removes ice from the pore
+    # walls rather than collapsing the layer, and the high density of wet snow is better
+    # explained by its low viscosity under overburden than by melt-driven thinning. `:density`
+    # also removes an asymmetry — under `:thickness` refreezing raises density at constant
+    # thickness while melting does not lower it, so a melt-refreeze cycle that returns the
+    # cell's mass does not return its geometry. See `calculate_melt`.
+    melt_geometry::Symbol = :thickness
     # The density-based impermeability criterion of the bucket scheme: percolating water is
     # routed to runoff at a contiguous run of cells at or above `impermeable_density` that is
     # thicker than `impermeable_thickness`. Below that thickness water passes through, on the

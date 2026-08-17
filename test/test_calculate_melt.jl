@@ -515,3 +515,102 @@ end
     @test firn_air_content(Float64[], Float64[], ρi) == 0.0
     @test firn_air_content([0.0, 1.0], [400.0, 400.0], ρi) ≈ (1 - 400 / ρi) rtol = 1e-14
 end
+
+@testset "melt_geometry" begin
+    # Fourteau et al. (2026) Sect. 2.3 argues melting should lower a cell's density at
+    # constant thickness (SNOWPACK) rather than shrink its thickness at constant density
+    # (Crocus, and GEMB's `:thickness` default). Assertions are on the invariants the two
+    # settings are defined by, plus the mass conservation both must satisfy.
+    function _run(geometry; T_surface=280.0, n=5)
+        temperature, dz, density, water, grain_radius, grain_dendricity,
+            grain_sphericity, age = _make_melt_inputs(; n=n)
+        temperature[1] = T_surface
+        mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
+            water_irreducible_method=:constant, melt_geometry=geometry)
+        M_initial = sum(dz .* density) + sum(water)
+        out = GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), copy(water),
+            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age),
+            0.0, mp, true)
+        return out, M_initial, dz, density
+    end
+
+    # --- the defining invariant of each setting --------------------------------------
+    # Cell 1 is the only one that melts here (the melt refreezes below it), so it is the
+    # cell whose geometry the setting governs.
+    (out_t, M0_t, dz0, rho0) = _run(:thickness)
+    (out_d, M0_d, _, _) = _run(:density)
+    dz_t, rho_t = out_t[2], out_t[3]
+    dz_d, rho_d = out_d[2], out_d[3]
+
+    # `:thickness` — density held, thickness shrinks.
+    @test rho_t[1] ≈ rho0[1] rtol = 1e-12
+    @test dz_t[1] < dz0[1]
+
+    # `:density` — thickness held, density falls.
+    @test dz_d[1] ≈ dz0[1] rtol = 1e-12
+    @test rho_d[1] < rho0[1]
+
+    # Both remove the same ice mass from the cell: only the (dz, ρ) split differs.
+    @test dz_t[1] * rho_t[1] ≈ dz_d[1] * rho_d[1] rtol = 1e-12
+
+    # And the same melt total, since melt is set by the energy excess, not the geometry.
+    @test out_t[9] ≈ out_d[9] rtol = 1e-12
+
+    # --- mass conservation under both (verbose=true already asserts it internally) ----
+    for (out, M0) in ((out_t, M0_t), (out_d, M0_d))
+        M_final = sum(out[2] .* out[3]) + sum(out[4]) + out[11]
+        @test M_final ≈ M0 atol = 1e-9
+    end
+
+    # --- the asymmetry `:density` removes -------------------------------------------
+    # A melt-refreeze cycle that restores a cell's mass should restore its geometry.
+    # Refreezing is at constant thickness under both settings, so only `:density` closes
+    # the loop: melt at constant density then refreeze at constant thickness leaves the
+    # cell thinner and denser than it started.
+    function _cycle(geometry)
+        mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
+            water_irreducible_method=:constant, melt_geometry=geometry)
+        M = [40.0]
+        density = [400.0]
+        dz = [0.1]
+        # Melt 4 kg out of the cell, then put it straight back as refrozen pore water.
+        dz_cell = GEMB.remove_melt!(mp, M, density, dz, 1, 4.0)
+        M[1] += 4.0
+        density[1] = M[1] / dz_cell
+        return dz_cell, density[1]
+    end
+    dz_cycle_t, rho_cycle_t = _cycle(:thickness)
+    dz_cycle_d, rho_cycle_d = _cycle(:density)
+    @test dz_cycle_d ≈ 0.1 rtol = 1e-14
+    @test rho_cycle_d ≈ 400.0 rtol = 1e-14
+    @test dz_cycle_t < 0.1
+    @test rho_cycle_t > 400.0
+
+    # --- `remove_melt!` unit behaviour ----------------------------------------------
+    # Returns the post-melt thickness the pore-space expressions are written against, and
+    # both settings agree on it when nothing melts.
+    for geometry in (:thickness, :density)
+        mp = GEMB.ModelParameters(density_ice=920.0, melt_geometry=geometry)
+        M = [40.0]; density = [400.0]; dz = [0.1]
+        @test GEMB.remove_melt!(mp, M, density, dz, 1, 0.0) ≈ 0.1 rtol = 1e-14
+        @test density[1] ≈ 400.0 rtol = 1e-14
+        @test M[1] ≈ 40.0 rtol = 1e-14
+    end
+
+    # A cell that melts out entirely reports zero pore space and keeps a usable density,
+    # rather than dividing by a zeroed one. `irreducible_saturation` is evaluated on the
+    # density this leaves, so a zero there would give NaN retention.
+    for geometry in (:thickness, :density)
+        mp = GEMB.ModelParameters(density_ice=920.0, melt_geometry=geometry)
+        M = [40.0]; density = [400.0]; dz = [0.1]
+        dz_cell = GEMB.remove_melt!(mp, M, density, dz, 1, 40.0)
+        @test dz_cell ≈ 0.0 atol = 1e-14
+        @test density[1] > 0.0
+        @test isfinite(GEMB.irreducible_saturation(mp, density[1]))
+    end
+
+    # --- the default is unchanged, and the option is validated -----------------------
+    @test GEMB.ModelParameters().melt_geometry === :thickness
+    @test initialize_parameters(melt_geometry=:density).melt_geometry === :density
+    @test_throws AssertionError initialize_parameters(melt_geometry=:bogus)
+end

@@ -73,6 +73,7 @@ function validate_parameters(mp::ModelParameters)
 
     # Water
     @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"
+    @assert mp.melt_geometry in (:thickness, :density) "melt_geometry must be thickness or density"
     @assert 0 <= mp.water_irreducible_saturation <= 0.2 "water_irreducible_saturation must be in [0, 0.2]"
     # Bounded at 917 (pure ice, and the largest value used by any RetMIP model) rather than at
     # `mp.density_ice`: a threshold above the column's ice density is inert, not invalid — a

@@ -143,6 +143,7 @@ rationale is in its `ModelParameters` docstring (`?ModelParameters`).
 | `mean_temperature_method` | **`:arithmetic`**, `:arrhenius` | How the mean annual temperature driving densification is averaged |
 | `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`; `:Marbouty` stops dead at 400 kg m⁻³ |
 | `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre; RetMIP §5.4 ties the flat 0.07 to under-retention in the percolation zone |
+| `melt_geometry` | **`:thickness`**, `:density` | What melting does to a cell: shrink `dz` at fixed density (Crocus) or lower density at fixed `dz` (SNOWPACK). Only `:density` makes a melt–refreeze cycle return the geometry as well as the mass |
 | `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models run instantaneous. The other two give a drainage timescale and permit firn aquifers |
 | `new_snow_method` | **`:Constant350`**, `:Constant315`, `:Constant150`, `:Fausto`, `:FaustoFit`, `:Pahaut`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350. `:Constant*` are bare constants; `:Fausto`/`:FaustoFit`/`:Pahaut` also select the Crocus wind-dependent fresh-grain properties. `:Pahaut` is the only alpine-seasonal-snow fit — prefer it for temperate and mid-latitude glaciers, where the polar fits run too dense |
 | `albedo_method` | **`:GardnerSharp`**, `:BrunLefebre`, `:GreuellKonzelmann`, `:None` | |
@@ -366,6 +367,23 @@ defect exists.
   RetMIP Sect. 5.4 attributes part of the multi-model under-retention in the percolation zone
   to the flat 0.07. Retention is zero at and above pore close-off, as in CFM. `:constant`
   remains available and holds `water_irreducible_saturation` at every density.
+- **Added `melt_geometry`** — what melting does to a cell's geometry. `:thickness` (the
+  default, and what GEMB has always done, as in Crocus) holds density fixed and shrinks `dz`;
+  `:density` holds `dz` fixed and lowers density, as SNOWPACK does and as Fourteau et al.
+  (2026) Sect. 2.3 argues for, on the grounds that the phase change occurs within the
+  microstructure and that the high density of wet snow is better explained by its low
+  viscosity under overburden. Refreezing is at constant thickness under both, so only
+  `:density` returns a cell's geometry along with its mass over a melt–refreeze cycle.
+  Affects melting cells' `dz` and `density`, and through the irreducible-retention capacity
+  their water and runoff. Defaults leave output unchanged.
+- **The implicit thermal solver's surface-row Newton iteration is damped.** The step weight is
+  halved whenever a step fails to shrink, and the least-residual iterate is retained if the
+  iteration cap is reached. Measured over a year of 3-hourly synthetic forcing (3.77M sub-step
+  solves), 39% of solves previously reached the cap without converging, in limit cycles of
+  ~0.02 K median amplitude straddling the latent-heat switch at 273.15 K rather than in
+  divergence; damping cuts that to 0.9% at no measurable runtime cost. Affects
+  `thermal_solver = ImplicitThermal()` only (−0.02% melt on the benchmark run);
+  `ExplicitThermal` and converging solves are bit-identical.
 - **Added `impermeable_density` and `impermeable_thickness`**, exposing the bucket scheme's
   density-based impermeability criterion, which MATLAB hardcodes as `830` kg m⁻³ and `0.1` m in
   `calculate_melt`. Water is routed to runoff at a contiguous run of cells at or above

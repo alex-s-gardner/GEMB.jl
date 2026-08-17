@@ -493,9 +493,23 @@ convergence and the residual satisfied is the true nonlinear surface balance. **
 affects only the convergence rate, never the answer** — the licence for its finite-difference
 turbulent terms and its clamp.
 
-The two discontinuities stay *outside* the iteration: the emissivity melt switch is evaluated
-once per sub-step, as on the explicit path, and the `LV`/`LS` latent-heat switch is absorbed by
-the `Λ` clamp. Inside, either would chatter and prevent convergence.
+The two discontinuities are kept as far *outside* the iteration as they can be: the emissivity
+melt switch is evaluated once per sub-step, as on the explicit path, and the `LV`/`LS`
+latent-heat switch is absorbed by the `Λ` clamp.
+
+That is not sufficient on its own. Measured over a year of 3-hourly synthetic forcing (3.77M
+sub-step solves), 39% of solves reached `THERMAL_IMPLICIT_MAX_ITERATIONS` without converging,
+and the iterate traces show **limit cycles** rather than divergence: 2- and 3-cycles of ~0.02 K
+median amplitude, many straddling 273.15 K, where the latent-heat switch still enters through
+`Q_k` itself even though `Λ` is clamped. The iteration is therefore **damped**: the step weight
+is halved whenever a step fails to shrink, which contracts a cycle onto its own mean, and the
+least-residual iterate is retained so a cycle still running at the cap is not left on its worse
+phase. This cut non-convergence 44x, to 0.9% of solves, at no measurable runtime cost, and
+leaves converging solves bit-identical — on the quadratic path the residual falls every
+iteration, so the weight never leaves 1 and the update is exactly the Newton step. See
+`THERMAL_IMPLICIT_DAMPING_FLOOR` for the measurement and for why sub-step halving —
+the remedy Fourteau et al. (2026) Sect. 3.1.3 pairs with their own Newton solve — was tried and
+rejected here.
 
 ## Conservation
 
@@ -674,6 +688,15 @@ function _thermal_solve!(::ImplicitThermal,
             # Newton on the scalar surface row. Each iteration is O(1): the interior is already
             # condensed into `rhs[2]`/`sup[2]`, so no sweep of the column is repeated here.
             T1 = @inbounds T_it[1]
+            # Damping state. `weight` is halved whenever the step stops shrinking, which turns a
+            # limit cycle into a contraction; `T1_best` retains the least-residual iterate so a
+            # cycle that is still running at the iteration cap is left at its best point rather
+            # than at whichever phase it happened to stop on. See
+            # `THERMAL_IMPLICIT_DAMPING_FLOOR`.
+            residual_previous = Inf
+            weight = 1.0
+            T1_best = T1
+            residual_best = Inf
             for _ in 1:THERMAL_IMPLICIT_MAX_ITERATIONS
                 longwave_upward, heat_flux_sensible, heat_flux_latent, _ =
                     _surface_energy_balance(T1, emissivity, sfc, cfs)
@@ -701,9 +724,34 @@ function _thermal_solve!(::ImplicitThermal,
                     T1_next = r / d
                 end
 
-                converged = abs(T1_next - T1) <= THERMAL_IMPLICIT_T_TOLERANCE
-                T1 = T1_next
+                # The Newton step, before damping. This is the quantity the tolerance is defined
+                # on, so the convergence test is unchanged by the damping below.
+                residual = abs(T1_next - T1)
+                if residual < residual_best
+                    residual_best = residual
+                    T1_best = T1_next
+                end
+                converged = residual <= THERMAL_IMPLICIT_T_TOLERANCE
+
+                # A step that did not shrink means the iteration is cycling rather than
+                # converging. Halving the weight from there breaks the cycle; on the normal
+                # (quadratically convergent) path the residual falls every iteration, `weight`
+                # stays at 1, and `T1 + 1.0*(T1_next - T1)` is exactly `T1_next` — which is why
+                # this leaves converging solves bit-identical.
+                if residual >= residual_previous
+                    weight = max(weight * 0.5, THERMAL_IMPLICIT_DAMPING_FLOOR)
+                end
+                residual_previous = residual
+
+                T1 = T1 + weight * (T1_next - T1)
                 converged && break
+            end
+            # A cycle still running at the cap is left at its least-residual iterate. Without
+            # this the accepted value is whichever phase of the cycle the loop stopped on, which
+            # can be the worse one. A converged solve satisfies the test and is untouched, since
+            # its final iterate *is* the least-residual one.
+            if residual_best > THERMAL_IMPLICIT_T_TOLERANCE
+                T1 = T1_best
             end
 
             # Forward-substitute back down the column.
