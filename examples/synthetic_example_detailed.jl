@@ -16,7 +16,7 @@ println("="^60)
 println("\n1. Generating synthetic climate forcing...")
 time_step_hours = 3
 ds = simulate_climate_forcing("test_1", time_step_hours)
-cf = GEMB.initialize_forcing(ds)
+cf = initialize_forcing(ds)
 
 println("   Climate forcing generated:")
 println("     Time steps: $(length(cf.time))")
@@ -103,10 +103,11 @@ println("  Mean latent heat flux: $(round(mean(latent), digits=1)) W/m²")
 
 # Column evolution
 println("\nColumn Evolution:")
-thickness_cumulative = parent(output[:thickness_cumulative])
-println("  Initial thickness: $(round(thickness_cumulative[1], digits=2)) m")
-println("  Final thickness: $(round(thickness_cumulative[end], digits=2)) m")
-println("  Net thickness change: $(round(thickness_cumulative[end] - thickness_cumulative[1], digits=2)) m")
+# `ice_flux` is the per-interval basal ice flux; its cumulative sum, negated, is surface
+# elevation change against a datum fixed in the ice at the start of the run.
+cumulative_ice_flux = cumsum(parent(output[:ice_flux]))
+println("  Cumulative basal ice flux: $(round(cumulative_ice_flux[end], digits=2)) m of ice")
+println("  Surface elevation change: $(round(-cumulative_ice_flux[end], digits=2)) m")
 
 # Profile statistics at final timestep
 println("\nFinal Profile (last timestep):")
@@ -134,7 +135,7 @@ output_dict = Dict(
     "melt" => parent(output[:melt]),
     "runoff" => parent(output[:runoff]),
     "albedo_broadband" => parent(output[:albedo_broadband]),
-    "thickness_cumulative" => parent(output[:thickness_cumulative]),
+    "ice_flux" => parent(output[:ice_flux]),
     "shortwave_net" => parent(output[:shortwave_net]),
     "longwave_net" => parent(output[:longwave_net])
 )

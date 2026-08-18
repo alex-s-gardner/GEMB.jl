@@ -386,7 +386,7 @@ end
     # as `M·T·c_p` instead of `M·∫c_p dT` throws rather than silently drifting. Two months of
     # forcing and no spinup: this is a correctness gate, not a physics pin.
     ds = simulate_climate_forcing("test_1", 3)
-    cf_full = GEMB.initialize_forcing(ds)
+    cf_full = initialize_forcing(ds)
     t = dims(cf_full, Ti)
     cf = cf_full[Ti=1:min(480, length(t))]      # ~2 months at 3-hourly
 

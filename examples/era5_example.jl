@@ -43,7 +43,7 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                 token=ENV["CDS_API_KEY"])
 
 # Convert the DimStack to a GEMB ClimateForcing (core initialize_forcing method)
-cf = GEMB.initialize_forcing(forcing_data)
+cf = initialize_forcing(forcing_data)
 
 ## Run GEMB
 
@@ -69,8 +69,8 @@ output = gemb(profile_spunup, cf, mp)
 # Get grid cell centers for plotting
 z_center = dz2z(parent(output[:dz]))
 
-# Get surface temperature time series
-temp_surface = surface_timeseries(parent(output[:temperature]))
+# Get surface temperature time series (profile output is top-justified: surface is row 1)
+temp_surface = output[:temperature][Z=1]
 
 # Regrid to fixed vertical coordinate for plotting
 temp_gridded = gemb_interp(z_center, output[:temperature], dz2z(profile_spunup[:dz]))

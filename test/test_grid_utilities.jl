@@ -2,40 +2,6 @@ using Test
 using GEMB
 
 @testset "Grid Utilities" begin
-    @testset "surface_timeseries" begin
-        # Test with simple matrix
-        A = [1.0 2.0 3.0;
-             4.0 5.0 6.0;
-             7.0 8.0 9.0]
-
-        surface = surface_timeseries(A)
-        @test surface == [1.0, 2.0, 3.0]
-
-        # Row 1 is returned verbatim: GEMB profile output is top-justified with a fixed
-        # row count, so the surface cell is always row 1. NaN is not padding and is not
-        # skipped — a NaN in row 1 is a NaN in the result.
-        B = [NaN NaN 3.0;
-             4.0 5.0 NaN;
-             7.0 8.0 9.0]
-
-        surface_b = surface_timeseries(B)
-        @test isnan(surface_b[1])
-        @test isnan(surface_b[2])
-        @test surface_b[3] ≈ 3.0
-
-        # Note: MATLAB version doesn't check matrix size, so Julia version doesn't either
-
-        # Test with typical GEMB output dimensions
-        M, N = 100, 200  # 100 layers, 200 timesteps
-        profile = rand(M, N)
-        # Add some NaN values in the deeper layers
-        profile[80:end, :] .= NaN
-
-        surface_profile = surface_timeseries(profile)
-        @test length(surface_profile) == N
-        @test all(surface_profile .≈ profile[1, :])
-    end
-
     @testset "dz2z" begin
         # Test with simple uniform grid
         dz = ones(5, 3) * 0.1  # 5 layers, 3 timesteps, 0.1m spacing
@@ -197,7 +163,7 @@ using GEMB
         @test dn_frac2 - dn_frac1 ≈ 365.0 * 0.5 atol=0.1
     end
 
-    @testset "Integration: dz2z and surface_timeseries" begin
+    @testset "Integration: dz2z" begin
         # Create a mock GEMB-style output
         nz = 50  # 50 vertical layers
         nt = 100  # 100 timesteps
@@ -213,12 +179,6 @@ using GEMB
 
         # Convert to depth coordinates
         z_center = dz2z(dz)
-
-        # Extract surface values
-        dz_surface = surface_timeseries(dz)
-
-        @test length(dz_surface) == nt
-        @test all(dz_surface .≈ dz[1, :])
 
         # Check that z_center is negative (below surface)
         @test all(z_center[1:39, :] .< 0)

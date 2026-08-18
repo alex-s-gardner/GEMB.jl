@@ -13,7 +13,6 @@ GEMB.jl is approximately **98% feature-complete** compared to the MATLAB referen
 
 **Verified Functions:**
 - `dz2z()` - Layer thickness to depth conversion (1D & 2D)
-- `surface_timeseries()` - Extract surface values from time series
 - `fast_divisors()` - Integer divisor calculation
 - `dewpoint_to_vapor_pressure()` - Humidity conversion
 - `vapor_pressure_to_relative_humidity()` - Humidity conversion

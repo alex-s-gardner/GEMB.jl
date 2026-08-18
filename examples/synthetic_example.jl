@@ -9,7 +9,7 @@ using GEMB_ClimateForcing
 # Generate 3-hourly synthetic climate forcing data:
 time_step_hours = 3
 ds = simulate_climate_forcing("test_1", time_step_hours)
-cf = GEMB.initialize_forcing(ds)
+cf = initialize_forcing(ds)
 
 # Initialize model parameters:
 mp = initialize_parameters(output_frequency=:daily)
@@ -79,14 +79,15 @@ output = gemb(profile_spunup, cf, mp)
 # Get a 2D matrix of grid cell centers (Z is a cell index, not a depth):
 z_center = dz2z(parent(output[:dz]))
 
-# Pull the surface row of any profile field:
+# Pull the surface row of any profile field. Profile output is top-justified, so the
+# surface cell is row 1; indexing keeps the Ti dimension:
 #
-# julia> surface_timeseries(output[:temperature])
+# julia> output[:temperature][Z=1]
 #  1994-01-01T21:00:00  272.615
 #  1994-01-02T21:00:00  272.934
 #  ⋮
 #  2025-12-31T21:00:00  261.531
-T_surface = surface_timeseries(output[:temperature])
+T_surface = output[:temperature][Z=1]
 
 # Print summary statistics:
 println("Simulation complete!")

@@ -16,7 +16,7 @@ const TIME_STEP_HOURS = 3
 
 function build_inputs()
     ds = simulate_climate_forcing("test_1", TIME_STEP_HOURS)  # DimStack
-    cf = GEMB.initialize_forcing(ds)                          # convert to ClimateForcing
+    cf = initialize_forcing(ds)                          # convert to ClimateForcing
     cf_clim = forcing_climatology(cf)
     # `initialize_profile` sizes the column to the forcing climate; the derived depth
     # rides along in the profile, so the same `mp` serves the spinup and the transient

@@ -89,7 +89,7 @@ end
 
 @testset "horizontal strain through gemb_core and gemb" begin
     ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
-    cf = GEMB.initialize_forcing(ds)
+    cf = initialize_forcing(ds)
 
     mp0 = initialize_parameters(output_frequency=:monthly)
     profile = initialize_profile(mp0, cf)

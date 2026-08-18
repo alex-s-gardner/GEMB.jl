@@ -42,7 +42,6 @@ gemb_spinup
 ```@docs
 gemb_profile
 gemb_interp
-surface_timeseries
 firn_air_content
 close_off_age
 ```
@@ -80,11 +79,11 @@ forcing_data = climate_forcing(:era5land, lat, lon;
                                 token=ENV["CDS_API_KEY"])
 
 # Convert to ClimateForcing
-cf = GEMB.initialize_forcing(forcing_data)
+cf = initialize_forcing(forcing_data)
 
 # Or generate synthetic forcing
 ds = simulate_climate_forcing("test_1", 3)   # returns DimStack
-cf = GEMB.initialize_forcing(ds)
+cf = initialize_forcing(ds)
 
 # Compute climatological average (ClimateForcing → ClimateForcing)
 cf_clim = forcing_climatology(cf)

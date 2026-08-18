@@ -103,7 +103,7 @@ using GEMB_ClimateForcing
 
 # 1. Climate forcing: synthetic 3-hourly series (a DimStack) → ClimateForcing
 ds = simulate_climate_forcing("test_1", 3)
-cf = GEMB.initialize_forcing(ds)
+cf = initialize_forcing(ds)
 
 # 2. Model parameters
 mp = initialize_parameters(output_frequency=:daily)
@@ -118,7 +118,7 @@ output = gemb(profile, cf, mp)
 ## What the output looks like
 
 [`gemb`](@ref) returns a
-[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack`: 27 monolevel
+[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack`: 26 monolevel
 time series over `Ti`, and 8 profile fields over `Z × Ti`. In the REPL:
 
 ```julia-repl
@@ -141,13 +141,12 @@ julia> output
   :densification_from_compaction eltype: Float64 dims: Ti size: 11688
   :densification_from_melt       eltype: Float64 dims: Ti size: 11688
   :strain_thinning               eltype: Float64 dims: Ti size: 11688
-  :thickness_cumulative          eltype: Float64 dims: Ti size: 11688
+  :ice_flux                      eltype: Float64 dims: Ti size: 11688
   :firn_air_content              eltype: Float64 dims: Ti size: 11688
   :firn_air_content_10m          eltype: Float64 dims: Ti size: 11688
   :firn_air_content_20m          eltype: Float64 dims: Ti size: 11688
   :close_off_age                 eltype: Float64 dims: Ti size: 11688
   :percolation_depth             eltype: Float64 dims: Ti size: 11688
-  :valid_profile_length          eltype: Int64   dims: Ti size: 11688
   :ice_slab_thickness            eltype: Float64 dims: Ti size: 11688
   :ice_slab_depth                eltype: Float64 dims: Ti size: 11688
   :aquifer_thickness             eltype: Float64 dims: Ti size: 11688
@@ -197,11 +196,11 @@ julia> output[:melt]
  2025-12-31T21:00:00   0.0
 ```
 
-Index with `DimensionalData` keyword syntax, and pull the surface row of any profile field
-with [`surface_timeseries`](@ref):
+Index with `DimensionalData` keyword syntax. Profile output is top-justified — the surface
+cell is always row 1 — so the surface row of any profile field is `[Z=1]`:
 
 ```julia-repl
-julia> surface_timeseries(output[:temperature])
+julia> output[:temperature][Z=1]
 ┌ 11688-element DimArray{Float64, 1} ┐
 ├────────────────────────────────────┴─────────────────────────────────────────────── dims ┐
   ↓ Ti Sampled{Dates.DateTime} [DateTime("1994-01-01T21:00:00"), …, DateTime("2025-12-31T21:00:00")] ForwardOrdered Irregular Points
@@ -246,7 +245,7 @@ transient forcing. [`forcing_climatology`](@ref) averages complete years into a 
 cycle, and [`gemb_spinup`](@ref) repeats it:
 
 ```julia
-mp = initialize_parameters(output_frequency=:last)
+mp = initialize_parameters()                 # gemb_spinup forces output_frequency=:last itself
 cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
 
 profile = initialize_profile(mp, cf_clim)
@@ -287,7 +286,7 @@ forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                time_range=(DateTime(2020,1,1), DateTime(2020,12,31)),
                                token=ENV["CDS_API_KEY"])
 
-cf = GEMB.initialize_forcing(forcing_data)   # DimStack → ClimateForcing
+cf = initialize_forcing(forcing_data)   # DimStack → ClimateForcing
 
 mp = initialize_parameters(output_frequency=:daily)
 profile = initialize_profile(mp, cf)

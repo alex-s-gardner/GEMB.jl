@@ -401,6 +401,41 @@ using Dates
         @test pc[:spinup_convergence_drift_density] === nothing
         @test isnan(pc[:spinup_final_drift_density])
         @test pc[:spinup_drift_window] == GEMB.SPINUP_DRIFT_WINDOW
+
+        # --- Mean SMB rate over the final cycle -----------------------------------
+        # SMB is a surface-flux quantity: precipitation in, sublimation out, runoff away.
+        # Recomputed here from those three outputs rather than pinned to a number, so the
+        # test fixes the definition and the sign convention.
+        r = pm[:spinup_smb_rate]
+        @test isfinite(r)
+        # Accumulating site (precipitation_mean > 0, 255 K, no melt) → positive.
+        @test r > 0.0
+
+        # Measured over the *final* cycle, so rerunning that cycle from the cycle-2 profile
+        # must reproduce it exactly.
+        prof_2 = gemb_spinup(profile, forcing, params; max_iterations=2)
+        last_cycle = gemb(prof_2, forcing, params)
+        # One year of daily forcing: 365 steps of 86400 s. The last step integrates a full
+        # step of its own, so the length is n*dt, not the first-to-last time span.
+        years = n * forcing.time_step / (365.25 * 86400)
+        tot(v) = sum(parent(last_cycle[v]))
+        smb_mass = tot(:precipitation) + tot(:evaporation_condensation) - tot(:runoff)
+        @test r ≈ smb_mass / params.density_ice / years rtol = 1e-12
+
+        # NOT the basal ice flux. `-cumsum(ice_flux)` is surface *elevation* change, which is
+        # SMB plus a compaction term, so it equals SMB only where compaction has equilibrated
+        # and can even carry the opposite sign. SMB is a climate quantity and `ice_flux` a
+        # model construct; pinned so a future refactor cannot quietly conflate them again.
+        elevation_rate = -sum(parent(last_cycle[:ice_flux])) / years
+        @test !isapprox(r, elevation_rate; rtol=1e-3)
+
+        # A rate must be reported even from a single-cycle spinup.
+        @test isfinite(DimensionalData.metadata(
+            gemb_spinup(profile, forcing, params; max_iterations=1))[:spinup_smb_rate])
+
+        # Ice density is recorded on the run output so a consumer can convert the mass-flux
+        # outputs to metres of ice with the value the run actually used.
+        @test DimensionalData.metadata(last_cycle)["density_ice"] == params.density_ice
     end
 
     @testset "Column-mean density is mass-weighted and grid-independent" begin
