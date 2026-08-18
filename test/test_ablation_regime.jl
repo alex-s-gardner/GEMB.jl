@@ -72,7 +72,6 @@
     # --- Fixed cell count, exactly ------------------------------------------------
     dz_out = parent(out[:dz])
     @test size(dz_out, 1) == N
-    @test all(parent(out[:valid_profile_length]) .== N)
     @test !any(isnan, dz_out)
 
     # --- Fixed total depth, every output step -------------------------------------
@@ -80,12 +79,13 @@
     @test all(d -> abs(d - Z_fixed) < 1e-9, depths)
 
     # --- Basal flux is positive (accretion) and plateaus ---------------------------
-    # `thickness_cumulative` is the running basal mass flux divided by density_ice, so its
-    # sign is the sign of cumulative `mass_added`: positive means mass entering at the base,
-    # which is what a net-ablating column requires.
-    thick = parent(out[:thickness_cumulative])
-    @test all(isfinite, thick)
-    @test thick[end] > 0.0
+    # `ice_flux` is the per-interval basal mass flux divided by density_ice, so the sign of
+    # its cumulative sum is the sign of cumulative `mass_added`: positive means mass entering
+    # at the base, which is what a net-ablating column requires.
+    flux = parent(out[:ice_flux])
+    @test all(isfinite, flux)
+    cum_flux = cumsum(flux)
+    @test cum_flux[end] > 0.0
 
     # Net surface ablation, confirming the column really is losing mass at the top.
     net_surface = sum(parent(out[:precipitation])) - sum(parent(out[:runoff]))
@@ -94,9 +94,27 @@
     # Basal inflow exceeds the net surface loss here (measured: +10106 vs -9502 kg m-2), the
     # intended consequence of pinning the depth rather than a leak — the budget closes under
     # `verbose=true` above. Pinned as a checked property, not just a docstring claim.
-    basal_mass = thick[end] * mp.density_ice
+    basal_mass = cum_flux[end] * mp.density_ice
     @test basal_mass > 0.0
     @test basal_mass > abs(net_surface)
+
+    # --- The elevation identity ----------------------------------------------------
+    # `-cumsum(ice_flux)` is surface elevation change against a datum fixed in the ice, which
+    # decomposes into a mass term and a compaction term exactly (see `trim_bottom!`):
+    #
+    #     -cumsum(ice_flux) = SMB / density_ice + Δ(firn_air_content)
+    #
+    # It is exact rather than approximate because the basal flux is whatever it must be to
+    # hold `Σdz` fixed while both terms act. `plot_output`'s `:datum` reference frame is built
+    # on it, and it is the reason cumulative SMB must not be added on top of removing the
+    # flux — SMB is already one of the two terms.
+    smb_ie = (sum(parent(out[:precipitation])) +
+              sum(parent(out[:evaporation_condensation])) -
+              sum(parent(out[:runoff]))) / mp.density_ice
+    fac = parent(out[:firn_air_content])
+    # `firn_air_content` is an interval mean and `ice_flux` an interval sum, so the two are
+    # offset by half an output interval; the tolerance covers that, not a physical slop.
+    @test -cum_flux[end] ≈ smb_ie + (fac[end] - fac[1]) atol = 1e-2
 
     # --- The column stays physical -------------------------------------------------
     T = parent(out[:temperature])

@@ -143,13 +143,12 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
-        thickness_cumulative=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        ice_flux=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content_10m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content_20m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         close_off_age=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         percolation_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
-        valid_profile_length=DimArray(fill(0, n_outputs), (ti_dim,)),
         ice_slab_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         ice_slab_depth=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         aquifer_thickness=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -197,6 +196,11 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
                 "elevation" => climate_forcing.elevation,
                 "elevation_native" => climate_forcing.elevation_native,
                 "elevation_offset" => climate_forcing.elevation_offset,
+                # Ice density this run used [kg m-3]. Recorded so a consumer can convert the
+                # mass-flux outputs to metres of ice with the same value the run did, rather
+                # than assuming a default that may not match `mp` (`plot_output` does this for
+                # its detrended reference frame).
+                "density_ice" => mp.density_ice,
             ),
             _profile_provenance(profile),
         ),
@@ -353,11 +357,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_slab_depth = parent(output[:ice_slab_depth])
     out_aquifer_thickness = parent(output[:aquifer_thickness])
     out_aquifer_depth = parent(output[:aquifer_depth])
-    out_thick = parent(output[:thickness_cumulative])
+    out_ice_flux = parent(output[:ice_flux])
     out_ta = parent(output[:temperature_air])
     out_precip = parent(output[:precipitation])
     out_rain = parent(output[:rain])
-    out_vpl = parent(output[:valid_profile_length])
     out_temperature = parent(output[:temperature])
     out_dz = parent(output[:dz])
     out_density = parent(output[:density])
@@ -396,11 +399,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # Interval *maximum*, not a sum: the question a wetting-front depth answers is how deep
     # water got during the interval, which is what upward-looking radar measures.
     max_percolation_depth = 0.0
-    cum_thickness = 0.0
+    cum_ice_flux = 0.0
     cum_temperature_air = 0.0
     cum_precipitation = 0.0
     cum_count = 0
-    thickness_added_total = 0.0
 
     # Whole-run mass budget (verbose only). `gemb_core` checks the budget every timestep,
     # but only against that timestep's own terms — a bias far below the per-step tolerance
@@ -449,8 +451,11 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             n_target=profile_size, z_target=z_target,
             thermal_workspace=thermal_workspace)
 
-        # Sum total thickness
-        thickness_added_total += flux.mass_added / density_ice
+        # Basal ice flux over this interval, in metres of ice. An interval *sum*, like every
+        # other mass flux in the output, so `cumsum` recovers the cumulative flux exactly;
+        # storing the cumulative directly (as this did before) meant reporting the interval
+        # mean of a running total, which lagged the true cumulative by half an interval.
+        cum_ice_flux += flux.mass_added / density_ice
 
         # Accumulate outputs
         cum_melt += flux.melt
@@ -478,7 +483,6 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_firn_air_content_10m += firn_air_content(state.dz, state.density, density_ice, 10.0)
         cum_firn_air_content_20m += firn_air_content(state.dz, state.density, density_ice, 20.0)
         max_percolation_depth = max(max_percolation_depth, flux.percolation_depth)
-        cum_thickness += thickness_added_total
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
         cum_count += 1
@@ -505,6 +509,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_dcomp[oi] = cum_densification_compaction
                 out_dmelt[oi] = cum_densification_melt
                 out_strain[oi] = cum_strain_thinning
+                out_ice_flux[oi] = cum_ice_flux
 
                 # Averaged variables (division preserved for bit-identical results)
                 out_swnet[oi] = cum_shortwave_net / cum_count
@@ -516,7 +521,6 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_fac10[oi] = cum_firn_air_content_10m / cum_count
                 out_fac20[oi] = cum_firn_air_content_20m / cum_count
-                out_thick[oi] = cum_thickness / cum_count
 
                 # Interval maximum
                 out_percolation_depth[oi] = max_percolation_depth
@@ -546,7 +550,6 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             # 1 and no padding. Consumers can index rows directly instead of scanning for
             # the first non-NaN row.
             m = length(state.dz)
-            @inbounds out_vpl[oi] = m
 
             if m != profile_size
                 error("Column length ($m) does not match the fixed profile size " *
@@ -596,7 +599,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_firn_air_content_10m = 0.0
             cum_firn_air_content_20m = 0.0
             max_percolation_depth = 0.0
-            cum_thickness = 0.0
+            cum_ice_flux = 0.0
             cum_temperature_air = 0.0
             cum_precipitation = 0.0
             cum_count = 0

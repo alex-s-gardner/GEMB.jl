@@ -463,8 +463,17 @@ Errors if the adjustment would consume the whole bottom cell — at realistic fo
 ~1e-3 of the cell, so that signals a bug upstream, not an extreme climate.
 
 The column is an Eulerian window on the firn, not a prognostic ice-thickness model, so
-`thickness_cumulative` measures basal flux in either regime, not thickness change. For the
-latter, use the surface terms (`precipitation - runoff + evaporation_condensation`).
+`ice_flux` measures basal flux in either regime — hence the name. It is not the
+column's thickness, which is pinned; nor is it SMB, which is the surface terms
+(`precipitation - runoff + evaporation_condensation`) and which drives only one of its two
+parts. What its negation *is*, exactly, is surface elevation change against a fixed datum:
+
+    -cumsum(ice_flux) = SMB / density_ice + Δ(firn_air_content)
+
+the standard altimetry decomposition of elevation change into a mass term and a
+compaction term. The identity holds because the flux is whatever it must be to keep `Σdz`
+constant while both terms act on the column, and it is verified numerically in
+`test/test_ablation_regime.jl`.
 """
 function trim_bottom!(cols::NamedTuple, z_target::Float64, mp::ModelParameters)
     dz = cols.dz

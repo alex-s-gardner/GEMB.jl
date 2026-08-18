@@ -17,7 +17,7 @@ using GEMB_ClimateForcing
 @testset "Synthetic regression (self-consistency pin)" begin
     # Generate 3-hourly synthetic climate forcing (returns DimStack)
     ds = simulate_climate_forcing("test_1", 3)
-    cf = GEMB.initialize_forcing(ds)
+    cf = initialize_forcing(ds)
 
     # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)

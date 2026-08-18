@@ -1269,7 +1269,7 @@ end
     # snow fraction is exactly 1/2 and the expected value is closed-form.
     T = [i <= n ÷ 2 ? 260.0 : 280.0 for i in 1:n]
     precip = fill(1.0, n)
-    cf = GEMB.initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
+    cf = initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
         fill(100.0, n), fill(250.0, n), fill(200.0, n);
         temperature_air_mean=270.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
         temperature_observation_height=2.0, wind_observation_height=10.0)
@@ -1288,7 +1288,7 @@ end
 
     # A rain-free record leaves `accumulation_mean` equal to `precipitation_mean`, so the
     # gate is inert at a dry-snow site rather than silently biased.
-    cf_cold = GEMB.initialize_forcing(t, fill(250.0, n), fill(90000.0, n), precip,
+    cf_cold = initialize_forcing(t, fill(250.0, n), fill(90000.0, n), precip,
         fill(3.0, n), fill(100.0, n), fill(250.0, n), fill(200.0, n);
         temperature_air_mean=250.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
         temperature_observation_height=2.0, wind_observation_height=10.0)
@@ -1297,7 +1297,7 @@ end
     @test cf_cold.temperature_air_effective ≈ 250.0 rtol=1e-12
 
     # Explicitly supplied values are taken verbatim, never recomputed.
-    cf_given = GEMB.initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
+    cf_given = initialize_forcing(t, T, fill(90000.0, n), precip, fill(3.0, n),
         fill(100.0, n), fill(250.0, n), fill(200.0, n);
         temperature_air_mean=270.0, wind_speed_mean=3.0, precipitation_mean=1000.0,
         temperature_observation_height=2.0, wind_observation_height=10.0,
@@ -1310,7 +1310,7 @@ end
     n2 = 8 * 366 * 2
     t2 = collect(DateTime(2000,1,1):Hour(3):DateTime(2000,1,1) + Hour(3*(n2-1)))
     T2 = 265.0 .+ 15.0 .* sin.(2π .* (0:n2-1) ./ (8*365.25))
-    cf2 = GEMB.initialize_forcing(t2, T2, fill(90000.0, n2), fill(0.05, n2),
+    cf2 = initialize_forcing(t2, T2, fill(90000.0, n2), fill(0.05, n2),
         fill(3.0, n2), fill(100.0, n2), fill(250.0, n2), fill(200.0, n2);
         temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=150.0,
         temperature_observation_height=2.0, wind_observation_height=10.0)

@@ -67,7 +67,7 @@ using GEMB_ClimateForcing
 
 # 1. Climate forcing — a DimStack, converted to a ClimateForcing. Any conforming
 #    DimStack works; GEMB_ClimateForcing is one producer of them.
-cf = GEMB.initialize_forcing(simulate_climate_forcing("test_1", 3))
+cf = initialize_forcing(simulate_climate_forcing("test_1", 3))
 
 # 2. Model parameters, validated at construction
 mp = initialize_parameters(output_frequency=:daily)
@@ -94,11 +94,11 @@ using Dates
 forcing_data = climate_forcing(:era5land, 72.58, -38.48;
                                time_range=(DateTime(2020, 1, 1), DateTime(2020, 12, 31)),
                                token=ENV["CDS_API_KEY"])
-cf = GEMB.initialize_forcing(forcing_data)
+cf = initialize_forcing(forcing_data)
 ```
 
 [`gemb`](https://alex-s-gardner.github.io/GEMB.jl/dev/api) returns a
-[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack` — 27 monolevel
+[DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) `DimStack` — 26 monolevel
 time series over `Ti`, and 8 profile fields over `Z × Ti`, every layer carrying its own CF
 metadata:
 
@@ -124,7 +124,7 @@ julia> output
 
 julia> sum(output[:melt])                                # column total [kg m-2]
 
-julia> surface_timeseries(output[:temperature])           # surface row of a profile field
+julia> output[:temperature][Z=1]                         # surface row (output is top-justified)
 
 julia> output[:density][Z=1:5, Ti=At(DateTime(2020, 7, 1, 21))]   # top five cells
 ```

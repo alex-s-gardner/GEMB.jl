@@ -23,7 +23,10 @@ The returned profile carries a metadata `NamedTuple` (accessible via
 climatology it used: `spinup_cycles`, `spinup_converged`,
 `spinup_final_delta_density`, `spinup_final_drift_density`, the convergence
 parameters (`spinup_max_iterations`, `spinup_convergence_delta_density`,
-`spinup_convergence_drift_density`, `spinup_drift_window`), and the climatology
+`spinup_convergence_drift_density`, `spinup_drift_window`),
+`spinup_smb_rate` (mean surface mass balance over the final cycle [m of ice per
+year] from the surface fluxes, positive under accumulation — see
+[`_cycle_smb_rate`](@ref); `NaN` if undeterminable), and the climatology
 fields copied forward from `cf` (`climatology_window_start`,
 `climatology_window_stop`, `climatology_n_years`, `climatology_steps_per_year`).
 This provenance is propagated onto the [`gemb`](@ref) output when the spun-up
@@ -94,10 +97,17 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
 
     checking = convergence_delta_density !== nothing || convergence_drift_density !== nothing
 
+    # Mean SMB of the most recent cycle, refreshed each pass so the equilibrated rate is to
+    # hand after the loop. Recorded rather than holding the cycle's whole output stack: under
+    # the forced `output_frequency=:last` each cycle is a single step, so the recompute is a
+    # handful of scalar sums.
+    smb_rate = NaN
+
     for cycle in 1:max_iterations
         cycles_run = cycle
         out = gemb(current_profile, cf, mp_spinup; thermal_workspace=thermal_workspace)
         current_profile = gemb_profile(out)
+        smb_rate = _cycle_smb_rate(out, cf, mp)
 
         checking || continue
 
@@ -141,7 +151,79 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         max_iterations=max_iterations,
         convergence_delta_density=convergence_delta_density,
         convergence_drift_density=convergence_drift_density,
-        drift_window=drift_window)
+        drift_window=drift_window,
+        smb_rate=smb_rate)
+end
+
+"""
+    _cycle_smb_rate(out, cf, mp) -> m of ice per year
+
+Mean surface mass balance over the final spinup cycle, as metres of ice per year (positive
+under net accumulation).
+
+Derived from the **surface** mass fluxes alone:
+
+    SMB = precipitation + evaporation_condensation - runoff
+
+in kg m-2 over the cycle, divided by `mp.density_ice` and by the cycle length. Snowfall and
+rain enter through `precipitation`, deposition and sublimation through the signed
+`evaporation_condensation`, and meltwater leaving the column through `runoff`; refreezing is
+internal and so does not appear. This is SMB by definition, and it is a property of the
+climate rather than of the column's state — spinup changes it only through the small
+feedback of albedo and surface temperature on melt.
+
+It is deliberately **not** read from `ice_flux`. That output is the basal ice flux
+the fixed-depth column performs, and its negation is surface *elevation* change, which is SMB
+plus a firn-air-content term (see [`trim_bottom!`](@ref) for the identity): densification
+drives it as surely as accumulation does, so it equals SMB only where compaction has
+equilibrated, and in general it can even carry the opposite sign — at an accumulating
+synthetic site with SMB of +0.135 m ice/yr the elevation trend was -0.157 m/yr, compaction
+lowering the surface faster than accumulation raised it.
+
+A spinup cycle is one climatological year by construction ([`forcing_climatology`](@ref)),
+but the length is taken from the cycle's own step count and step length rather than assumed,
+so a non-annual cycle gives a correct rate rather than a silently mis-scaled one.
+
+Returns `NaN` when the rate cannot be determined (an empty or missing flux layer, a
+degenerate cycle length, or a non-finite total), which callers treat as "unavailable" rather
+than as a rate of zero.
+"""
+function _cycle_smb_rate(out, cf::ClimateForcing, mp::ModelParameters)
+    isempty(dims(out, Ti)) && return NaN
+
+    # `output_frequency=:last` leaves a single output step whose value is the whole cycle's
+    # total, so the cycle length must come from the forcing rather than from the output times.
+    # It is the number of steps times the step length, not the span from the first forcing time
+    # to the last: the last step integrates a full `time_step` of its own, which a first-to-last
+    # span omits, and dropping it would leave the rate biased high by one step in `n`.
+    years = length(dims(cf, Ti)) * cf.time_step / SECONDS_PER_YEAR
+    return _smb_rate(out, years, mp.density_ice)
+end
+
+"""
+    _smb_rate(out, years, density_ice) -> m of ice per year
+
+Mean surface mass balance of the `gemb` output `out` over a record of `years` years, as metres
+of ice per year (positive under net accumulation). The flux algebra of
+[`_cycle_smb_rate`](@ref), factored out so the spinup cycle and a transient run share one
+definition of SMB — they differ only in which record they measure and how its length is known.
+
+Returns `NaN` for a missing flux layer, a non-positive length, or a non-finite total.
+"""
+function _smb_rate(out, years::Real, density_ice::Real)
+    for v in (:precipitation, :evaporation_condensation, :runoff)
+        haskey(out, v) || return NaN
+    end
+    years > 0 || return NaN
+
+    # Sum the whole record rather than taking its last element: these are per-output-step
+    # accumulations, not running totals, so under `:last` (one step holding the cycle total)
+    # and under any finer frequency alike the sum is the record total.
+    tot(v) = sum(x -> isfinite(x) ? x : 0.0, parent(out[v]))
+    smb_mass = tot(:precipitation) + tot(:evaporation_condensation) - tot(:runoff)
+    isfinite(smb_mass) || return NaN
+
+    return smb_mass / density_ice / years
 end
 
 # Attach spinup + climatology provenance to the spun-up profile so it is a
@@ -150,7 +232,7 @@ end
 function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         cycles, converged, final_delta_density, final_drift_density,
         max_iterations, convergence_delta_density, convergence_drift_density,
-        drift_window)
+        drift_window, smb_rate=NaN)
     cf_meta = DD.metadata(cf)
     _cf(key) = haskey(cf_meta, key) ? cf_meta[key] : nothing
     prov = (
@@ -162,6 +244,9 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         spinup_convergence_delta_density = convergence_delta_density,
         spinup_convergence_drift_density = convergence_drift_density,
         spinup_drift_window = drift_window,
+        # Equilibrated mean surface mass balance [m of ice per year], positive under accumulation.
+        # Read by `plot_output`'s detrended reference frame; `NaN` when undeterminable.
+        spinup_smb_rate = smb_rate,
         climatology_window_start = _cf(:climatology_window_start),
         climatology_window_stop = _cf(:climatology_window_stop),
         climatology_n_years = _cf(:climatology_n_years),

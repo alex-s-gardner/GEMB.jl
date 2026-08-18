@@ -267,8 +267,9 @@ What this changes for consumers of the output:
 - **Profile arrays are sized exactly to the column** and are **top-justified** — the surface
   is always row 1. They were previously overpadded (default 1000 extra rows) and
   bottom-justified, so the surface row moved between timesteps and validity had to be
-  recovered by scanning for `NaN`. Neither is needed now; `valid_profile_length` is retained
-  and constant.
+  recovered by scanning for `NaN`. Neither is needed now, and the `valid_profile_length`
+  output — which reported the padded arrays' valid row count — is removed, since it was
+  constant and equal to the profile row count.
 - **`output_padding` and `column_zmin` are removed**, and `column_zmax` is renamed
   **`column_depth_max`** — padding is obsolete, and the column depth is now pinned exactly
   (to the depth `initialize_profile` derives from the climate, capped by `column_depth_max`)
@@ -283,11 +284,12 @@ What this changes for consumers of the output:
   from the value used in that timestep's shortwave balance rather than from the post-
   accumulation column, so it differs slightly from the old series on snowfall steps. Output
   under the four remaining methods is otherwise unchanged.
-- **`thickness_cumulative` carries a real basal flux**, signed: mass leaves through the base
-  under accumulation and enters under ablation. Read it as basal flux, not as glacier
-  thickness change — the column is an Eulerian window on the firn, not a prognostic
-  ice-thickness model. For thickness change, use the surface terms
-  (`precipitation - runoff + evaporation_condensation`).
+- **`thickness_cumulative` is now `ice_flux`**, a signed per-interval basal flux rather than the
+  interval mean of a running total, so `cumsum(ice_flux)` recovers the cumulative flux exactly
+  where the old series lagged it by half an output interval. Read `cumsum(ice_flux)` wherever a
+  run read `thickness_cumulative` directly. Its negation is surface elevation change against a
+  datum fixed in the ice; see [`trim_bottom!`](@ref) for the identity and
+  `test/test_ablation_regime.jl` for the check.
 - **Added `horizontal_strain_rate`** [yr⁻¹, default `0.0`], the trace of the horizontal
   strain-rate tensor `ε̇_xx + ε̇_yy`. By incompressibility it thins (positive, divergence) or
   thickens (negative, convergence) every cell at constant density by `exp(-D·dt)`; the mass

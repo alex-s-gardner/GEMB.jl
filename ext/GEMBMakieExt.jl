@@ -44,11 +44,10 @@ const _LABELS = Dict{Symbol,String}(
     :ice_slab_depth => "depth to slab",
     :aquifer_thickness => "saturated thickness",
     :aquifer_depth => "water table",
-    :thickness_cumulative => "cumulative Δ thickness",
+    :ice_flux => "basal ice flux",
     :densification_from_compaction => "compaction",
     :densification_from_melt => "melt",
     :strain_thinning => "horizontal strain",
-    :valid_profile_length => "valid layers",
     # 2-D (profile) variables
     :temperature => "temperature",
     :density => "density",
@@ -311,6 +310,86 @@ function _isochrones!(ax, x, z_col, deposition, levels, label; max_gap=3.0)
 end
 
 #=============================================================================
+# Vertical reference frames
+=============================================================================#
+
+# Metadata lookup tolerant of the `Dict`/`NamedTuple`/absent cases an output stack can carry.
+_getmd(md, k) = md === nothing ? nothing :
+                md isa AbstractDict ? get(md, k, nothing) :
+                haskey(md, k) ? md[k] : nothing
+
+# The `density_ice` the run used, from its own metadata so the mass → metres-of-ice conversion
+# matches; a run predating that key falls back to the `ModelParameters` default.
+function _density_ice(md)
+    rho = _getmd(md, "density_ice")
+    return (rho isa Real && isfinite(rho) && rho > 0) ? Float64(rho) :
+           GEMB.ModelParameters().density_ice
+end
+
+# Resolve the `detrend` kwarg to a rate [m per year] and a word naming where it came from (for
+# the banner). Errors where the requested source cannot supply one, so a figure is never drawn
+# with an unlabelled or silently-zero trend removed.
+#
+# `:spinup` reads the climatological rate the column was spun up on, `:transient` measures the
+# run being plotted, and a number is taken verbatim. Why the mean SMB rate is the right thing to
+# remove, and why cumulative SMB must not be *added*, is argued once in the `plot_output`
+# docstring under "Vertical reference frames".
+function _detrend_rate(output, md, times, detrend)
+    if detrend isa Real
+        isfinite(detrend) ||
+            error("plot_output: detrend must be a finite rate, got $detrend")
+        return Float64(detrend), "the caller"
+    end
+    detrend === :spinup || detrend === :transient ||
+        error("plot_output: detrend must be :spinup, :transient, or a number " *
+              "[m per year], got $(repr(detrend))")
+
+    if detrend === :spinup
+        r = _getmd(md, "spinup_smb_rate")
+        (r isa Real && isfinite(r)) ||
+            error("plot_output: detrend=:spinup needs a mean surface mass balance rate, " *
+                  "and this run carries no usable `spinup_smb_rate` (it was not spun up " *
+                  "with gemb_spinup, or the rate could not be determined). Use " *
+                  "`detrend=:transient` to measure the rate over this run instead, " *
+                  "`detrend=0.0` to leave the datum frame untrended, or pass a rate " *
+                  "[m per year].")
+        return Float64(r), "spinup"
+    end
+
+    # Same flux algebra as the spinup cycle (`GEMB._smb_rate`); only the record and how its
+    # length is known differ.
+    rate = GEMB._smb_rate(output, _record_years(times), _density_ice(md))
+    isfinite(rate) ||
+        error("plot_output: detrend=:transient could not determine a mean surface mass " *
+              "balance rate from this run (a required flux output is missing, or the " *
+              "record is too short). Pass `detrend=0.0` or a rate [m per year] instead.")
+    return rate, "transient run"
+end
+
+# Heatmap y-axis label. `:surface` keeps the plain "depth" the model's own coordinate
+# deserves; the datum frame is a height, not a depth below anything the reader can see, and
+# with a rate removed it is a height *anomaly* — a distinction the reader cannot recover from
+# the numbers alone.
+_depth_label(frame::Symbol, rate::Float64) =
+    frame !== :datum ? "depth [m]" :
+    rate == 0.0 ? "height above datum [m]" : "height anomaly [m]"
+
+# Per-timestep vertical offset [m] taking the model's depth-below-instantaneous-surface
+# coordinate into the `:datum` frame: surface elevation change since t₀ against a datum fixed
+# in the ice, less `rate·(t-t₀)`. Added to the cell centres (and so to anything else drawn in
+# depth coordinates) before regridding. `ice_flux` is a per-interval flux, hence the cumulative
+# sum. See the `plot_output` docstring for why that negation *is* the elevation, exactly, and
+# [`trim_bottom!`](@ref) for the identity it rests on.
+function _frame_offset(output, decyear, rate::Float64)
+    haskey(output, :ice_flux) ||
+        error("plot_output: reference_frame=:datum needs the `ice_flux` output, which " *
+              "this run does not carry.")
+    surface_height = -cumsum(parent(output[:ice_flux]))
+    rate == 0.0 || (surface_height .-= rate .* (decyear .- first(decyear)))
+    return surface_height
+end
+
+#=============================================================================
 # Helpers
 =============================================================================#
 
@@ -359,8 +438,7 @@ end
 # no provenance metadata yields "" and the banner renders as it did before.
 function _provenance_str(md)
     md === nothing && return ""
-    getmd(k) = md isa AbstractDict ? get(md, k, nothing) :
-               (haskey(md, k) ? md[k] : nothing)
+    getmd(k) = _getmd(md, k)
 
     parts = String[]
     ds = getmd("dataset")
@@ -397,8 +475,7 @@ end
 # "no spinup"; if no spinup metadata is present at all, yields "".
 function _spinup_str(md)
     md === nothing && return ""
-    getmd(k) = md isa AbstractDict ? get(md, k, nothing) :
-               (haskey(md, k) ? md[k] : nothing)
+    getmd(k) = _getmd(md, k)
 
     performed = getmd("spinup_performed")
     performed === false && return "no spinup"
@@ -417,18 +494,38 @@ function _spinup_str(md)
     return join(parts, ", ")
 end
 
+# Length of an output record in years, for turning a record total into an annual mean.
+#
+# Step count times mean step length, *not* the span from the first output time to the last. The
+# outputs are per-step accumulations, and the last step accumulates over a full step of its own
+# that a first-to-last span omits — so a span-based length is short by one step and biases every
+# annual mean high by 1/n (0.27% on a year of daily output; more on a coarse or short record).
+# The mean step length rather than the median: the length in the denominator must reproduce the
+# actual elapsed record, so an irregular step (month-end, leap day, gap) has to count, which a
+# median discards. Matches `GEMB._cycle_smb_rate`, which gets the step length from
+# `cf.time_step` because it has the forcing to hand.
+#
+# Returns `NaN` for a record too short or degenerate to have a rate.
+function _record_years(times)
+    length(times) < 2 && return NaN
+    # Mean step from the endpoints: (last - first) / (n-1) is the mean of the consecutive
+    # diffs, without materializing them.
+    span_s = (Dates.value(last(times)) - Dates.value(first(times))) / 1000   # ms → s
+    years = length(times) * (span_s / (length(times) - 1)) / GEMB.SECONDS_PER_YEAR
+    return years > 0 ? years : NaN
+end
+
 # Average-annual surface mass-budget summary for the metadata banner, e.g.
 # "↓ snow 420  ↓ rain 35  → runoff 180  ↺ refreeze 60  ↑ evap 12  [kg m⁻² yr⁻¹]".
 # The flux outputs are per-output-step mass accumulations (kg m⁻²); summing the
-# record and dividing by its length in years gives the annual mean. Leading
-# arrows mark direction: ↓ mass input (falls onto/into the column), ↑ mass loss
+# record and dividing by its length in years (see `_record_years`) gives the annual
+# mean. Leading arrows mark direction: ↓ mass input (falls onto/into the column), ↑ mass loss
 # to the atmosphere (evaporation/sublimation), → runoff (liquid leaving laterally),
 # ↺ internal phase change (refreeze). Evaporation/condensation is signed, so
 # condensation reads as a ↓ input and evaporation/sublimation as a ↑ loss.
 function _mass_budget_str(output, times)
-    length(times) < 2 && return ""
-    years = Dates.value(last(times) - first(times)) / (365.25 * 86400 * 1000)
-    years <= 0 && return ""
+    years = _record_years(times)
+    isnan(years) && return ""
 
     present = keys(output)
     total(v) = v in present ? sum(filter(isfinite, output[v])) : NaN
@@ -493,7 +590,12 @@ end
 =============================================================================#
 
 function GEMB.plot_output(output::DimStack;
-    datelims=nothing, depthlims=(-10, 0), variables=nothing, title="")
+    datelims=nothing, depthlims=(-10, 0), variables=nothing, title="",
+    reference_frame::Symbol=:surface, detrend=:spinup)
+
+    reference_frame in (:surface, :datum) ||
+        error("plot_output: reference_frame must be :surface or :datum, " *
+              "got :$reference_frame")
 
     # ---- Select variables -------------------------------------------------
     present = collect(keys(output))
@@ -527,15 +629,36 @@ function GEMB.plot_output(output::DimStack;
     xlims = datelims === nothing ? nothing :
             (_to_decyear(datelims[1]), _to_decyear(datelims[2]))
 
+    # ---- Vertical reference frame -----------------------------------------
+    # The cell centres come out of the model as depth below the *instantaneous* surface.
+    # `reference_frame` shifts each column by a per-timestep offset before regridding, so
+    # the heatmaps (and the isochrone overlay, which shares `z_center`) are drawn in the
+    # requested frame. See `_frame_offset`.
+    md_frame = DimensionalData.metadata(output)
+    detrend_rate, detrend_source = reference_frame === :datum ?
+                                   _detrend_rate(output, md_frame, times, detrend) : (0.0, "")
+
     # ---- Fixed vertical grid for regridding 2-D variables -----------------
     # Range from the evolving cell centres (or `depthlims`); resolution is a
     # bounded render target, not the (padded) layer count.
     z_center = dz2z(parent(output[:dz]))
+    if reference_frame === :datum
+        # Broadcast the per-timestep offset across the column (rows are cells, columns are
+        # timesteps), so every cell in a timestep moves together and the layer structure
+        # within the column is untouched. In place: `dz2z` just allocated `z_center`, which
+        # is ncells × ntimes and not small.
+        z_center .+= reshape(_frame_offset(output, decyear, detrend_rate), 1, :)
+    end
+    # Bounds in one pass, without materializing a filtered copy of the (large) matrix.
+    zhi = maximum(x -> isfinite(x) ? x : -Inf, z_center)
     if depthlims === nothing
-        finite = filter(isfinite, z_center)
-        ztop, zbot = maximum(finite), minimum(finite)
+        ztop, zbot = zhi, minimum(x -> isfinite(x) ? x : Inf, z_center)
     else
         ztop, zbot = maximum(depthlims), minimum(depthlims)
+        # In a shifted frame the surface is no longer at 0, so `depthlims`' upper bound would
+        # crop the part of the record that is the point of the frame. Raise the top to the
+        # highest cell centre actually present; the lower bound is left as asked for.
+        reference_frame === :surface || (ztop = max(ztop, zhi))
     end
     nz = 240
     z_target = collect(range(ztop, zbot; length=nz))  # descending: surface first
@@ -550,7 +673,8 @@ function GEMB.plot_output(output::DimStack;
     fig = Figure(size=(1500, 200 + _ROW_HEIGHT * nrows), fontsize=14)
 
     # Header: title + traceability metadata banner.
-    _header!(fig[1, 1:2], output, times, z_center, title)
+    _header!(fig[1, 1:2], output, times, z_center, title,
+        reference_frame, detrend_rate, detrend_source)
 
     body = fig[2, 1:2] = GridLayout()
     left = body[1, 1] = GridLayout()   # profile heatmaps
@@ -560,6 +684,7 @@ function GEMB.plot_output(output::DimStack;
 
     prof_axes = Axis[]
     scal_axes = Axis[]
+    ylabel_prof = _depth_label(reference_frame, detrend_rate)
 
     # ---- Left column: profile heatmaps ------------------------------------
     for (i, v) in enumerate(profile_vars)
@@ -570,7 +695,7 @@ function GEMB.plot_output(output::DimStack;
         _, convert_units = _display_units(output, v)
         convert_units === identity || (vals = convert_units.(vals))
         gridded = gemb_interp(z_center[:, tcols], vals, z_target)
-        ax = Axis(left[i, 1]; ylabel="depth [m]")
+        ax = Axis(left[i, 1]; ylabel=ylabel_prof)
         push!(prof_axes, ax)
         lo, hi = _robust_limits(parent(gridded))
         # Anchor water's ramp at zero so "no liquid water" reads as white.
@@ -643,7 +768,8 @@ function GEMB.plot_output(output::DimStack;
 end
 
 # Title + one-line metadata banner for traceability.
-function _header!(pos, output, times, z_center, title)
+function _header!(pos, output, times, z_center, title,
+                  reference_frame, detrend_rate, detrend_source)
     ver = try
         string(pkgversion(GEMB))
     catch
@@ -659,6 +785,14 @@ function _header!(pos, output, times, z_center, title)
     prov = _provenance_str(md)
     spin = _spinup_str(md)
     budget = _mass_budget_str(output, times)
+    # The frame is only stated when it is not the default. A rate is named only when one was
+    # actually removed, along with where it came from — without that the reader cannot tell an
+    # anomaly from an absolute height.
+    frame = reference_frame === :surface ? "" :
+            detrend_rate != 0.0 ?
+            string("datum frame, less ", round(detrend_rate, digits=3), " m yr⁻¹",
+                   " from ", detrend_source) :
+            "datum frame"
 
     meta = string(
         "GEMB v$ver  │  ",
@@ -666,6 +800,7 @@ function _header!(pos, output, times, z_center, title)
         freq, " ",
         Dates.format(t0, "yyyy-mm-dd"), " → ", Dates.format(t1, "yyyy-mm-dd"),
         spin == "" ? "" : "  │  " * spin,
+        frame == "" ? "" : "  │  " * frame,
         budget == "" ? "" : "  │  " * budget,
         "  │  generated ", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM"),
     )

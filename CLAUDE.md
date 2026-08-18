@@ -32,7 +32,7 @@ params = initialize_parameters()
 
 # 2. Create climate forcing (DimStack) and convert to a ClimateForcing
 ds = simulate_climate_forcing("test_1", 3)  # 3-hourly synthetic data
-forcing = GEMB.initialize_forcing(ds)
+forcing = initialize_forcing(ds)
 
 # 3. Initialize the vertical profile (its grid is sized to the forcing climate)
 profile = initialize_profile(params, forcing)
@@ -40,8 +40,8 @@ profile = initialize_profile(params, forcing)
 # 4. Run the model
 output = gemb(profile, forcing, params)
 
-# 5. Extract surface temperature time series
-T_surface = surface_timeseries(output.temperature)
+# 5. Extract surface temperature time series (output is top-justified: surface is row 1)
+T_surface = output[:temperature][Z=1]
 ```
 
 Note: `simulate_climate_forcing`, the `fit_*` climate functions, and the humidity
@@ -83,7 +83,7 @@ forcing_data = climate_forcing(:era5land, 67.0, -50.0;
                                 token=ENV["CDS_API_KEY"])
 
 # Convert DimStack → ClimateForcing (core initialize_forcing method)
-cf = GEMB.initialize_forcing(forcing_data)
+cf = initialize_forcing(forcing_data)
 
 # Use with GEMB
 mp = initialize_parameters()
@@ -179,7 +179,6 @@ GEMB follows a modular physics-based architecture:
 6. **Utilities**:
    - `gemb_spinup()` in `spinup.jl`: Cycles forcing to reach equilibrium (for multi-millennial spinups). Returns the final equilibrated profile and all spinup output.
    - `gemb_profile()`, `gemb_interp()` in `profile_extract.jl`: Extract/interpolate profiles at specific times/depths
-   - `surface_timeseries()`: Extract surface values from column arrays
    - `dz2z()`: Convert grid spacing to depth coordinates
    - `forcing_climatology()` in `forcing_climatology.jl`: Averages complete years of a
      `ClimateForcing` (dropping leap day 366 and partial years) into a one-year climatological
@@ -188,7 +187,7 @@ GEMB follows a modular physics-based architecture:
    Climate-forcing generation (`simulate_climate_forcing()`, the `fit_*` fitting functions,
    and humidity conversions like `dewpoint_to_vapor_pressure()`) now live in the companion
    `GEMB_ClimateForcing.jl`, not in this package. They return/consume a `DimStack`; use
-   `GEMB.initialize_forcing(ds)` to convert into the `ClimateForcing` type GEMB consumes.
+   `initialize_forcing(ds)` to convert into the `ClimateForcing` type GEMB consumes.
 
 ### Data Flow
 

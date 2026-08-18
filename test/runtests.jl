@@ -61,7 +61,7 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
         # Verify simulate → convert → run model end-to-end
         ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
         @test ds isa DimStack
-        cf = GEMB.initialize_forcing(ds)
+        cf = initialize_forcing(ds)
         @test cf isa GEMB.ClimateForcing
         mp = GEMB.ModelParameters()
         profile = GEMB.initialize_profile(mp, cf)

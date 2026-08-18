@@ -116,9 +116,11 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
     :firn_air_content_20m => CFAttrs("m", "firn air content in the top 20 m",
         "time: mean";
         comment="As firn_air_content_10m, integrated to 20 m depth."),
-    :thickness_cumulative => CFAttrs("m", "cumulative column thickness change",
-        "time: mean";
-        comment="Interval mean of a running total since the start of the run."),
+    :ice_flux => CFAttrs("m", "basal ice flux", "time: sum";
+        comment="Mass crossing the column base over the interval to hold the column depth " *
+                "fixed, in metres of ice. Positive ice flux is ice convergence (mass " *
+                "entering), negative is ice divergence (mass leaving). Must be accounted " *
+                "for to infer surface height. No CF standard name exists."),
 
     # ---- monolevel, interval maximum ----------------------------------------
     :percolation_depth => CFAttrs("m", "meltwater percolation depth", "time: maximum";
@@ -127,8 +129,6 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "standard name exists."),
 
     # ---- monolevel, instantaneous -------------------------------------------
-    :valid_profile_length => CFAttrs("1", "number of valid column layers",
-        "time: point"),
     :ice_slab_thickness => CFAttrs("m", "total thickness of ice slabs", "time: point";
         comment="Summed thickness of all cells at or above impermeable_density, " *
                 "whether or not they block flow. Scanned after the grid controllers " *

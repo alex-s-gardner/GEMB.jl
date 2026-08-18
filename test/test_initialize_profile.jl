@@ -7,7 +7,7 @@ using GEMB: DimArray, Ti
 
     # Create minimal ClimateForcing for initialization
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.initialize_forcing(times,
+    cf = initialize_forcing(times,
         [253.15, 253.15], [80000.0, 80000.0], [0.001, 0.001],
         [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
         temperature_air_mean=253.15, wind_speed_mean=5.0,
@@ -50,7 +50,7 @@ end
     mp = GEMB.ModelParameters(column_ztop=5.0, column_dztop=0.05, column_depth_max=50.0, column_zy=1.10)
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.initialize_forcing(times,
+    cf = initialize_forcing(times,
         [260.0, 260.0], [80000.0, 80000.0], [0.001, 0.001],
         [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
         temperature_air_mean=260.0, wind_speed_mean=5.0,
@@ -73,7 +73,7 @@ end
     mp = GEMB.ModelParameters()
 
     times = [DateTime(2000, 1, 1), DateTime(2000, 1, 1, 3)]
-    cf = GEMB.initialize_forcing(times,
+    cf = initialize_forcing(times,
         [253.15, 253.15], [80000.0, 80000.0], [0.001, 0.001],
         [5.0, 5.0], [100.0, 100.0], [250.0, 250.0], [300.0, 300.0];
         temperature_air_mean=253.15, wind_speed_mean=5.0,
@@ -123,7 +123,7 @@ function _dry_snow_forcing(; n=365*2, T_mean=250.0, T_amp=10.0, precip=0.8,
     # point — enough for a plausible test forcing.
     e_sat = 611.0 * exp((GEMB.LS / 461.5) * (1.0 / GEMB.CtoK - 1.0 / T_mean))
 
-    return GEMB.initialize_forcing(
+    return initialize_forcing(
         time, temp, fill(85000.0, n), fill(precip, n), fill(4.0, n),
         fill(shortwave, n), fill(longwave, n), fill(vapor_fraction * e_sat, n);
         temperature_air_mean=T_mean, wind_speed_mean=4.0,
@@ -417,7 +417,7 @@ end
     # same forcing, so anything well under one pass is free in context. Measured as
     # a ratio so the test does not depend on the machine.
     ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
-    cf = GEMB.initialize_forcing(ds)
+    cf = initialize_forcing(ds)
     mp = GEMB.initialize_parameters()
 
     profile = GEMB.initialize_profile(mp, cf)

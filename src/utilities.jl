@@ -32,8 +32,6 @@ Matches MATLAB's `dz2z.m` for vector input.
 """
 function dz2z(dz::AbstractVector)
     z_center = -cumsum(dz) .+ dz[1] / 2
-    # Note: For vector input, surface_timeseries equivalent is just dz[1]
-    # since there's only one column
     return z_center
 end
 
@@ -61,19 +59,6 @@ function dz2z(dz::AbstractMatrix)
         end
     end
     return z_center
-end
-
-"""
-    surface_timeseries(A::AbstractMatrix)
-
-Return the surface (row 1) value in each column of matrix `A`.
-
-GEMB profile output is top-justified, so the surface cell is always row 1. Retained as a
-named function because it expresses intent at call sites and matches MATLAB's
-`surface_timeseries.m`.
-"""
-function surface_timeseries(A::AbstractMatrix)
-    return Float64[A[1, j] for j in axes(A, 2)]
 end
 
 """
