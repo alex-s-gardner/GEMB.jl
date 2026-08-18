@@ -6,6 +6,10 @@
 # 75-cycle spinup (~7.9M iterations) amplifies floating-point evaluation-order
 # differences (arm64 vs x86_64), so the tolerances are modest rather than 1e-12.
 #
+# Note this pin depends on the `test_1` forcing from GEMB_ClimateForcing.jl, so a change to
+# that site's parameters moves these numbers without anything in GEMB.jl changing. The most
+# recent re-pin (see the history above the assertions) was exactly that.
+#
 # This is a change detector, not a physics validation: an intended change to the
 # defaults or to a physics scheme is expected to move these numbers, and re-pinning
 # them is part of making such a change. Every re-pin is recorded below with what
@@ -34,10 +38,17 @@ using GEMB_ClimateForcing
     # Run GEMB with spun-up profile
     output = gemb(profile_spunup, cf, mp)
 
-    # The three pinned fields.
+    # The three pinned fields. `refreeze` replaced `runoff` when `test_1` moved to 2200 m:
+    # the site now retains all of its meltwater, so `runoff` is identically zero and pinning
+    # it would assert nothing. `refreeze` covers the same melt/percolation path with signal
+    # in it (402.6 kg m-2), which is the property the third pin was there for.
     mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
-    total_runoff = sum(parent(output[:runoff]))
+    total_refreeze = sum(parent(output[:refreeze]))
+
+    # Guard the substitution's premise: if a change ever puts runoff back at this site, the
+    # third pin is watching the wrong field and this fails rather than passing quietly.
+    @test sum(parent(output[:runoff])) == 0.0
 
     # Reference = deterministic output on arm64 (macOS). Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
@@ -108,7 +119,33 @@ using GEMB_ClimateForcing
     # This exceeds the atols, which is why it is a re-pin rather than a re-centering; the atols
     # themselves are unchanged, the cross-platform spread they were sized for having not moved.
     # See `GEMB._turbulent_heat_flux` and `GEMB.ZETA_UNSTABLE_MIN`.
-    @test mean_albedo ≈ 0.822755 atol=3e-3      # ~0.36% relative
-    @test total_melt ≈ 10372.968525 atol=120.0  # ~1.2% relative
-    @test total_runoff ≈ 4468.185615 atol=120.0 # ~2.7% relative
+    # Re-pinned when the `test_1` synthetic site moved from 700 m to 2200 m elevation in
+    # GEMB_ClimateForcing.jl. This is a change to the *forcing*, not to GEMB's physics: at
+    # 700 m the site melted hard (332 kg m-2 yr-1, 3.9% of steps at or above freezing), and
+    # melt is convex in temperature, so `forcing_climatology` — which averages the 32 years
+    # into one — cancelled the warm excursions that carried it and produced a climatology
+    # with *zero* melt. The spinup therefore equilibrated a melt-free column (FAC ~4.06 m)
+    # and the transient run spent its whole length relaxing to the real attractor
+    # (FAC ~0.74 m), so the docs' diagnostic figure showed a 7 m elevation drift that was an
+    # artifact of the spinup/transient mismatch rather than a property of the site. At
+    # 2200 m melt survives averaging (12.5 kg m-2 yr-1) and a spun-up column holds its
+    # elevation: FAC drifts +0.17 m over 32 years against -5.57 m from a cold start.
+    #
+    # Every number below moves by far more than any tolerance, because it is a different
+    # climate: melt 10372.97 -> 397.22 kg m-2 (-96%), albedo 0.822755 -> 0.835208 (the colder,
+    # drier surface keeps finer grains), and runoff 4468.19 -> 0.0, which is why the third
+    # pin is now `refreeze`. The atols are unchanged: they were sized for cross-platform FP
+    # spread, which this does not touch. Note the fingerprint is now a *colder* site than
+    # before, so it exercises the melt/refreeze path more lightly; `test_ablation_regime.jl`
+    # remains the melt-dominated end-to-end case.
+    @test mean_albedo ≈ 0.835208 atol=3e-3      # ~0.36% relative
+    @test total_melt ≈ 397.216343 atol=120.0    # absolute, as before — see note below
+    @test total_refreeze ≈ 402.605404 atol=120.0
+
+    # The melt and refreeze atols are inherited unchanged from when these fields were ~10000
+    # and ~4500 kg m-2, where 120.0 was ~1-3% and bracketed twice the measured arm64/x86_64
+    # spread. Against the new ~400 kg m-2 totals the same absolute window is ~30%, which is
+    # looser in relative terms than the pin deserves. Tightening it needs the cross-platform
+    # spread measured at this site rather than guessed, so it is left alone here and flagged:
+    # the numbers above are exact on arm64, so a CI run on x86_64 gives the spread directly.
 end

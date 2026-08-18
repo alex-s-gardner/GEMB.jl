@@ -59,7 +59,7 @@ Julia ≥ 1.11 is required. A Makie backend (CairoMakie, GLMakie, or WGLMakie) e
 
 Get forcing, spin the column up to a quasi-steady state, then run it transiently. This is
 [`examples/synthetic_example.jl`](examples/synthetic_example.jl) — 32 years of 3-hourly
-synthetic forcing, and the run that produced the figure at the bottom of this section:
+synthetic forcing, and the run that produced the figures at the bottom of this section:
 
 ```julia
 using GEMB
@@ -77,7 +77,7 @@ mp = initialize_parameters(output_frequency=:daily)
 cf_climatology = forcing_climatology(cf)
 profile = initialize_profile(mp, cf_climatology)   # grid is sized to this climate
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=75, convergence_delta_density=0.01)
+                             max_iterations=400, convergence_delta_density=0.01)
 
 # 4. Run the transient forcing from the spun-up column
 output = gemb(profile_spunup, cf, mp)
@@ -137,11 +137,26 @@ heatmaps on the left, scalar time series on the right, on a shared time axis:
 
 ```julia
 using CairoMakie
-fig = plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0), detrend=:transient)
 save("gemb_diagnostics.png", fig; px_per_unit=2)
 ```
 
+Both figures are the same 32 years of forcing with the same parameters, differing only in the
+column each run starts from. Without spinup, straight from `initialize_profile`:
+
+![GEMB.jl diagnostic output, cold start](docs/src/assets/gemb_output_example_cold_start.png)
+
+Firn air content falls 11.5 → 6 m and the surface loses ~6 m of height anomaly before either
+levels off. That drift is the initial condition being forgotten, not a response to the climate,
+and it contaminates every field shown.
+
+After spinup, from the same recipe as step 3 above:
+
 ![GEMB.jl diagnostic output](docs/src/assets/gemb_output_example.png)
+
+Firn air content now holds a repeating seasonal cycle (net +0.17 m over 32 years, against
+−5.57 m cold), and the surface holds its elevation — so the panels show the climate's
+variability rather than the spinup GEMB never got.
 
 Panels take their units from each layer's CF metadata, so a label cannot disagree with the
 data it draws. The banner records the run's provenance: version, forcing source, time span,
@@ -191,7 +206,7 @@ The test target needs GEMB_ClimateForcing.jl checked out as a sibling directory,
 
 `bench/opt_bench.jl` runs the representative hot path — a 75-year climatological spinup
 followed by a 32-year transient run, **~107 model-years at 3-hourly resolution** on a single
-column — in **6.4 s** (Apple M2 Max, Julia 1.12, minimum of 7 runs after warmup). It also emits a
+column — in **7.4 s** (Apple M2 Max, Julia 1.12, minimum of 7 runs after warmup). It also emits a
 per-field numerical snapshot, so an optimization can be checked for bit-level equivalence
 against a baseline rather than only for speed.
 

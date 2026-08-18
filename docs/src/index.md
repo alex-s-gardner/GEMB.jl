@@ -225,18 +225,39 @@ as heatmaps on the left, scalar time series on the right, on a shared time axis:
 
 ```julia
 using CairoMakie
-fig = plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0), detrend=:transient)
 save("gemb_diagnostics.png", fig)
 ```
 
+Both figures below are `examples/synthetic_example.jl` — the same 32 years of synthetic
+forcing, the same parameters, differing only in the column each run starts from. Together they
+are the case for spinning up.
+
+Straight from [`initialize_profile`](@ref), with no spinup (banner: `no spinup`):
+
+![GEMB.jl diagnostic output, cold start](assets/gemb_output_example_cold_start.png)
+
+The column starts far from the state this climate sustains, so the run spends its first two
+decades relaxing rather than reporting: firn air content falls 11.5 → 6 m and the surface loses
+~6 m of height anomaly before either begins to level off. None of that drift is a response to
+the forcing — it is the initial condition being forgotten, and it contaminates every field
+in the figure.
+
+From a column spun up to convergence first (banner: `spinup … converged`):
+
 ![GEMB.jl diagnostic output](assets/gemb_output_example.png)
 
-This is the output of `examples/synthetic_example.jl` — 32 years of synthetic forcing run from
-a column spun up to convergence first (see [Spinup](#Spinup) below), which is why firn air
-content settles into a repeating seasonal cycle instead of drifting through a cold-start
-transient. The banner records that provenance: version, forcing source, time span, cadence,
-spinup window and convergence, and the closed mass budget. Panels take their units from each
-layer's CF metadata, so a label cannot disagree with the data it draws.
+Now firn air content holds a repeating seasonal cycle (5.5–5.8 m, net +0.17 m over 32 years
+against −5.57 m from the cold start) and the surface holds its elevation, so what the panels
+show is the climate's own variability. The banner records that provenance: version, forcing
+source, time span, cadence, spinup window and convergence, and the closed mass budget. Panels
+take their units from each layer's CF metadata, so a label cannot disagree with the data it
+draws.
+
+Both use `detrend=:transient`, which measures the removed rate over the plotted run itself.
+The default `detrend=:spinup` uses the rate recorded by [`gemb_spinup`](@ref), which the
+cold-start run does not carry — and comparing two panels means removing the same rate from
+each.
 
 The profile panels are drawn on the default `vertical_axis=:height` — height against a datum
 fixed in the ice, less the mean surface mass balance rate, so a parcel of firn holds its
@@ -256,7 +277,7 @@ mp = initialize_parameters()                 # gemb_spinup forces output_frequen
 cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
 
 profile = initialize_profile(mp, cf_clim)
-spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=200,
+spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=400,
                       convergence_delta_density=0.01,
                       convergence_drift_density=0.005)
 ```
@@ -267,6 +288,21 @@ cycles, while `convergence_drift_density` bounds the *trend* — the least-squar
 column-mean density against cycle over the trailing `drift_window` cycles. The trend test is
 the stricter claim: a column creeping steadily at just under the delta tolerance passes the
 step test while still densifying.
+
+Set `max_iterations` high enough that the criteria, not the cap, end the spinup, and check
+`metadata(spun_up)[:spinup_converged]` rather than assuming: a spinup that exhausts its
+iterations returns the profile it reached and reports `false`. The synthetic site converges at
+cycle 62 on the delta test alone; deeper or colder columns take longer.
+
+Spinup forcing is worth a moment's thought, because [`forcing_climatology`](@ref) preserves the
+*mean* of each variable but not the tails — averaging across years cancels the excursions that
+individual years contain. Where a process is nonlinear in the variable that drives it, the
+climatology can therefore under-represent it, melt being the case that bites: it is convex in
+temperature and switches on only above a threshold, so a site whose warm days carry its melt
+can average to a climatology with less melt, or none. Then the spinup equilibrates one climate
+and the transient run another, and the column drifts through the difference — exactly the
+cold-start artifact spinup is meant to remove. Where it matters, compare a cycle under the
+climatology against the same span of true forcing before trusting the spun-up state.
 
 The spun-up profile carries its provenance, and that provenance propagates onto the output of
 the transient run:

@@ -42,12 +42,12 @@ println("\n4. Creating climatology...")
 cf_climatology = forcing_climatology(cf)
 println("   Climatology length: $(length(cf_climatology.temperature_air)) steps")
 
-# Spin up a profile for up to 75 years of average forcing (exits early on convergence).
-# gemb_spinup internally forces output_frequency=:last, so no separate :last params
-# object is needed.
-println("\n5. Running spinup (up to 75 years)...")
+# Spin up a profile for up to 400 years of average forcing (exits early on convergence,
+# which this site reaches at cycle 62). gemb_spinup internally forces
+# output_frequency=:last, so no separate :last params object is needed.
+println("\n5. Running spinup (up to 400 years)...")
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=75, convergence_delta_density=0.01)
+                             max_iterations=400, convergence_delta_density=0.01)
 # Provenance recorded on the spun-up profile (see DimensionalData.metadata):
 prov = metadata(profile_spunup)
 println("   Spinup complete! $(prov[:spinup_cycles]) cycles, converged=$(prov[:spinup_converged])")
