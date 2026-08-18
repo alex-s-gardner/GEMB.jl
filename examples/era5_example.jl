@@ -108,7 +108,9 @@ println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content]
 
 ## Plot the run
 
-# plot_output needs a Makie backend loaded (it lives in a package extension).
+# plot_output needs a Makie backend loaded (it lives in a package extension). Profile
+# panels default to vertical_axis=:height (height anomaly against a datum fixed in the
+# ice); pass vertical_axis=:depth for depth below the instantaneous surface.
 using CairoMakie
 fig = plot_output(output; depthlims=(-20, 0))
 save("era5_diagnostics.png", fig; px_per_unit=2)

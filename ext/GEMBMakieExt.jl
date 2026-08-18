@@ -310,7 +310,7 @@ function _isochrones!(ax, x, z_col, deposition, levels, label; max_gap=3.0)
 end
 
 #=============================================================================
-# Vertical reference frames
+# Vertical axes
 =============================================================================#
 
 # Metadata lookup tolerant of the `Dict`/`NamedTuple`/absent cases an output stack can carry.
@@ -333,7 +333,7 @@ end
 # `:spinup` reads the climatological rate the column was spun up on, `:transient` measures the
 # run being plotted, and a number is taken verbatim. Why the mean SMB rate is the right thing to
 # remove, and why cumulative SMB must not be *added*, is argued once in the `plot_output`
-# docstring under "Vertical reference frames".
+# docstring under "Vertical axes".
 function _detrend_rate(output, md, times, detrend)
     if detrend isa Real
         isfinite(detrend) ||
@@ -351,7 +351,7 @@ function _detrend_rate(output, md, times, detrend)
                   "and this run carries no usable `spinup_smb_rate` (it was not spun up " *
                   "with gemb_spinup, or the rate could not be determined). Use " *
                   "`detrend=:transient` to measure the rate over this run instead, " *
-                  "`detrend=0.0` to leave the datum frame untrended, or pass a rate " *
+                  "`detrend=0.0` to leave the height axis untrended, or pass a rate " *
                   "[m per year].")
         return Float64(r), "spinup"
     end
@@ -366,23 +366,23 @@ function _detrend_rate(output, md, times, detrend)
     return rate, "transient run"
 end
 
-# Heatmap y-axis label. `:surface` keeps the plain "depth" the model's own coordinate
-# deserves; the datum frame is a height, not a depth below anything the reader can see, and
+# Heatmap y-axis label. `:depth` keeps the plain "depth" the model's own coordinate
+# deserves; the height axis is a height, not a depth below anything the reader can see, and
 # with a rate removed it is a height *anomaly* — a distinction the reader cannot recover from
 # the numbers alone.
-_depth_label(frame::Symbol, rate::Float64) =
-    frame !== :datum ? "depth [m]" :
+_depth_label(axis::Symbol, rate::Float64) =
+    axis !== :height ? "depth [m]" :
     rate == 0.0 ? "height above datum [m]" : "height anomaly [m]"
 
 # Per-timestep vertical offset [m] taking the model's depth-below-instantaneous-surface
-# coordinate into the `:datum` frame: surface elevation change since t₀ against a datum fixed
+# coordinate into the `:height` axis: surface elevation change since t₀ against a datum fixed
 # in the ice, less `rate·(t-t₀)`. Added to the cell centres (and so to anything else drawn in
 # depth coordinates) before regridding. `ice_flux` is a per-interval flux, hence the cumulative
 # sum. See the `plot_output` docstring for why that negation *is* the elevation, exactly, and
 # [`trim_bottom!`](@ref) for the identity it rests on.
 function _frame_offset(output, decyear, rate::Float64)
     haskey(output, :ice_flux) ||
-        error("plot_output: reference_frame=:datum needs the `ice_flux` output, which " *
+        error("plot_output: vertical_axis=:height needs the `ice_flux` output, which " *
               "this run does not carry.")
     surface_height = -cumsum(parent(output[:ice_flux]))
     rate == 0.0 || (surface_height .-= rate .* (decyear .- first(decyear)))
@@ -591,11 +591,11 @@ end
 
 function GEMB.plot_output(output::DimStack;
     datelims=nothing, depthlims=(-10, 0), variables=nothing, title="",
-    reference_frame::Symbol=:surface, detrend=:spinup)
+    vertical_axis::Symbol=:height, detrend=:spinup)
 
-    reference_frame in (:surface, :datum) ||
-        error("plot_output: reference_frame must be :surface or :datum, " *
-              "got :$reference_frame")
+    vertical_axis in (:height, :depth) ||
+        error("plot_output: vertical_axis must be :height or :depth, " *
+              "got :$vertical_axis")
 
     # ---- Select variables -------------------------------------------------
     present = collect(keys(output))
@@ -629,20 +629,20 @@ function GEMB.plot_output(output::DimStack;
     xlims = datelims === nothing ? nothing :
             (_to_decyear(datelims[1]), _to_decyear(datelims[2]))
 
-    # ---- Vertical reference frame -----------------------------------------
+    # ---- Vertical axis -----------------------------------------------------
     # The cell centres come out of the model as depth below the *instantaneous* surface.
-    # `reference_frame` shifts each column by a per-timestep offset before regridding, so
-    # the heatmaps (and the isochrone overlay, which shares `z_center`) are drawn in the
-    # requested frame. See `_frame_offset`.
+    # `vertical_axis` shifts each column by a per-timestep offset before regridding, so
+    # the heatmaps (and the isochrone overlay, which shares `z_center`) are drawn on the
+    # requested axis. See `_frame_offset`.
     md_frame = DimensionalData.metadata(output)
-    detrend_rate, detrend_source = reference_frame === :datum ?
+    detrend_rate, detrend_source = vertical_axis === :height ?
                                    _detrend_rate(output, md_frame, times, detrend) : (0.0, "")
 
     # ---- Fixed vertical grid for regridding 2-D variables -----------------
     # Range from the evolving cell centres (or `depthlims`); resolution is a
     # bounded render target, not the (padded) layer count.
     z_center = dz2z(parent(output[:dz]))
-    if reference_frame === :datum
+    if vertical_axis === :height
         # Broadcast the per-timestep offset across the column (rows are cells, columns are
         # timesteps), so every cell in a timestep moves together and the layer structure
         # within the column is untouched. In place: `dz2z` just allocated `z_center`, which
@@ -655,10 +655,10 @@ function GEMB.plot_output(output::DimStack;
         ztop, zbot = zhi, minimum(x -> isfinite(x) ? x : Inf, z_center)
     else
         ztop, zbot = maximum(depthlims), minimum(depthlims)
-        # In a shifted frame the surface is no longer at 0, so `depthlims`' upper bound would
-        # crop the part of the record that is the point of the frame. Raise the top to the
+        # On the height axis the surface is no longer at 0, so `depthlims`' upper bound would
+        # crop the part of the record that is the point of the axis. Raise the top to the
         # highest cell centre actually present; the lower bound is left as asked for.
-        reference_frame === :surface || (ztop = max(ztop, zhi))
+        vertical_axis === :depth || (ztop = max(ztop, zhi))
     end
     nz = 240
     z_target = collect(range(ztop, zbot; length=nz))  # descending: surface first
@@ -673,8 +673,8 @@ function GEMB.plot_output(output::DimStack;
     fig = Figure(size=(1500, 200 + _ROW_HEIGHT * nrows), fontsize=14)
 
     # Header: title + traceability metadata banner.
-    _header!(fig[1, 1:2], output, times, z_center, title,
-        reference_frame, detrend_rate, detrend_source)
+    _header!(fig[1, 1:2], output, times, title,
+        vertical_axis, detrend_rate, detrend_source)
 
     body = fig[2, 1:2] = GridLayout()
     left = body[1, 1] = GridLayout()   # profile heatmaps
@@ -684,7 +684,7 @@ function GEMB.plot_output(output::DimStack;
 
     prof_axes = Axis[]
     scal_axes = Axis[]
-    ylabel_prof = _depth_label(reference_frame, detrend_rate)
+    ylabel_prof = _depth_label(vertical_axis, detrend_rate)
 
     # ---- Left column: profile heatmaps ------------------------------------
     for (i, v) in enumerate(profile_vars)
@@ -768,8 +768,8 @@ function GEMB.plot_output(output::DimStack;
 end
 
 # Title + one-line metadata banner for traceability.
-function _header!(pos, output, times, z_center, title,
-                  reference_frame, detrend_rate, detrend_source)
+function _header!(pos, output, times, title,
+                  vertical_axis, detrend_rate, detrend_source)
     ver = try
         string(pkgversion(GEMB))
     catch
@@ -785,14 +785,14 @@ function _header!(pos, output, times, z_center, title,
     prov = _provenance_str(md)
     spin = _spinup_str(md)
     budget = _mass_budget_str(output, times)
-    # The frame is only stated when it is not the default. A rate is named only when one was
-    # actually removed, along with where it came from — without that the reader cannot tell an
-    # anomaly from an absolute height.
-    frame = reference_frame === :surface ? "" :
+    # The axis is stated only where the y label cannot say it all: on the height axis a rate
+    # is named when one was actually removed, along with where it came from — without that the
+    # reader cannot tell an anomaly from an absolute height. `:depth` needs nothing.
+    frame = vertical_axis === :depth ? "" :
             detrend_rate != 0.0 ?
-            string("datum frame, less ", round(detrend_rate, digits=3), " m yr⁻¹",
+            string("height axis, less ", round(detrend_rate, digits=3), " m yr⁻¹",
                    " from ", detrend_source) :
-            "datum frame"
+            "height axis"
 
     meta = string(
         "GEMB v$ver  │  ",

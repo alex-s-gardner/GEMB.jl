@@ -180,9 +180,6 @@ scheme is resolved at compile time. `::ModelParameters` in a signature still mat
 instance.
 """
 Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
-    # --- General ---
-    run_prefix::String = "default"
-
     # --- Density & Densification ---
     densification_method::Symbol = :Arthern
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0

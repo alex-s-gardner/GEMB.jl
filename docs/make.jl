@@ -21,6 +21,10 @@ makedocs(;
         "Physics Notes" => "physics_notes.md",
         "Variable Reference" => "variables.md",
         "API Reference" => "api.md",
+        "Model Comparisons" => [
+            "Community Firn Model" => "cfm_comparison.md",
+            "IMAU-FDM" => "imau_fdm_comparison.md",
+        ],
         "Internals" => [
             "Overview" => "internals.md",
             "Physics" => "internals_physics.md",

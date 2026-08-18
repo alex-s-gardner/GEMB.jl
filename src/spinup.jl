@@ -245,7 +245,7 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         spinup_convergence_drift_density = convergence_drift_density,
         spinup_drift_window = drift_window,
         # Equilibrated mean surface mass balance [m of ice per year], positive under accumulation.
-        # Read by `plot_output`'s detrended reference frame; `NaN` when undeterminable.
+        # Read by `plot_output`'s detrended height axis; `NaN` when undeterminable.
         spinup_smb_rate = smb_rate,
         climatology_window_start = _cf(:climatology_window_start),
         climatology_window_stop = _cf(:climatology_window_stop),
