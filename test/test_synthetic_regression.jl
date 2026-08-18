@@ -52,8 +52,10 @@ using GEMB_ClimateForcing
 
     # Reference = deterministic output on arm64 (macOS). Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
-    # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt.
-    # atols are set ~2x that spread.
+    # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt,
+    # against the ~10000 kg/m² totals of the time — i.e. ~0.49% — and the windows are
+    # set ~2.4x that. The mass windows are expressed relatively for exactly this
+    # reason, since the spread scales with the totals; see the note at the assertions.
     #
     # The spread widened from ~30 to ~51 kg/m² with the fixed-length grid: merge and
     # split are threshold comparisons against the per-cell bands, so a 1-ulp band
@@ -134,18 +136,48 @@ using GEMB_ClimateForcing
     # Every number below moves by far more than any tolerance, because it is a different
     # climate: melt 10372.97 -> 397.22 kg m-2 (-96%), albedo 0.822755 -> 0.835208 (the colder,
     # drier surface keeps finer grains), and runoff 4468.19 -> 0.0, which is why the third
-    # pin is now `refreeze`. The atols are unchanged: they were sized for cross-platform FP
-    # spread, which this does not touch. Note the fingerprint is now a *colder* site than
-    # before, so it exercises the melt/refreeze path more lightly; `test_ablation_regime.jl`
-    # remains the melt-dominated end-to-end case.
-    @test mean_albedo ≈ 0.835208 atol=3e-3      # ~0.36% relative
-    @test total_melt ≈ 397.216343 atol=120.0    # absolute, as before — see note below
-    @test total_refreeze ≈ 402.605404 atol=120.0
+    # pin is now `refreeze`. Note the fingerprint is now a *colder* site than before, so it
+    # exercises the melt/refreeze path more lightly; `test_ablation_regime.jl` remains the
+    # melt-dominated end-to-end case.
+    #
+    # The mass tolerances became relative-with-a-floor as a consequence of this re-pin: an
+    # absolute window sized against ~10000 kg m-2 totals does not transfer to ~400. See the
+    # note at the assertions.
+    # The mass tolerances are `max(rtol·reference, floor)` rather than a bare `atol`, because
+    # the quantity they have to bracket — cross-platform FP evaluation-order spread amplified
+    # over the 75-cycle spinup — scales with the totals, while a fixed `atol` does not. The
+    # inherited `atol = 120.0` was sized against ~10000 kg m-2 totals, where it was 1.16%
+    # relative and 2.35x the measured arm64/x86_64 spread of ~51 kg m-2 (0.49%). Carried
+    # unchanged onto the ~400 kg m-2 totals this site produces, the same window is ~30% —
+    # loose enough to miss a real regression. The relative form keeps the ratio the pin was
+    # actually sized for: `MASS_RTOL = 0.012` is 2.4x the spread expressed as a fraction, so
+    # it stays correctly sized if a future re-pin moves these totals again in either
+    # direction.
+    #
+    # The floor is what a pure `rtol` would get wrong at the other end. `refreeze` is one
+    # substitution away from having been `runoff`, which this site drove to exactly zero;
+    # should a future change take either total near zero, `rtol·reference` collapses with it
+    # and the pin becomes unfalsifiable-by-arithmetic — asserting agreement to a window
+    # narrower than the FP noise it exists to tolerate. `MASS_ATOL_FLOOR = 2.0` kg m-2 holds a
+    # usable window there; it binds only below ~167 kg m-2, so it is inert at the current
+    # references (4.77 and 4.83 kg m-2 respectively).
+    MASS_RTOL = 0.012
+    MASS_ATOL_FLOOR = 2.0
+    mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
 
-    # The melt and refreeze atols are inherited unchanged from when these fields were ~10000
-    # and ~4500 kg m-2, where 120.0 was ~1-3% and bracketed twice the measured arm64/x86_64
-    # spread. Against the new ~400 kg m-2 totals the same absolute window is ~30%, which is
-    # looser in relative terms than the pin deserves. Tightening it needs the cross-platform
-    # spread measured at this site rather than guessed, so it is left alone here and flagged:
-    # the numbers above are exact on arm64, so a CI run on x86_64 gives the spread directly.
+    @test mean_albedo ≈ 0.835208 atol=3e-3      # ~0.36% relative
+    @test total_melt ≈ 397.216343 atol=mass_tol(397.216343)
+    @test total_refreeze ≈ 402.605404 atol=mass_tol(402.605404)
+
+    # Pin the tolerance policy itself, so a later edit cannot quietly reintroduce the failure
+    # mode either half exists to prevent: a window that does not scale, or one that collapses
+    # to zero. These are assertions about the *test*, which is why they are cheap and here.
+    @test mass_tol(397.216343) ≈ 4.7666 atol=1e-3     # rtol binds at the current references
+    @test mass_tol(0.0) == MASS_ATOL_FLOOR            # floor binds if a total ever goes to 0
+    @test mass_tol(1e5) > MASS_ATOL_FLOOR             # and scales up with a larger total
+
+    # Still worth measuring rather than inferring: 0.012 is the *old* site's spread-to-window
+    # ratio carried across, not a spread measured at 2200 m. The references above are exact on
+    # arm64, so an x86_64 CI run gives the real figure for this site directly; if it comes in
+    # materially below 0.49%, this can tighten.
 end
