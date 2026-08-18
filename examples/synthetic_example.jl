@@ -101,10 +101,10 @@ println("  Oldest firn in column: ",
 
 ## Plot the run:
 
-# gemb_plot_output draws the whole run as a diagnostic dashboard: profile fields as
+# plot_output draws the whole run as a diagnostic dashboard: profile fields as
 # heatmaps on the left, scalar time series on the right, sharing a linked time axis.
 # It lives in a package extension, so it needs a Makie backend loaded first.
 using CairoMakie
-fig = gemb_plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0))
 save("gemb_diagnostics.png", fig; px_per_unit=2)
 display(fig)

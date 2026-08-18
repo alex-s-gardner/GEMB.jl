@@ -108,8 +108,8 @@ println("  Mean firn air content: ", round(mean(parent(output[:firn_air_content]
 
 ## Plot the run
 
-# gemb_plot_output needs a Makie backend loaded (it lives in a package extension).
+# plot_output needs a Makie backend loaded (it lives in a package extension).
 using CairoMakie
-fig = gemb_plot_output(output; depthlims=(-20, 0))
+fig = plot_output(output; depthlims=(-20, 0))
 save("era5_diagnostics.png", fig; px_per_unit=2)
 display(fig)

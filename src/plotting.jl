@@ -1,5 +1,5 @@
 """
-    gemb_plot_output(output::DimStack; datelims=nothing, depthlims=(-10, 0),
+    plot_output(output::DimStack; datelims=nothing, depthlims=(-10, 0),
                      variables=nothing, title="")
 
 Create a diagnostic dashboard for a GEMB model run (`output = gemb(profile, cf, mp)`).
@@ -56,13 +56,13 @@ A Makie `Figure`.
 ```julia
 using GEMB, CairoMakie
 output = gemb(profile_spunup, cf, mp)
-fig = gemb_plot_output(output; depthlims=(-5, 0))
+fig = plot_output(output; depthlims=(-5, 0))
 save("gemb_diagnostics.png", fig)
 ```
 """
-function gemb_plot_output(args...; kwargs...)
+function plot_output(args...; kwargs...)
     error("""
-        `gemb_plot_output` requires a Makie backend. Load one before calling this function:
+        `plot_output` requires a Makie backend. Load one before calling this function:
 
             using CairoMakie   # for file output (PNG, SVG, PDF)
             using GLMakie      # for interactive windows

@@ -221,12 +221,12 @@ Convert with [`dz2z`](@ref), or regrid onto fixed depths with [`gemb_interp`](@r
 
 ## Diagnostic plot
 
-With a Makie backend loaded, [`gemb_plot_output`](@ref) draws the whole run — profile fields
+With a Makie backend loaded, [`plot_output`](@ref) draws the whole run — profile fields
 as heatmaps on the left, scalar time series on the right, on a shared time axis:
 
 ```julia
 using CairoMakie
-fig = gemb_plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0))
 save("gemb_diagnostics.png", fig)
 ```
 

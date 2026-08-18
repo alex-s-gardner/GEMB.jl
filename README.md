@@ -53,7 +53,7 @@ Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 ```
 
 Julia ≥ 1.11 is required. A Makie backend (CairoMakie, GLMakie, or WGLMakie) enables
-`gemb_plot_output`.
+`plot_output`.
 
 ## Quick Start
 
@@ -132,12 +132,12 @@ julia> output[:density][Z=1:5, Ti=At(DateTime(2020, 7, 1, 21))]   # top five cel
 `Z` is a **cell index, not a depth** — the grid is Lagrangian, so cells move with the firn.
 Convert with `dz2z`, or regrid onto fixed depths with `gemb_interp`.
 
-With a Makie backend loaded, `gemb_plot_output` draws the whole run — profile fields as
+With a Makie backend loaded, `plot_output` draws the whole run — profile fields as
 heatmaps on the left, scalar time series on the right, on a shared time axis:
 
 ```julia
 using CairoMakie
-fig = gemb_plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0))
 save("gemb_diagnostics.png", fig; px_per_unit=2)
 ```
 

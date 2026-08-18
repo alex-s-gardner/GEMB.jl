@@ -2,7 +2,7 @@
 Extension for GEMB.jl providing diagnostic plotting via Makie.
 
 This extension is automatically loaded when both GEMB and a Makie backend
-(e.g. CairoMakie or GLMakie) are loaded. It implements [`gemb_plot_output`](@ref).
+(e.g. CairoMakie or GLMakie) are loaded. It implements [`plot_output`](@ref).
 """
 module GEMBMakieExt
 
@@ -492,7 +492,7 @@ end
 # Main entry point
 =============================================================================#
 
-function GEMB.gemb_plot_output(output::DimStack;
+function GEMB.plot_output(output::DimStack;
     datelims=nothing, depthlims=(-10, 0), variables=nothing, title="")
 
     # ---- Select variables -------------------------------------------------
