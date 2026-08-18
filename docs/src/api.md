@@ -49,11 +49,11 @@ close_off_age
 
 ## Plotting
 
-`gemb_plot_output` is exported from GEMB, but its methods live in a package extension
+`plot_output` is exported from GEMB, but its methods live in a package extension
 that loads only once a Makie backend (`CairoMakie`, `GLMakie`, or `WGLMakie`) is present.
 
 ```@docs
-gemb_plot_output
+plot_output
 ```
 
 ## GEMB_ClimateForcing Companion

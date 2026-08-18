@@ -184,7 +184,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         # GEMB's quantity exactly. See `cf_metadata.jl`.
         layermetadata=cf_layermetadata(layers),
         # CF global attributes, then forcing provenance so downstream consumers
-        # (e.g. `gemb_plot_output`) can report where the forcing came from, plus
+        # (e.g. `plot_output`) can report where the forcing came from, plus
         # spinup/climatology provenance from the initial profile (or a flag noting
         # the run started from an un-spun-up profile). Globals go first so a
         # run-specific key would win on any collision.

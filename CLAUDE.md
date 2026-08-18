@@ -174,7 +174,7 @@ GEMB follows a modular physics-based architecture:
    - `gemb(profile, climate_forcing, mp)` in `gemb_driver.jl`: Main driver function that loops over time, accumulates output
 
 5. **Plotting (extension)**:
-   - `gemb_plot_output()` is exported but its methods live in `ext/GEMBMakieExt.jl`, a package extension weak-dep'd on `Makie` (triggered by `CairoMakie`/`GLMakie`/`WGLMakie`). Calling it without a Makie backend loaded errors with a load hint. `src/plotting.jl` holds the core (backend-agnostic) plotting stub/exports.
+   - `plot_output()` is exported but its methods live in `ext/GEMBMakieExt.jl`, a package extension weak-dep'd on `Makie` (triggered by `CairoMakie`/`GLMakie`/`WGLMakie`). Calling it without a Makie backend loaded errors with a load hint. `src/plotting.jl` holds the core (backend-agnostic) plotting stub/exports.
 
 6. **Utilities**:
    - `gemb_spinup()` in `spinup.jl`: Cycles forcing to reach equilibrium (for multi-millennial spinups). Returns the final equilibrated profile and all spinup output.

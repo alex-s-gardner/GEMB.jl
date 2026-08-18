@@ -68,7 +68,7 @@ export ModelParameters, ClimateForcing, ClimateForcingStep
 export AbstractThermalSolver, ExplicitThermal, ImplicitThermal, ThermalWorkspace
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
-export gemb_plot_output
+export plot_output
 export dz2z, surface_timeseries, firn_air_content, close_off_age, fast_divisors, decyear2datenum, datetime2decyear
 export CFAttrs, GEMB_CF_ATTRIBUTES, GEMB_CF_GLOBAL_ATTRIBUTES, cf_attributes
 export fresh_snow_density
