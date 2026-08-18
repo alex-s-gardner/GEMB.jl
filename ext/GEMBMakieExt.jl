@@ -673,7 +673,7 @@ function GEMB.plot_output(output::DimStack;
     fig = Figure(size=(1500, 200 + _ROW_HEIGHT * nrows), fontsize=14)
 
     # Header: title + traceability metadata banner.
-    _header!(fig[1, 1:2], output, times, z_center, title,
+    _header!(fig[1, 1:2], output, times, title,
         vertical_axis, detrend_rate, detrend_source)
 
     body = fig[2, 1:2] = GridLayout()
@@ -768,7 +768,7 @@ function GEMB.plot_output(output::DimStack;
 end
 
 # Title + one-line metadata banner for traceability.
-function _header!(pos, output, times, z_center, title,
+function _header!(pos, output, times, title,
                   vertical_axis, detrend_rate, detrend_source)
     ver = try
         string(pkgversion(GEMB))
