@@ -234,7 +234,7 @@ weakdeps = ["StaticArrays"]
     ForwardDiffStaticArraysExt = "StaticArrays"
 
 [[deps.GEMB]]
-deps = ["DataInterpolations", "Dates", "DimensionalData", "FillArrays", "JSON", "Statistics"]
+deps = ["DataInterpolations", "Dates", "DimensionalData", "FillArrays", "Statistics"]
 path = "/Users/gardnera/Documents/GitHub/GEMB.jl"
 uuid = "658e70de-abe2-4db6-8b40-f6dcda98d853"
 version = "2.0.0"
