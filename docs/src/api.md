@@ -46,6 +46,17 @@ firn_air_content
 close_off_age
 ```
 
+## Restart and Run Comparison
+
+The two sets that define what a column state *is* and which parameters a run derives for
+itself — exported so code persisting a column between runs, or comparing two runs'
+configurations, can check against the sets GEMB actually uses rather than its own copy.
+
+```@docs
+RESTART_LAYERS
+DERIVED_PARAMETERS
+```
+
 ## Plotting
 
 `plot_output` is exported from GEMB, but its methods live in a package extension
