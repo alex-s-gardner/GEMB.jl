@@ -4,6 +4,42 @@ import DimensionalData as DD
 using Dates
 
 """
+    RESTART_LAYERS
+
+The layers that constitute a complete column state — exactly what [`gemb`](@ref) reads off the
+`profile` it is handed, and exactly what [`gemb_profile`](@ref) writes back out.
+
+This is the restart contract. Every layer is required: `gemb` indexes them by name to build its
+initial state, so a profile missing one fails on the first timestep rather than silently
+defaulting. `age` is part of the state even though no physics reads it — it is the column's only
+clock, and dropping it would restart every continuation's age at whatever the saved column held.
+
+Exported so a caller that persists a column between runs (writing it to disk and reading it back
+later) can validate a restored profile against the set `gemb` actually requires, instead of
+against its own copy of this list. A copy cannot detect the case that matters: a layer added to
+the state here would leave the caller's list stale in precisely the same way as the old file it is
+checking, and the validation would pass.
+
+`z_center` is deliberately absent — `gemb_profile` omits it so an extracted profile matches the
+output layout; recompute it with `dz2z(profile[:dz])` where needed.
+"""
+const RESTART_LAYERS = (:dz, :temperature, :density, :water, :grain_radius,
+                        :grain_dendricity, :grain_sphericity, :age)
+
+"""
+    DERIVED_PARAMETERS
+
+The [`ModelParameters`](@ref) fields [`gemb`](@ref) computes for itself rather than reading from
+the caller, and overwrites on entry with values derived from the forcing timestep.
+
+These are outputs of a run, not settings of it. Exported so a caller comparing two runs'
+configurations — deciding whether a saved record may be extended, say — can exclude them and not
+report a difference neither run asked for. Recording one would also pin a value the caller never
+chose and cannot reproduce without knowing the forcing's timestep.
+"""
+const DERIVED_PARAMETERS = (:dt_divisors,)
+
+"""
     AbstractThermalSolver
 
 Supertype for the schemes that advance the subsurface temperature profile over one forcing

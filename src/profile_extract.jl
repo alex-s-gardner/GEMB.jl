@@ -42,20 +42,12 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
 
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
 
-    # `z_center` is intentionally omitted so the extracted profile matches the
-    # output layout (a slice of it); recompute via `dz2z(profile[:dz])` if needed.
-    layers = (
-        dz=DimArray(parent(out[:dz])[:, col_idx], (zdim,)),
-        temperature=DimArray(parent(out[:temperature])[:, col_idx], (zdim,)),
-        density=DimArray(parent(out[:density])[:, col_idx], (zdim,)),
-        water=DimArray(parent(out[:water])[:, col_idx], (zdim,)),
-        grain_radius=DimArray(parent(out[:grain_radius])[:, col_idx], (zdim,)),
-        grain_dendricity=DimArray(parent(out[:grain_dendricity])[:, col_idx], (zdim,)),
-        grain_sphericity=DimArray(parent(out[:grain_sphericity])[:, col_idx], (zdim,)),
-        # Carrying `age` here is what makes it accumulate across `gemb_spinup` cycles, which
-        # round-trip the column through this function between runs.
-        age=DimArray(parent(out[:age])[:, col_idx], (zdim,)),
-    )
+    # Exactly `RESTART_LAYERS`, taken from that constant rather than listed again, so what `gemb`
+    # requires of a profile and what this writes into one cannot drift apart. `z_center` is
+    # absent from it by design, so the extracted profile matches the output layout (a slice of
+    # it); recompute via `dz2z(profile[:dz])` if needed. Carrying `age` is what makes it
+    # accumulate across `gemb_spinup` cycles, which round-trip the column through here.
+    layers = NamedTuple(l => DimArray(parent(out[l])[:, col_idx], (zdim,)) for l in RESTART_LAYERS)
 
     # Carry the CF attributes through, minus `cell_methods`: the extracted column has no
     # `Ti` dimension, so an interval reduction referencing a `time` coordinate that isn't

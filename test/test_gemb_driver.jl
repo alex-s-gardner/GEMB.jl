@@ -309,6 +309,46 @@ using Dates
         @test zattrs["positive"] == "up"
         @test DimensionalData.metadata(gridded)["units"] == "K"
     end
+    @testset "restart layer schema" begin
+        n = 90
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        mp = initialize_parameters(output_frequency=:monthly)
+        profile = initialize_profile(mp, forcing)
+        out = gemb(profile, forcing, mp)
+
+        # `RESTART_LAYERS` is the column state, so it must be exactly what the two
+        # constructors of a profile produce and exactly what `gemb` consumes. Pinning
+        # both directions here is what makes the constant safe to read from outside the
+        # package: a layer added to the state without joining the list fails on the
+        # `gemb_profile` side, and a name left in the list after the state drops it
+        # fails on the `initialize_profile` side.
+        @test Set(keys(gemb_profile(out))) == Set(RESTART_LAYERS)
+        @test Set(RESTART_LAYERS) ⊆ Set(keys(profile))
+
+        # A profile short of a layer is rejected before the time loop, naming the gap.
+        # Without the up-front check this surfaced as a `FieldError` on an internal
+        # `state` field, from deep inside the run.
+        incomplete = DimStack(NamedTuple(l => profile[l]
+                                         for l in keys(profile) if l !== :age))
+        err = try
+            gemb(incomplete, forcing, mp)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test occursin("age", err.msg)
+        @test occursin("RESTART_LAYERS", err.msg)
+
+        # `dt_divisors` is derived inside `gemb`, so whatever the caller passes is
+        # overwritten rather than honoured — that is why it is in `DERIVED_PARAMETERS`.
+        @test :dt_divisors in DERIVED_PARAMETERS
+        @test all(f -> f in fieldnames(ModelParameters), DERIVED_PARAMETERS)
+    end
     @testset "heat_flux_basal output" begin
         # The conductive flux across the deepest interior face was already computed and
         # consumed by the verbose energy budget; Fix 6 reports it. It is an interval mean,
