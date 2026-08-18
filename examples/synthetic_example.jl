@@ -22,11 +22,13 @@ cf_climatology = forcing_climatology(cf)
 # column depth they hold fixed from the profile, so nothing has to be threaded.
 profile = initialize_profile(mp, cf_climatology)
 
-# Spin up a profile for up to 75 years of average forcing, exiting early once the
+# Spin up a profile for up to 400 years of average forcing, exiting early once the
 # depth-averaged density converges. gemb_spinup internally forces
-# output_frequency=:last, so no separate :last params object is needed.
+# output_frequency=:last, so no separate :last params object is needed. This site
+# converges at cycle 62; the cap is set well clear of that so the convergence test, not
+# the iteration limit, is what ends the spinup.
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=75, convergence_delta_density=0.01)
+                             max_iterations=400, convergence_delta_density=0.01)
 
 # The spun-up profile carries provenance: which climatology years were averaged
 # and how the spinup converged (`metadata` is re-exported from DimensionalData).
@@ -111,6 +113,26 @@ println("  Oldest firn in column: ",
 # than appearing to sink at the accumulation rate. Pass vertical_axis=:depth for the
 # model's own coordinate (depth below the instantaneous surface).
 using CairoMakie
-fig = plot_output(output; depthlims=(-10, 0))
+fig = plot_output(output; depthlims=(-10, 0), detrend=:transient)
 save("gemb_diagnostics.png", fig; px_per_unit=2)
 display(fig)
+
+## What the spinup bought:
+
+# The same forcing and parameters run from the un-spun-up column, for comparison. This is
+# the pair of figures in the README and the docs home page. Without spinup the column
+# starts far from the state this climate sustains and spends its first two decades
+# relaxing: firn air content falls 11.5 -> 6 m and the surface loses ~6 m of height
+# anomaly (net dFAC -5.57 m over the run, against +0.17 m from the spun-up column). That
+# drift is the initial condition being forgotten rather than a response to the forcing.
+output_cold = gemb(profile, cf, mp)
+
+# detrend=:transient in both, deliberately. The default (:spinup) removes the rate
+# gemb_spinup recorded, which output_cold does not carry at all — and a comparison is only
+# readable if the same rate is removed from each panel.
+fig_cold = plot_output(output_cold; depthlims=(-10, 0), detrend=:transient)
+save("gemb_diagnostics_cold_start.png", fig_cold; px_per_unit=2)
+
+fac_cold, fac_spun = parent(output_cold[:firn_air_content]), parent(output[:firn_air_content])
+println("  ΔFAC, no spinup: ", round(fac_cold[end] - fac_cold[1], digits=2), " m")
+println("  ΔFAC, spun up:   ", round(fac_spun[end] - fac_spun[1], digits=2), " m")

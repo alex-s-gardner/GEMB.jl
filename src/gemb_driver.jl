@@ -35,6 +35,8 @@ writer, so the attributes are there for whichever writer or plotting code consum
 """
 function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
     verbose::Bool=false, thermal_workspace::ThermalWorkspace=ThermalWorkspace())
+    _assert_restart_layers(profile)
+
     # Get time information
     time_dim = dims(climate_forcing.temperature_air, Ti)
     times = Vector{DateTime}(time_dim.val)
@@ -75,13 +77,18 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         elevation_offset=climate_forcing.elevation_offset,
     )
 
-    # Pre-compute dt_divisors for thermal sub-stepping
+    # Pre-compute dt_divisors for thermal sub-stepping. Excluded by way of `DERIVED_PARAMETERS`,
+    # the exported statement of which fields this overwrites, so a caller comparing two runs'
+    # settings reads the exclusion from here rather than restating it.
     model_parameters = ModelParameters(;
-        (field => getfield(mp, field) for field in fieldnames(ModelParameters) if field != :dt_divisors)...,
+        (field => getfield(mp, field) for field in fieldnames(ModelParameters)
+         if !(field in DERIVED_PARAMETERS))...,
         dt_divisors=fast_divisors(dt_int * 10000) ./ 10000
     )
 
-    # Initialize column state from profile
+    # Initialize column state from profile. Every layer read here is in `RESTART_LAYERS`, which
+    # `_assert_restart_layers` has already checked for above — so a profile that reaches this point
+    # cannot fail on a missing name.
     state = (
         temperature = Vector{Float64}(profile[:temperature]),
         dz = Vector{Float64}(profile[:dz]),
@@ -236,6 +243,29 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
 
     # Return the DimStack (already populated during time loop)
     return output
+end
+
+"""
+    _assert_restart_layers(profile)
+
+Check that `profile` carries every layer in [`RESTART_LAYERS`](@ref) before the run starts.
+
+Without this the first missing layer surfaces as a bare `FieldError` from deep inside the time
+loop, naming a field of an internal `state` NamedTuple rather than the profile that is actually
+incomplete — and it surfaces only once the run is already underway, which for a resumed
+long-record run can be well after the caller has committed real work. The common cause is a
+column persisted to disk before a layer joined the state, so the message names the gap and the
+remedy instead.
+"""
+function _assert_restart_layers(profile::DimStack)
+    missing_layers = filter(l -> !haskey(profile, l), RESTART_LAYERS)
+    isempty(missing_layers) && return nothing
+    error("gemb: the profile is missing the state layer(s) " *
+          join(missing_layers, ", ") * ". A complete column state is " *
+          join(RESTART_LAYERS, ", ") * " (see GEMB.RESTART_LAYERS). A profile from " *
+          "`gemb_profile` or `initialize_profile` always carries all of them; one short of a " *
+          "layer has most likely been round-tripped through storage that predates it, and the " *
+          "column must be rebuilt rather than continued.")
 end
 
 """

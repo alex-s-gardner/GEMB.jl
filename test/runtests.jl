@@ -57,6 +57,12 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Ablation Regime" begin
         include("test_ablation_regime.jl")
     end
+    @testset "Percolation Regime" begin
+        include("test_percolation_regime.jl")
+    end
+    @testset "Accumulation Regime" begin
+        include("test_accumulation_regime.jl")
+    end
     @testset "GEMB_ClimateForcing Integration" begin
         # Verify simulate → convert → run model end-to-end
         ds = GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3)
