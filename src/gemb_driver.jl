@@ -199,7 +199,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
                 # Ice density this run used [kg m-3]. Recorded so a consumer can convert the
                 # mass-flux outputs to metres of ice with the same value the run did, rather
                 # than assuming a default that may not match `mp` (`plot_output` does this for
-                # its detrended reference frame).
+                # its detrended height axis).
                 "density_ice" => mp.density_ice,
             ),
             _profile_provenance(profile),

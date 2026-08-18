@@ -1,6 +1,6 @@
 """
     plot_output(output::DimStack; datelims=nothing, depthlims=(-10, 0),
-                     variables=nothing, title="", reference_frame=:surface,
+                     variables=nothing, title="", vertical_axis=:height,
                      detrend=:spinup)
 
 Create a diagnostic dashboard for a GEMB model run (`output = gemb(profile, cf, mp)`).
@@ -38,8 +38,8 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
 - `depthlims`: `(low, high)` depth limits (metres, negative down). Sets both the
   regridding range and the depth axis of the heatmaps. Defaults to `(-10, 0)` — the
   near-surface zone where most of the dynamics live. Pass a wider range (or derive it
-  from the data) to see the full column. In the `:datum` frame the upper bound is raised
-  to the highest cell centre present, so the surface excursion the frame exists to show is
+  from the data) to see the full column. On the `:height` axis the upper bound is raised
+  to the highest cell centre present, so the surface excursion the axis exists to show is
   never cropped; the lower bound is used as given.
 - `variables`: Iterable of variable name `Symbol`s to include. Defaults to every
   variable in `output` except the profile fields `dz`, `grain_dendricity`, and
@@ -47,12 +47,12 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   already represented by the grain-radius panel, and a lower-priority group); pass any
   of them explicitly here to include them.
 - `title`: Optional figure title. Defaults to `"GEMB.jl glacier firn model output"`.
-- `reference_frame`: Vertical coordinate the profile heatmaps (and the isochrone overlay)
-  are drawn in — `:surface` (default) or `:datum`. See
-  [Vertical reference frames](#Vertical-reference-frames) below.
-- `detrend`: Rate [m per year] subtracted from the `:datum` frame's surface height, making it
-  an anomaly about the mean state. Ignored for `:surface`. Needed because GEMB has no ice
-  dynamics — see [Vertical reference frames](#Vertical-reference-frames).
+- `vertical_axis`: Vertical coordinate the profile heatmaps (and the isochrone overlay)
+  are drawn in — `:height` (default) or `:depth`. See
+  [Vertical axes](#Vertical-axes) below.
+- `detrend`: Rate [m per year] subtracted from the `:height` axis's surface height, making it
+  an anomaly about the mean state. Ignored for `:depth`. Needed because GEMB has no ice
+  dynamics — see [Vertical axes](#Vertical-axes).
   - `:spinup` (default) — the `spinup_smb_rate` provenance the run inherits from
     [`gemb_spinup`](@ref), measured over the climatological cycle the column was spun up on.
     Errors if the run carries none. Preferred because detrending by the *climatological* rate
@@ -60,7 +60,7 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   - `:transient` — the same quantity measured over the run being plotted. Agrees closely with
     `:spinup` unless the record's climate departs from the climatology, in which case this
     removes that departure along with the mean.
-  - a number — used verbatim. `0.0` gives the raw datum frame, which climbs at the mean
+  - a number — used verbatim. `0.0` gives the raw height above datum, which climbs at the mean
     accumulation rate; worth asking for on a short record.
 
   Both symbolic options give `(precipitation + evaporation_condensation - runoff) /
@@ -68,17 +68,17 @@ forcing source, time span, sampling cadence, spinup climatology window + converg
   source are recorded in the header banner, so a figure cannot leave the reader unable to tell
   an anomaly from an absolute height.
 
-# Vertical reference frames
+# Vertical axes
 
 The model's own vertical coordinate is depth below the **instantaneous** surface. Because
 the column has a fixed total depth ([`trim_bottom!`](@ref)), accumulation is expressed as
 mass leaving through the base rather than as a rising surface, so in that coordinate a
 parcel of firn appears to sink even though it is not moving, and annual layers slope
-downward across the panel. `reference_frame` shifts each timestep's cell centres by a
+downward across the panel. `vertical_axis` shifts each timestep's cell centres by a
 per-timestep offset before regridding, to undo that:
 
-- `:surface` — no offset; the model coordinate, and the historical behaviour.
-- `:datum` — add back the cumulative basal ice flux, `-cumsum(ice_flux)`, then subtract
+- `:depth` — no offset; the model's own coordinate.
+- `:height` (default) — add back the cumulative basal ice flux, `-cumsum(ice_flux)`, then subtract
   `detrend·(t-t₀)`. Layers hold their elevation as they should, and the surface rises and
   falls the way a glacier surface does against an earth datum such as the ellipsoid, as an
   anomaly about the mean state.

@@ -105,6 +105,11 @@ println("  Oldest firn in column: ",
 # plot_output draws the whole run as a diagnostic dashboard: profile fields as
 # heatmaps on the left, scalar time series on the right, sharing a linked time axis.
 # It lives in a package extension, so it needs a Makie backend loaded first.
+#
+# The profile panels default to vertical_axis=:height — height against a datum fixed in
+# the ice, less the mean surface mass balance rate, so firn holds its elevation rather
+# than appearing to sink at the accumulation rate. Pass vertical_axis=:depth for the
+# model's own coordinate (depth below the instantaneous surface).
 using CairoMakie
 fig = plot_output(output; depthlims=(-10, 0))
 save("gemb_diagnostics.png", fig; px_per_unit=2)

@@ -47,9 +47,9 @@ evolution of glaciers and ice sheets. It couples atmospheric forcing to subsurfa
 thermodynamics and densification physics to resolve temperature, density, water content,
 grain properties, and layer age through the column.
 
-GEMB is a column model of intermediate complexity with no horizontal communication,
-prioritizing computational efficiency to accommodate the multi-millennial spin-ups required
-to initialize deep firn columns. It is used for interpreting satellite altimetry, firn and
+GEMB is a one-dimensional column model with no horizontal communication, prioritizing
+computational efficiency to accommodate the multi-millennial spin-ups required to initialize
+deep firn columns. It is used for interpreting satellite altimetry, firn and
 ice-core studies, surface mass balance inversion, and uncertainty quantification.
 
 A complete description of version 1.0 of the model is given in
@@ -237,6 +237,13 @@ content settles into a repeating seasonal cycle instead of drifting through a co
 transient. The banner records that provenance: version, forcing source, time span, cadence,
 spinup window and convergence, and the closed mass budget. Panels take their units from each
 layer's CF metadata, so a label cannot disagree with the data it draws.
+
+The profile panels are drawn on the default `vertical_axis=:height` — height against a datum
+fixed in the ice, less the mean surface mass balance rate, so a parcel of firn holds its
+elevation instead of appearing to sink at the accumulation rate. The banner names the rate that
+was removed and where it came from, which is what makes "height anomaly" readable as an anomaly
+rather than an absolute height. Pass `vertical_axis=:depth` for the model's own coordinate,
+depth below the instantaneous surface.
 
 ## Spinup
 

@@ -105,7 +105,7 @@
     #     -cumsum(ice_flux) = SMB / density_ice + Δ(firn_air_content)
     #
     # It is exact rather than approximate because the basal flux is whatever it must be to
-    # hold `Σdz` fixed while both terms act. `plot_output`'s `:datum` reference frame is built
+    # hold `Σdz` fixed while both terms act. `plot_output`'s `:height` vertical axis is built
     # on it, and it is the reason cumulative SMB must not be added on top of removing the
     # flux — SMB is already one of the two terms.
     smb_ie = (sum(parent(out[:precipitation])) +
