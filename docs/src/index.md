@@ -87,7 +87,8 @@ Pkg.add(url="https://github.com/alex-s-gardner/GEMB_ClimateForcing.jl")
 
 ## Quick Start
 
-Running GEMB takes four steps:
+A cold-start run takes four steps. It is the shortest path to output, and — as the figures
+below show — the reason production runs add a fifth, [spinup](#Spinup):
 
 1. **Define climate forcing** — [`initialize_forcing`](@ref) converts a `DimStack` of
    meteorological time series into a [`ClimateForcing`](@ref).
@@ -114,6 +115,23 @@ profile = initialize_profile(mp, cf)
 # 4. Run
 output = gemb(profile, cf, mp)
 ```
+
+With a Makie backend loaded, [`plot_output`](@ref) draws the whole run — profile fields as
+heatmaps on the left, scalar time series on the right, on a shared time axis:
+
+```julia
+using CairoMakie
+fig = plot_output(output; depthlims=(-10, 0), detrend=:transient)
+save("gemb_diagnostics_cold_start.png", fig; px_per_unit=2)
+```
+
+![GEMB.jl diagnostic output, cold start](assets/gemb_output_example_cold_start.png)
+
+The column starts far from the state this climate sustains, so the run spends its first two
+decades relaxing rather than reporting: firn air content falls 11.5 → 6 m and the surface loses
+~6 m of height anomaly before either begins to level off. None of that drift is a response to
+the forcing — it is the initial condition being forgotten, and it contaminates every field
+in the figure. [Spinup](#Spinup) below removes it.
 
 ## What the output looks like
 
@@ -218,46 +236,45 @@ julia> sum(output[:melt])                                          # column tota
 `Z` is a **cell index, not a depth** — the grid is Lagrangian, so cells move with the firn.
 Convert with [`dz2z`](@ref), or regrid onto fixed depths with [`gemb_interp`](@ref).
 
-## Diagnostic plot
+## Spinup
 
-With a Makie backend loaded, [`plot_output`](@ref) draws the whole run — profile fields
-as heatmaps on the left, scalar time series on the right, on a shared time axis:
+For research applications the column should be spun up to a quasi-steady state before running
+transient forcing. [`forcing_climatology`](@ref) averages complete years into a one-year
+cycle, and [`gemb_spinup`](@ref) repeats it — replacing step 3 of the Quick Start, with steps
+1, 2 and 4 unchanged:
 
 ```julia
-using CairoMakie
+mp = initialize_parameters()                 # gemb_spinup forces output_frequency=:last itself
+cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
+
+profile = initialize_profile(mp, cf_clim)    # grid is sized to this climate
+spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=400,
+                      convergence_delta_density=0.01,
+                      convergence_drift_density=0.005)
+
+# Then the transient run, from the spun-up column
+output = gemb(spun_up, cf, initialize_parameters(output_frequency=:daily))
+
 fig = plot_output(output; depthlims=(-10, 0), detrend=:transient)
-save("gemb_diagnostics.png", fig)
+save("gemb_diagnostics.png", fig; px_per_unit=2)
 ```
-
-Both figures below are `examples/synthetic_example.jl` — the same 32 years of synthetic
-forcing, the same parameters, differing only in the column each run starts from. Together they
-are the case for spinning up.
-
-Straight from [`initialize_profile`](@ref), with no spinup (banner: `no spinup`):
-
-![GEMB.jl diagnostic output, cold start](assets/gemb_output_example_cold_start.png)
-
-The column starts far from the state this climate sustains, so the run spends its first two
-decades relaxing rather than reporting: firn air content falls 11.5 → 6 m and the surface loses
-~6 m of height anomaly before either begins to level off. None of that drift is a response to
-the forcing — it is the initial condition being forgotten, and it contaminates every field
-in the figure.
-
-From a column spun up to convergence first (banner: `spinup … converged`):
 
 ![GEMB.jl diagnostic output](assets/gemb_output_example.png)
 
-Now firn air content holds a repeating seasonal cycle (5.5–5.8 m, net +0.17 m over 32 years
-against −5.57 m from the cold start) and the surface holds its elevation, so what the panels
-show is the climate's own variability. The banner records that provenance: version, forcing
-source, time span, cadence, spinup window and convergence, and the closed mass budget. Panels
-take their units from each layer's CF metadata, so a label cannot disagree with the data it
-draws.
+Same 32 years of forcing and the same parameters as the cold start above; only the starting
+column differs (banner: `spinup … converged`, against `no spinup`). Now firn air content holds
+a repeating seasonal cycle (5.5–5.8 m, net +0.17 m over 32 years against −5.57 m from the cold
+start) and the surface holds its elevation, so what the panels show is the climate's own
+variability. Both figures are `examples/synthetic_example.jl`, which runs the pair.
 
-Both use `detrend=:transient`, which measures the removed rate over the plotted run itself.
+Both pass `detrend=:transient`, which measures the removed rate over the plotted run itself.
 The default `detrend=:spinup` uses the rate recorded by [`gemb_spinup`](@ref), which the
 cold-start run does not carry — and comparing two panels means removing the same rate from
 each.
+
+The banner records the run's provenance: version, forcing source, time span, cadence, spinup
+window and convergence, and the closed mass budget. Panels take their units from each layer's
+CF metadata, so a label cannot disagree with the data it draws.
 
 The profile panels are drawn on the default `vertical_axis=:height` — height against a datum
 fixed in the ice, less the mean surface mass balance rate, so a parcel of firn holds its
@@ -265,22 +282,6 @@ elevation instead of appearing to sink at the accumulation rate. The banner name
 was removed and where it came from, which is what makes "height anomaly" readable as an anomaly
 rather than an absolute height. Pass `vertical_axis=:depth` for the model's own coordinate,
 depth below the instantaneous surface.
-
-## Spinup
-
-For research applications the column should be spun up to a quasi-steady state before running
-transient forcing. [`forcing_climatology`](@ref) averages complete years into a one-year
-cycle, and [`gemb_spinup`](@ref) repeats it:
-
-```julia
-mp = initialize_parameters()                 # gemb_spinup forces output_frequency=:last itself
-cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
-
-profile = initialize_profile(mp, cf_clim)
-spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=400,
-                      convergence_delta_density=0.01,
-                      convergence_drift_density=0.005)
-```
 
 Convergence is judged on column-mean density. Two tests are available, and when both are
 given both must hold: `convergence_delta_density` bounds the change between consecutive
@@ -311,9 +312,7 @@ the transient run:
 julia> metadata(spun_up)
 (spinup_cycles = …, spinup_converged = …, climatology_n_years = …, …)
 
-julia> output = gemb(spun_up, cf, initialize_parameters(output_frequency=:daily));
-
-julia> metadata(output)["spinup_performed"]
+julia> metadata(output)["spinup_performed"]   # the transient run above
 true
 ```
 
