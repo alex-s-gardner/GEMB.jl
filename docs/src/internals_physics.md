@@ -7,6 +7,7 @@ Non-exported physics kernels, called once per timestep from `gemb_core`. See
 Modules = [GEMB]
 Public = false
 Pages = [
+    "blowing_snow.jl",
     "calculate_accumulation.jl",
     "calculate_albedo.jl",
     "calculate_density.jl",

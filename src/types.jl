@@ -403,6 +403,34 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # a gradient, not degrees.
     surface_slope::Float64 = 0.0
 
+    # --- Blowing Snow ---
+    # Which scheme, if any, lets wind rework snow that has already landed. `:none` (the
+    # default) disables the term entirely and leaves output bit-identical to a run without it.
+    # `:Crocus` is the SURFEX/Crocus `SNOWDRIFT` scheme (Vionnet et al., 2012; Lafaysse et al.,
+    # 2026 eqs. 59-66): near-surface layers are compacted toward `DRIFT_DENSITY_MAX` and their
+    # grains fragmented at a rate set by a wind-driven driftability index that decays with
+    # depth. Mass-conserving on its own — `dz` shrinks in step with the density rise.
+    # Independent of `drift_rate`, which is a prescribed mass sink rather than a scheme, and of
+    # `blowing_snow_sublimation`, which is the only part that removes mass. This mirrors
+    # SURFEX's two independent namelist flags (`OSNOWDRIFT`, `OSNOWDRIFT_SUBLIM`). See
+    # `apply_blowing_snow!`.
+    blowing_snow_method::Symbol = :none
+    # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
+    # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
+    # path this removes mass from the surface cell and consumes latent heat, so it appears in
+    # the mass and energy budgets. `false` (the default) matches Crocus's own default. Read
+    # only when `blowing_snow_method !== :none`. See `blowing_snow_sublimation_rate`.
+    blowing_snow_sublimation::Bool = false
+    # Prescribed net drift divergence [kg m-2 yr-1], positive for erosion (mass leaves) and
+    # negative for deposition. The IMAU-FDM path: that model reads `SnowDrif` from RACMO and
+    # applies it as a surface mass sink, eroding at the surface cell's own density and
+    # depositing at the fresh-snow density. Use it when a drift product is available; it is
+    # independent of `blowing_snow_method` and can be combined with it, though doing so risks
+    # double-counting if the product already includes the compaction the scheme computes.
+    # Superseded per-timestep by the optional `snow_drift` forcing layer when that is present.
+    # 0.0 (the default) disables it. See `apply_prescribed_drift!`.
+    drift_rate::Float64 = 0.0
+
     # --- Thermal Solver ---
     # Which scheme advances the temperature profile. Selected by type, not by symbol, so the
     # choice is resolved at compile time and a new scheme needs no branch here — see
@@ -434,12 +462,15 @@ Time-series surface meteorological forcing for GEMB, implemented as an
 date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
 — all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-# Layers (13 time-series `DimArray`s sharing a common `Ti` dimension)
+# Layers (14 time-series `DimArray`s sharing a common `Ti` dimension)
 Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
 `wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
 Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
 `black_carbon_ice`, `cloud_optical_thickness`, `solar_zenith_angle`,
 `shortwave_downward_diffuse`, `cloud_fraction`.
+Optional forcing: `snow_drift` [kg m-2 yr-1, positive for erosion], the prescribed
+drifting-snow divergence read by [`apply_prescribed_drift!`](@ref); `Fill`-backed zeros
+when the forcing carries no drift product, and superseded by `mp.drift_rate` in that case.
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -480,12 +511,15 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 13 forcing layers, in positional-constructor order.
+# The 14 forcing layers. The first 13 are in positional-constructor order; `snow_drift` is
+# keyword-only and trailing, so every existing 19-argument positional call site stays valid
+# and forcing built without a drift product carries a `Fill`-backed zero layer.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
+    :snow_drift,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -512,6 +546,11 @@ const CLIMATE_FORCING_META_KEYS = (
 Positional constructor: 13 forcing `DimArray`s (sharing a `Ti` dimension) followed
 by the 6 scalar metadata values. Builds the stack layers and stores the scalars in
 the stack `metadata` as a `NamedTuple` (keeping their concrete types).
+
+The 14th layer, `snow_drift` [kg m-2 yr-1, positive for erosion], is keyword-only and
+defaults to `Fill`-backed zeros, so a forcing built without a drift product is valid and
+inert. Supply it to drive [`apply_prescribed_drift!`](@ref) from a drift product
+(e.g. RACMO's `SnowDrif`) rather than from the constant `mp.drift_rate`.
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
@@ -549,17 +588,25 @@ function ClimateForcing(
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
+    snow_drift=nothing,
     accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
     climatology_window_start=nothing, climatology_window_stop=nothing,
     climatology_n_years::Integer=0, climatology_steps_per_year::Integer=0,
 )
+    # A `Fill`-backed zero layer when no drift product was supplied, on the `Ti` dimension the
+    # required layers already carry — the same treatment the time-varying model parameters get.
+    if snow_drift === nothing
+        tdim = dims(temperature_air, Ti)
+        snow_drift = DimArray(Fill(0.0, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        snow_drift,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -632,10 +679,16 @@ struct ClimateForcingStep
     # existing positional call site behave exactly as it did.
     accumulation_mean::Float64
     temperature_air_effective::Float64
+    # Prescribed drifting-snow divergence [kg m-2 yr-1], positive for erosion. Last for the
+    # same reason the two refinements above are: it keeps the 19- and 21-argument positional
+    # forms valid. Defaults to 0.0 in both tail constructors, which is inert in
+    # `apply_prescribed_drift!`.
+    snow_drift::Float64
 end
 
 # 19-argument positional form: the two refinements default to the scalars they refine, so a
-# step built this way reads identically on either setting of the two gates.
+# step built this way reads identically on either setting of the two gates, and `snow_drift`
+# defaults to zero (no drift).
 ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
     shortwave_downward, longwave_downward, vapor_pressure,
     temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -648,7 +701,23 @@ ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
         temperature_observation_height, wind_observation_height,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        precipitation_mean, temperature_air_mean)
+        precipitation_mean, temperature_air_mean, 0.0)
+
+# 21-argument positional form: both refinements given explicitly, `snow_drift` still zero.
+ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    accumulation_mean, temperature_air_effective) =
+    ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        accumulation_mean, temperature_air_effective, 0.0)
 
 """
     ClimateForcingStep(; dt, temperature_air, ...)
@@ -674,7 +743,8 @@ function ClimateForcingStep(;
     cloud_optical_thickness::Real=0.0, solar_zenith_angle::Real=0.0,
     shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0,
     accumulation_mean::Real=precipitation_mean,
-    temperature_air_effective::Real=temperature_air_mean)
+    temperature_air_effective::Real=temperature_air_mean,
+    snow_drift::Real=0.0)
 
     return ClimateForcingStep(
         dt, temperature_air, pressure_air, precipitation, wind_speed,
@@ -683,6 +753,6 @@ function ClimateForcingStep(;
         temperature_observation_height, wind_observation_height,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        accumulation_mean, temperature_air_effective,
+        accumulation_mean, temperature_air_effective, snow_drift,
     )
 end

@@ -135,6 +135,13 @@ function validate_parameters(mp::ModelParameters)
     # value, or a percent — rather than to constrain the physics.
     @assert -1 <= mp.horizontal_strain_rate <= 1 "horizontal_strain_rate must be in [-1, 1] yr-1"
 
+    # Blowing snow. The `drift_rate` bound is far above any observed net drift divergence
+    # (Lenaerts et al. (2012) report up to ~200 kg m-2 yr-1 of drifting-snow erosion in the
+    # windiest Antarctic escarpment cells) and exists to catch a per-timestep value passed
+    # where an annual rate belongs. Signed: negative is net deposition.
+    @assert mp.blowing_snow_method in (:none, :Crocus) "blowing_snow_method must be none or Crocus"
+    @assert -2000 <= mp.drift_rate <= 2000 "drift_rate must be in [-2000, 2000] kg m-2 yr-1 (an annual rate, positive for erosion)"
+
     # Slope as a gradient, not degrees. The bound is far above any ice-sheet surface slope
     # (the RetMIP sites reach ~0.010 m m-1) and is there to catch degrees passed by mistake.
     @assert 0 <= mp.surface_slope <= 1 "surface_slope must be in [0, 1] m m-1 (a gradient, not degrees)"

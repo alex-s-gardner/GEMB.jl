@@ -81,6 +81,10 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
         include("test_horizontal_strain.jl")
     end
 
+    @testset "Blowing Snow" begin
+        include("test_blowing_snow.jl")
+    end
+
     @testset "Hydrology" begin
         include("test_hydrology.jl")
     end

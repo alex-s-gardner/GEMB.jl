@@ -48,6 +48,7 @@ const _LABELS = Dict{Symbol,String}(
     :densification_from_compaction => "compaction",
     :densification_from_melt => "melt",
     :strain_thinning => "horizontal strain",
+    :blowing_snow => "blowing snow",
     # 2-D (profile) variables
     :temperature => "temperature",
     :density => "density",
@@ -156,7 +157,8 @@ const _SCALAR_GROUPS = [
     ("Energy fluxes",
         [:shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent]),
     ("Mass fluxes",
-        [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation]),
+        [:melt, :runoff, :refreeze, :evaporation_condensation, :precipitation,
+            :blowing_snow]),
     ("Broadband albedo", [:albedo_broadband]),
     ("Firn air content",
         [:firn_air_content, :firn_air_content_20m, :firn_air_content_10m]),

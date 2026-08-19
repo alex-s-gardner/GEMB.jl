@@ -97,6 +97,9 @@ function forcing_climatology(cf::ClimateForcing; window=nothing)
         cf.precipitation_mean,
         cf.temperature_observation_height,
         cf.wind_observation_height;
+        # Averaged like any other forcing layer: a net drift divergence is a mass flux, so its
+        # climatological mean is the quantity a spinup should see.
+        snow_drift=_avg(cf.snow_drift),
         # Carried over, not recomputed from the averaged year: averaging the record smooths
         # away exactly the sub-annual variability both scalars exist to summarize (a warm
         # rain event, a cold excursion), so the climatology must inherit the full record's

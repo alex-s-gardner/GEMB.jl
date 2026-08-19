@@ -10,7 +10,7 @@ GEMB's, after the [Community Firn Model comparison](cfm_comparison.md).
 This page records a full read of IMAU-FDM's physics-bearing sources against
 GEMB's `src/`, in two directions:
 
-1. **What GEMB could take from it** — two findings, both adopted.
+1. **What GEMB could take from it** — three findings, all adopted.
 2. **Whether GEMB's existing physics agrees with an independent implementation** —
    which produced more than the first direction did, including one place where
    IMAU-FDM's own source comments flag its version as a bug GEMB never had.
@@ -39,14 +39,17 @@ read in August 2026.
 | Spinup convergence criterion | **GEMB richer** | GEMB tests drift slope as well as per-cycle delta |
 | Heat capacity, physical constants | **agreement** | same `152.5 + 7.122·T`, `g`, `Ec`, `Eg`, `ρ_i`, `T_melt` |
 | Ligtenberg `M0`/`M1` calibration | **GEMB ahead** | 9 calibration sets vs IMAU-FDM's 2 |
+| Drifting snow as prescribed forcing | **gap, adopted** | Finding 3 — new `snow_drift` forcing layer and `drift_rate` parameter |
 | Implicit tridiagonal thermal solver | **implemented** (`ImplicitThermal`) | interior rows transferred; the surface row needed Newton — see below |
 
 ## What GEMB adopted
 
-Both findings land as **new `Symbol` option values**, leaving the defaults of the day
-bit-identical. Neither appears in the [Physics notes](@ref "Physics notes"), because neither
-changed a default when it was added. (`:Calonne2019` later *became* the default in v2.0.0,
-for the separate reasons recorded there.)
+Findings 1 and 2 land as **new `Symbol` option values** and finding 3 as a new optional
+forcing layer plus a parameter defaulting to zero, all leaving the defaults of the day
+bit-identical. The first two do not appear in the [Physics notes](@ref "Physics notes"),
+because neither changed a default when it was added. (`:Calonne2019` later *became* the
+default in v2.0.0, for the separate reasons recorded there.) Finding 3 is recorded there,
+because it added an output and a mass-budget term.
 
 ### Finding 1 — `:Calonne2019` omits the air-conductivity ratio of eq. 5
 
@@ -133,6 +136,54 @@ temperature — not a different parameterization.
   fresh-snow grain properties that `:Fausto` takes. That coupling is orthogonal to
   the density fit, and omitting it would have silently changed fresh-snow
   dendricity.
+
+### Finding 3 — drifting snow is a prescribed surface flux with a sign-dependent density
+
+GEMB had no representation of wind-driven snow redistribution at all: wind entered
+only through the turbulent fluxes and the fresh-snow density. IMAU-FDM does not
+*compute* drift either — it reads `SnowDrif` from RACMO alongside precipitation
+and melt (`openNetCDF.f90:245`) and applies it in `Update_Surface`
+(`firn_physics.f90:81-88`) as a surface mass source or sink. The detail worth
+copying is that the density is **sign-dependent**:
+
+```fortran
+! erosion: mass leaves at the density of the surface layer it left
+! deposition: mass arrives at the fresh-snow density rho0
+```
+
+which is the physically right asymmetry — wind removes the surface as it is, and
+what it drops has been fragmented in transport and lands as new snow. Taking the
+cell density in both directions would let an erode-then-deposit cycle change the
+surface density with no net mass exchange.
+
+GEMB now has the same path: the optional `snow_drift` forcing layer
+(kg m⁻² yr⁻¹, positive for erosion), with the scalar `drift_rate` as a
+constant-rate shorthand for forcing that carries none. Erosion removes mass at the
+surface cell's own density, deposition adds it at `fresh_snow_density` and at age
+zero — diluting the cell's `age` through the same `dilute_age` path condensation
+already uses, which IMAU-FDM has no analogue of because it carries no age. Both
+appear in the new `blowing_snow` output and in the mass budget.
+
+Three differences from IMAU-FDM, all deliberate:
+
+- **Independent of the computed scheme.** `drift_rate` and `snow_drift` are read
+  whatever `blowing_snow_method` is, so a RACMO `SnowDrif` field can drive GEMB
+  with no internal scheme at all — the configuration that makes GEMB directly
+  comparable with IMAU-FDM — or alongside `:Crocus`, which reworks the snow that
+  stays.
+- **A rate, not a per-step mass.** The layer is kg m⁻² yr⁻¹ so it is independent
+  of the forcing timestep, as `horizontal_strain_rate` already is; IMAU-FDM's
+  field is per-timestep because its timestep is fixed by the RACMO product.
+- **Optional, and zero by default.** Absent from a forcing `DimStack` it is a
+  `Fill`-backed zero layer, exactly as `black_carbon_snow` and the cloud
+  properties are, so every existing forcing stays valid and every existing run
+  stays bit-identical.
+
+IMAU-FDM's own drift physics is entirely upstream in RACMO (Lenaerts et al.,
+2012), so there is nothing further in its source to compare against. For a
+scheme GEMB can run on its own, the reference is Crocus — the only one of the
+three comparison models that computes blowing snow internally (the CFM has none)
+— ported as `blowing_snow_method = :Crocus`.
 
 ## Consistency findings — where GEMB is correct or better
 
@@ -314,6 +365,10 @@ covers the ice-dynamic coupling it does model.
 - Vionnet, V., Brun, E., Morin, S., Boone, A., Faroux, S., Le Moigne, P., Martin,
   E., and Willemet, J.-M. (2012). The detailed snowpack scheme Crocus and its
   implementation in SURFEX v7.2. *Geoscientific Model Development*, 5, 773–791.
+- Lenaerts, J. T. M., van den Broeke, M. R., Déry, S. J., van Meijgaard, E., van de
+  Berg, W. J., Palm, S. P., and Sanz Rodrigo, J. (2012). Modeling drifting snow in
+  Antarctica with a regional climate model: 1. Methods and model evaluation.
+  *Journal of Geophysical Research*, 117, D05108.
 - Versteeg, H. K., and Malalasekera, W. (2007). *An Introduction to Computational
   Fluid Dynamics: The Finite Volume Method*, 2nd ed. Pearson.
 - Fourteau, K., Brondex, J., Brun, F., and Dumont, M. (2024). A novel numerical

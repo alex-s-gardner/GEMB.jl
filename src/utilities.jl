@@ -11,6 +11,92 @@ and the initial-guess one (`_seb_annual_melt`), so both use one expression.
     0.029 * pressure / (R_GAS * temperature)
 
 """
+    saturation_vapor_pressure_ice(T) -> e_s [Pa]
+
+Saturation vapour pressure over ice, Bolton (1980), `610.78·exp(21.8745584·(T-273.16)/(T-7.66))`
+with `T` in kelvin.
+
+Shared by the latent-heat flux in [`turbulent_heat_flux`](@ref) (evaluated at the surface
+temperature, for a sub-freezing surface) and by [`blowing_snow_sublimation_rate`](@ref)
+(evaluated at the air temperature). Companion of
+[`saturation_vapor_pressure_water`](@ref), which the flux uses above freezing.
+
+# References
+- Bolton, D. (1980). The computation of equivalent potential temperature.
+  *Mon. Weather Rev.* 108, 1046-1053.
+"""
+@inline saturation_vapor_pressure_ice(T::Real) =
+    610.78 * exp(21.8745584 * (T - CtoK - 0.01) / (T - 7.66))
+
+"""
+    saturation_vapor_pressure_water(T) -> e_s [Pa]
+
+Saturation vapour pressure over liquid water, Murray (1967),
+`610.78·exp(17.2693882·(T-273.16)/(T-35.86))` with `T` in kelvin. The above-freezing
+counterpart of [`saturation_vapor_pressure_ice`](@ref).
+
+# References
+- Murray, F. W. (1967). On the computation of saturation vapor pressure.
+  *J. Appl. Meteorol.* 6, 203-204.
+"""
+@inline saturation_vapor_pressure_water(T::Real) =
+    610.78 * exp(17.2693882 * (T - CtoK - 0.01) / (T - 35.86))
+
+"""
+    specific_humidity(vapor_pressure, pressure_air) -> q [kg kg-1]
+
+Specific humidity from vapour and total pressure, `q = εe/(P - (1-ε)e)` with
+`ε = MOLAR_MASS_RATIO_VAPOR_AIR`.
+
+Used by [`blowing_snow_sublimation_rate`](@ref), which needs `q` rather than `e` because the
+Gordon et al. (2006) sublimation rate is written against the saturation *specific humidity*.
+The turbulent latent-heat flux works in vapour pressure directly and does not call this.
+"""
+@inline specific_humidity(vapor_pressure::Real, pressure_air::Real) =
+    MOLAR_MASS_RATIO_VAPOR_AIR * vapor_pressure /
+    (pressure_air - (1.0 - MOLAR_MASS_RATIO_VAPOR_AIR) * vapor_pressure)
+
+"""
+    surface_roughness(mp, density_surface, water_surface) -> z0 [m]
+
+Aerodynamic roughness length of the surface, after Bougamont et al. (2005): dry snow, wet
+snow, and bare ice each get their own value (`Z0_SNOW_DRY`, `Z0_SNOW_WET`, `Z0_ICE`), with
+"ice" meaning a surface cell at `mp.density_ice` and "wet" meaning one holding liquid water.
+
+Read by the turbulent fluxes in [`calculate_temperature`](@ref) and by the 5 m gust speed in
+[`drift_wind_speed`](@ref), so both see the same surface.
+"""
+@inline function surface_roughness(mp::ModelParameters, density_surface::Real,
+    water_surface::Real)
+    if (density_surface < (mp.density_ice - D_TOLERANCE)) && (water_surface < W_TOLERANCE)
+        return Z0_SNOW_DRY   # 0.12 mm for dry snow
+    elseif density_surface >= (mp.density_ice - D_TOLERANCE)
+        return Z0_ICE        # 3.2 mm for ice
+    else
+        return Z0_SNOW_WET   # 1.3 mm for wet snow
+    end
+end
+
+"""
+    dendritic_grain_radius(dendricity, sphericity) -> r [mm]
+
+Effective grain radius of dendritic snow diagnosed from its dendricity and sphericity, Brun
+et al. (1992) as GEMB carries it: grain *size* (diameter) is not independent state while
+`dendricity > 0`, so any scheme that changes `(δ, S)` must re-derive the radius.
+
+Three inline copies of this expression predate the helper —
+[`calculate_grain_size`](@ref) (the dendritic branch), and two in
+[`calculate_accumulation`](@ref) (fresh snow). They are left in place because they floor at
+`GDN_TOLERANCE` on the radius where this floors at `GDN_TOLERANCE*2` on the diameter, and the
+two differ in the degenerate branch only; unifying them is not bit-identical. New callers
+should use this.
+"""
+@inline dendritic_grain_radius(dendricity::Real, sphericity::Real) =
+    max(0.1 * (dendricity / 0.99 + (1.0 - 1.0 * dendricity / 0.99) *
+               (sphericity / 0.99 * 3.0 + (1.0 - sphericity / 0.99) * 4.0)),
+        GDN_TOLERANCE * 2) / 2
+
+"""
     fast_divisors(n::Integer)
 
 Find all positive divisors of integer `n`, returned sorted.

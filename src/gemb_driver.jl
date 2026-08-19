@@ -46,6 +46,17 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     n = length(times)
     tdim = Ti(times)
 
+    # Prescribed drift: the forcing layer wins, `mp.drift_rate` is the fallback for a run with
+    # no drift product. "The forcing carries one" is resolved as *not identically zero*, which
+    # is exactly the state the `ClimateForcing` constructor leaves the layer in when the caller
+    # supplies no `snow_drift` — so an absent layer and a layer of zeros are the same thing, and
+    # a forcing that does carry drift is never overridden by a stray scalar. The scan is once
+    # per run, not per timestep.
+    snow_drift_forcing = climate_forcing.snow_drift
+    if mp.drift_rate != 0.0 && all(iszero, snow_drift_forcing)
+        snow_drift_forcing = DimArray(Fill(mp.drift_rate, n), (tdim,))
+    end
+
     # TODO: time evolving parameters should all be handled in ClimateForcing, not ModelParameters, as inputs to gemb.
     climate_forcing = ClimateForcing(
         climate_forcing.temperature_air,
@@ -67,6 +78,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.precipitation_mean,
         climate_forcing.temperature_observation_height,
         climate_forcing.wind_observation_height;
+        snow_drift=snow_drift_forcing,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -150,6 +162,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        blowing_snow=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         ice_flux=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         firn_air_content_10m=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -233,6 +246,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.solar_zenith_angle,
         climate_forcing.shortwave_downward_diffuse,
         climate_forcing.cloud_fraction,
+        climate_forcing.snow_drift,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
@@ -358,7 +372,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     f_vapor_pressure::AbstractVector, f_black_carbon_snow::AbstractVector,
     f_black_carbon_ice::AbstractVector, f_cloud_optical_thickness::AbstractVector,
     f_solar_zenith_angle::AbstractVector, f_shortwave_downward_diffuse::AbstractVector,
-    f_cloud_fraction::AbstractVector,
+    f_cloud_fraction::AbstractVector, f_snow_drift::AbstractVector,
     temperature_air_mean::Float64, wind_speed_mean::Float64,
     precipitation_mean::Float64, temperature_observation_height::Float64,
     wind_observation_height::Float64,
@@ -372,6 +386,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_dcomp = parent(output[:densification_from_compaction])
     out_dmelt = parent(output[:densification_from_melt])
     out_strain = parent(output[:strain_thinning])
+    out_blowing_snow = parent(output[:blowing_snow])
     out_swnet = parent(output[:shortwave_net])
     out_lwnet = parent(output[:longwave_net])
     out_shf = parent(output[:heat_flux_sensible])
@@ -423,6 +438,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
     cum_strain_thinning = 0.0
+    cum_blowing_snow = 0.0
     cum_firn_air_content = 0.0
     cum_firn_air_content_10m = 0.0
     cum_firn_air_content_20m = 0.0
@@ -445,6 +461,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     run_ec = 0.0
     run_mass_added = 0.0
     run_mass_lateral = 0.0
+    run_mass_blowing_snow = 0.0
 
     # Output writes occur in chronological order, matching the sorted output
     # time axis, so a single advancing index tracks the output column.
@@ -473,7 +490,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             f_shortwave_downward_diffuse[i],
             f_cloud_fraction[i],
             accumulation_mean,
-            temperature_air_effective)
+            temperature_air_effective,
+            f_snow_drift[i])
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
@@ -505,6 +523,12 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         # Metres of thinning, sign-flipped so a divergent column reports a positive number.
         # `flux.mass_lateral` is negative when mass leaves laterally.
         cum_strain_thinning -= flux.mass_lateral / density_ice
+        # Net surface mass flux from wind rework [kg m-2]. Reported in mass, not metres, unlike
+        # the two thicknesses above: this is a surface mass-balance term a user compares against
+        # RACMO's `SnowDrif` or against `precipitation`, both of which are masses. Sign is kept
+        # as `gemb_core` produces it — negative for sublimation and erosion, positive for
+        # deposition — so it adds to the mass budget directly.
+        cum_blowing_snow += flux.mass_blowing_snow
         # Firn air content [m of air]: Σ dz (1 - ρ/ρ_ice). Normalizing by `density_ice` (not
         # 1000) is what makes this metres of air rather than metres of water equivalent — see
         # upstream GEMB issue #198. The depth-limited variants are what the firn-core
@@ -523,6 +547,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             run_ec += state.evaporation_condensation
             run_mass_added += flux.mass_added
             run_mass_lateral += flux.mass_lateral
+            run_mass_blowing_snow += flux.mass_blowing_snow
         end
 
         # Store output at designated intervals
@@ -539,6 +564,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_dcomp[oi] = cum_densification_compaction
                 out_dmelt[oi] = cum_densification_melt
                 out_strain[oi] = cum_strain_thinning
+                out_blowing_snow[oi] = cum_blowing_snow
                 out_ice_flux[oi] = cum_ice_flux
 
                 # Averaged variables (division preserved for bit-identical results)
@@ -625,6 +651,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0
             cum_strain_thinning = 0.0
+            cum_blowing_snow = 0.0
             cum_firn_air_content = 0.0
             cum_firn_air_content_10m = 0.0
             cum_firn_air_content_20m = 0.0
@@ -644,10 +671,12 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     # number of steps.
     if verbose
         run_mass_final = column_mass(state)
-        supplied = run_precipitation + run_ec + run_mass_added + run_mass_lateral - run_runoff
+        supplied = run_precipitation + run_ec + run_mass_added + run_mass_lateral +
+                   run_mass_blowing_snow - run_runoff
         residual = (run_mass_final - run_mass_initial) - supplied
         turnover = abs(run_precipitation) + abs(run_runoff) + abs(run_ec) +
-                   abs(run_mass_added) + abs(run_mass_lateral) + abs(run_mass_initial)
+                   abs(run_mass_added) + abs(run_mass_lateral) +
+                   abs(run_mass_blowing_snow) + abs(run_mass_initial)
         tol = max(1e-6, 1e-9 * turnover)
         if abs(residual) > tol
             error("gemb: whole-run mass budget does not close: residual = $(residual) " *
@@ -655,7 +684,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                   "$(run_mass_final - run_mass_initial); sources supplied $(supplied) " *
                   "(precipitation $(run_precipitation), basal $(run_mass_added), " *
                   "evap/cond $(run_ec), runoff $(run_runoff), " *
-                  "horizontal strain $(run_mass_lateral)).")
+                  "horizontal strain $(run_mass_lateral), " *
+                  "blowing snow $(run_mass_blowing_snow)).")
         end
         @info "GEMB whole-run mass budget closed" residual basal_flux=run_mass_added
     end

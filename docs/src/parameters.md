@@ -30,6 +30,7 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 | `melt_geometry` | **`:thickness`**, `:density` | What melting does to a cell: shrink `dz` at fixed density (Crocus) or lower density at fixed `dz` (SNOWPACK). Only `:density` makes a melt–refreeze cycle return the geometry as well as the mass |
 | `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models run instantaneous. The other two give a drainage timescale and permit firn aquifers |
 | `new_snow_method` | **`:Constant350`**, `:Constant315`, `:Constant150`, `:Fausto`, `:FaustoFit`, `:Pahaut`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350. `:Constant*` are bare constants; `:Fausto`/`:FaustoFit`/`:Pahaut` also select the Crocus wind-dependent fresh-grain properties. `:Pahaut` is the only alpine-seasonal-snow fit — prefer it for temperate and mid-latitude glaciers, where the polar fits run too dense |
+| `blowing_snow_method` | **`:none`**, `:Crocus` | Wind rework of snow already on the ground. `:Crocus` is the SURFEX/Crocus `SNOWDRIFT` scheme (Vionnet et al., 2012; Lafaysse et al., 2026 eqs. 59–66) — the only one of the three reference implementations that computes blowing snow at all (the CFM has none; IMAU-FDM imports it from RACMO). Exactly mass-conserving on its own: it compacts and fragments, it does not erode. Set `blowing_snow_sublimation` for the one term that removes mass, or `drift_rate` for the prescribed path |
 | `albedo_method` | **`:GardnerSharp`**, `:BrunLefebre`, `:GreuellKonzelmann`, `:None` | |
 | `emissivity_method` | **`:uniform`**, `:grain_radius_threshold`, `:grain_radius_w_threshold` | |
 | `initialize_age` | **`:steady_state`**, `:zero` | |
@@ -61,6 +62,8 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 | `column_depth_max` | **250.0** | m | *Ceiling* on the constructed column depth, not the depth itself |
 | `column_zy` | **1.10** | – | Geometric growth ratio below `column_ztop` |
 | `horizontal_strain_rate` | **0.0** | yr⁻¹ | Ice-dynamic layer thinning; 0 disables the term |
+| `blowing_snow_sublimation` | **`false`** | – | Whether `blowing_snow_method = :Crocus` also sublimates the suspended fraction (Gordon et al., 2006). Off is Crocus's own default (`OSNOWDRIFT_SUBLIM`), and it is the only part of the computed scheme that removes mass |
+| `drift_rate` | **0.0** | kg m⁻² yr⁻¹ | Prescribed net drift divergence, positive for erosion; 0 disables the term. A constant-rate shorthand for the `snow_drift` forcing layer, which takes precedence when the forcing carries one. Bounded to ±2000 |
 | `surface_slope` | **0.0** | m m⁻¹ | Hydraulic gradient; read only under `:ZuoOerlemans`/`:Darcy` |
 | `output_viscosity` | **`false`** | – | Adds a `viscosity` output layer; populated only under `:Crocus`/`:CrocusPure` |
 

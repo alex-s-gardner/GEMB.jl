@@ -162,12 +162,12 @@ values far outside the range Monin-Obukhov theory was ever fit over, where `Ψ_h
         # Liquid water surface
         latent_heat = LV
         # Saturation Vapor Pressure (Murray 1967)
-        eS = 610.78 * exp(17.2693882 * (T_surface - CtoK - 0.01) / (T_surface - 35.86))
+        eS = saturation_vapor_pressure_water(T_surface)
     else
         # Ice surface
         latent_heat = LS
         # Saturation Vapor Pressure (Bolton 1980)
-        eS = 610.78 * exp(21.8745584 * (T_surface - CtoK - 0.01) / (T_surface - 7.66))
+        eS = saturation_vapor_pressure_ice(T_surface)
     end
 
     # 461.9 is the specific gas constant for water vapor [J kg-1 K-1]

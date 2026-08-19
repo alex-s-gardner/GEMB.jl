@@ -38,6 +38,11 @@ const VON_KARMAN = 0.4     # Von Karman constant [-]
 
 const SECONDS_PER_YEAR = 365.25 * 86400.0  # Seconds in a (Julian) year [s]
 
+# Ratio of the molar masses of water vapour and dry air, `M_v/M_d = 18.0153/28.9644`. Converts
+# vapour pressure to specific humidity in `specific_humidity`. SURFEX's `XRD/XRV` (0.6220);
+# the value here is the same ratio at full precision.
+const MOLAR_MASS_RATIO_VAPOR_AIR = 0.62198
+
 # Year length assumed by the densification rate coefficients, in days. Deliberately 365, not
 # `SECONDS_PER_YEAR / 86400` (365.25): every densification scheme's `c` is applied as
 # `c / DAYS_PER_YEAR_DENSIFICATION * dt` with `dt` in days, so any scheme published with SI

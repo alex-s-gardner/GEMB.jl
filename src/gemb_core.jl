@@ -89,6 +89,26 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_accumulation(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
 
+    # 7b. Wind rework of snow already on the ground: wind-slab compaction, grain fragmentation,
+    # and (opt-in) blowing-snow sublimation, plus any prescribed drift divergence. After
+    # `calculate_accumulation`, because wind acts on snow once it has landed and the snow that
+    # fell this timestep is the most driftable in the column; before `calculate_melt`, so a wind
+    # slab formed now can block this timestep's percolation. Before the grid controllers (step
+    # 9), so a cell driven out of its thickness band by either term is fixed up immediately.
+    #
+    # The two terms are independent and may both be on: the computed scheme reworks the column
+    # without moving mass across the surface (except its sublimation), the prescribed one moves
+    # mass and nothing else. A no-op at the `blowing_snow_method = :none`, `drift_rate = 0.0`
+    # defaults, which is what leaves the default path bit-identical.
+    cols_drift = column_state(temperature, dz, density, water, grain_radius,
+        grain_dendricity, grain_sphericity, age)
+    # Both terms are signed as a flux *into* the column, like `mass_lateral`: sublimation is
+    # always negative, prescribed drift is negative under erosion and positive under deposition.
+    mass_sublimated, E_sublimated = apply_blowing_snow!(cols_drift, cfs, mp)
+    mass_drift, E_drift = apply_prescribed_drift!(cols_drift, cfs, mp)
+    mass_blowing_snow = mass_sublimated + mass_drift
+    E_blowing_snow = E_sublimated + E_drift
+
     # 8. Melt and wet compaction
     densification_from_melt = sum(dz)
 
@@ -173,7 +193,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         M = dz .* density
         M_total_final = sum(M) + sum(water)
         M_delta = M_total_final - M_total_initial + runoff - cfs.precipitation -
-                  evaporation_condensation - mass_added - mass_lateral
+                  evaporation_condensation - mass_added - mass_lateral -
+                  mass_blowing_snow
 
         if abs(M_delta) > M_TOLERANCE
             error("total system mass not conserved: M_delta = $(M_delta)")
@@ -192,7 +213,12 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
         E_total_final = E_thermal + E_water + E_runoff
         E_used = E_total_final - E_total_initial
-        E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_basal + E_evaporation_condensation + E_added
+        # `E_blowing_snow` is a separate term rather than folded into `E_added` because it is a
+        # surface flux, not a grid-operation correction: it is the enthalpy the sublimated and
+        # drifted mass carried, including `LS` for the part that left as vapour. Zero on the
+        # defaults, so this line does not change the default budget.
+        E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_basal +
+                     E_evaporation_condensation + E_added + E_blowing_snow
         E_delta = E_used - E_supplied
 
         if abs(E_delta) > energy_tolerance(E_total_initial)
@@ -257,6 +283,11 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         refreeze=refreeze,
         mass_added=mass_added,
         mass_lateral=mass_lateral,
+        # Net mass across the surface from wind rework [kg m-2], signed as a flux into the
+        # column: blowing-snow sublimation and prescribed erosion are negative, prescribed
+        # deposition positive. One term, not two, because the two paths are alternatives for the
+        # same process and a run with both on wants their sum.
+        mass_blowing_snow=mass_blowing_snow,
         E_added=E_added,
         densification_from_compaction=densification_from_compaction,
         densification_from_melt=densification_from_melt,

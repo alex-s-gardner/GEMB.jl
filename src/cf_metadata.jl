@@ -78,6 +78,15 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         comment="Positive = thinning under horizontal divergence. Zero unless " *
                 "horizontal_strain_rate is set. No CF standard name exists for " *
                 "this quantity."),
+    :blowing_snow => CFAttrs("kg m-2",
+        "net surface mass flux from wind rework of snow", "time: sum";
+        comment="Positive = mass gained (drift deposition); negative = mass lost " *
+                "(blowing-snow sublimation, drift erosion). The sum of both blowing-snow " *
+                "paths: blowing_snow_sublimation under blowing_snow_method, and the " *
+                "prescribed drift_rate / snow_drift divergence. Zero unless one of those " *
+                "is set. No CF standard name exists for this quantity; the closest, " *
+                "surface_snow_sublimation_amount, covers only the sublimation part and " *
+                "with the opposite sign convention."),
 
     # ---- monolevel, interval means ------------------------------------------
     :shortwave_net => CFAttrs("W m-2", "net shortwave radiation at the surface",
