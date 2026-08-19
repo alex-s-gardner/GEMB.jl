@@ -406,4 +406,41 @@ What this changes for consumers of the output:
   physically meaningful conditions, and it keeps the transfer coefficients positive for every
   roughness GEMB uses. Bounding `ζ` rather than clamping the coefficients keeps the fluxes a
   continuous, monotone function of `T_surface`, which the implicit solver needs.
+- **Added `blowing_snow_method = :Crocus`** [default `:none`], the SURFEX/Crocus `SNOWDRIFT`
+  scheme — a per-layer mobility index (Crocus eq. 59-61, the `B92` branch, which is the one
+  written in dendricity/sphericity/grain size as GEMB's state is) and driftability index
+  (eq. 62), an effective driftability decayed exponentially by the overburden above each layer
+  (eq. 63), wind-slab densification toward 350 kg m⁻³ on a 2 d timescale (eq. 64), and grain
+  fragmentation toward smaller, rounder, non-dendritic grains (eqs. 65-66). Coefficients from
+  `modd_snow_par.F90:290-326`; the layer loop stops at the first non-drifting layer as
+  `snowcro.F90:4844` does and eq. 63 does not show. Affects density, `dz`, grain radius,
+  dendricity and sphericity, and through them albedo, conductivity, densification and
+  percolation. **Exactly mass-conserving**: `dz` shrinks in proportion to the density rise, so
+  the term appears in no mass budget and contributes nothing to `blowing_snow`. Two documented
+  departures from Crocus: GEMB has no wet-snow history variable, so the eq. 61 mobility cap uses
+  instantaneous liquid water instead of "has ever been wet", which leaves refrozen-but-now-dry
+  layers more driftable than Crocus makes them; and melt-style thickness bookkeeping is not
+  applied, the compaction being density-only. MATLAB has no blowing-snow term; at the `:none`
+  default the two agree exactly.
+- **Added `blowing_snow_sublimation`** [default `false`], sublimation of the suspended fraction
+  after Gordon et al. (2006) as Crocus implements it (`snowcro.F90:4851-4869`, eqs. 67-68), read
+  only under `blowing_snow_method = :Crocus`. Off is Crocus's own default (`OSNOWDRIFT_SUBLIM`),
+  and this is the only part of the computed scheme that moves mass across the surface: it
+  removes mass from the surface cell, capped at half of it per timestep, and reports it in the
+  new `blowing_snow` output and in the mass budget. **No latent heat is charged to the column** —
+  the particles are suspended in the air and draw their heat of sublimation from it, unlike
+  surface sublimation, which is charged. Crocus's paper (Lafaysse et al., 2026 Table K3) and its
+  source disagree on which exponent is the temperature ratio's and which the wind ratio's; the
+  source is followed, being the evaluated code, and the discrepancy is recorded in
+  `src/blowing_snow.jl`.
+- **Added `drift_rate`** [kg m⁻² yr⁻¹, default `0.0`] and an optional `snow_drift` forcing
+  layer, positive for erosion. The prescribed path, reproducing IMAU-FDM's `Update_Surface`
+  treatment (`firn_physics.f90:81-88`): drift is a surface mass source/sink with a
+  sign-dependent density — eroded mass leaves at the surface cell's own density, deposited mass
+  arrives at `fresh_snow_density` and at age zero, diluting the surface cell's age as
+  condensation already does. Independent of `blowing_snow_method`, so a RACMO `SnowDrif` field
+  can be used with no computed scheme at all. The forcing layer takes precedence where present;
+  `drift_rate` is the constant-rate shorthand for forcing that carries none. Reported in
+  `blowing_snow` and in the mass budget. MATLAB has neither; at the defaults (zero rate, no
+  layer) the term is a no-op.
 

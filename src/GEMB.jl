@@ -44,6 +44,7 @@ include("calculate_temperature.jl")
 include("calculate_accumulation.jl")
 include("calculate_melt.jl")
 include("hydrology.jl")
+include("blowing_snow.jl")
 include("calculate_density.jl")
 include("manage_layer_thickness.jl")
 

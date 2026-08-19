@@ -28,6 +28,8 @@ docstring of the function that implements it — see [Internals: Physics](@ref).
 | `calculate_shortwave_radiation` | Vertical distribution of absorbed shortwave radiation |
 | `calculate_temperature` | Temperature profile from energy absorption and thermal diffusion |
 | `calculate_accumulation` | Precipitation and deposition added to the column |
+| `apply_blowing_snow!` | Wind-slab compaction and grain fragmentation, with optional blowing-snow sublimation (inert by default) |
+| `apply_prescribed_drift!` | Prescribed drift erosion or deposition at the surface (inert by default) |
 | `calculate_melt` | Meltwater production, percolation, refreezing, runoff |
 | `calculate_density` | Snow/firn densification |
 | `apply_horizontal_strain!` | Ice-dynamic layer thinning at constant density (inert by default) |

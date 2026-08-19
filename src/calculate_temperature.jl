@@ -47,13 +47,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     end
 
     ## SURFACE ROUGHNESS (Bougamont, 2005)
-    if (ds < (mp.density_ice - D_TOLERANCE)) && (water_surface < W_TOLERANCE)
-        z0 = Z0_SNOW_DRY   # 0.12 mm for dry snow
-    elseif ds >= (mp.density_ice - D_TOLERANCE)
-        z0 = Z0_ICE        # 3.2 mm for ice
-    else
-        z0 = Z0_SNOW_WET   # 1.3 mm for wet snow
-    end
+    z0 = surface_roughness(mp, ds, water_surface)
 
     # determine emissivity
     emissivity, emissivity_melt_switch = _emissivity_initialize(grain_radius[1], mp)

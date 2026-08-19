@@ -31,6 +31,11 @@ Matches MATLAB's `model_initialize_forcing.m`.
   `calculate_density` under `mean_temperature_method = :arrhenius`.
 - `rain_temperature_threshold::Float64`: Rain/snow partition temperature [K] used only to
   derive `accumulation_mean`; keep it equal to the `ModelParameters` field of the same name.
+- `snow_drift`: Optional per-timestep net drifting-snow divergence [kg m-2 yr-1], positive
+  for erosion and negative for deposition. A time series, not a scalar, because this is a
+  forcing layer rather than a tunable: the IMAU-FDM path reads it from a drift product
+  (RACMO's `SnowDrif`). `nothing` (the default) leaves the layer at zero, which is inert;
+  `mp.drift_rate` is then the constant-rate fallback. Read by `apply_prescribed_drift!`.
 """
 function initialize_forcing(
     time::AbstractVector{DateTime},
@@ -55,6 +60,7 @@ function initialize_forcing(
     solar_zenith_angle::Real=0.0,
     shortwave_downward_diffuse::Real=0.0,
     cloud_fraction::Real=0.1,
+    snow_drift::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
@@ -80,6 +86,15 @@ function initialize_forcing(
     @assert all(shortwave_downward .< 10000) "shortwave_downward values unrealistic. Ensure units are W/m^2."
     @assert all(longwave_downward .< 10000) "longwave_downward values unrealistic. Ensure units are W/m^2."
     @assert all(vapor_pressure .>= 0) && all(vapor_pressure .< 150000) "vapor_pressure values unrealistic. Ensure units are Pa."
+
+    # Optional drift layer: same length as the record, and signed (negative is deposition) so
+    # only the magnitude is bounded. The bound matches `drift_rate`'s in `validate_parameters`
+    # and exists for the same reason — to catch a per-timestep mass passed where an annual rate
+    # belongs, which is off by ~3 orders of magnitude at a 3-hourly step.
+    if snow_drift !== nothing
+        @assert length(snow_drift) == n "All input variables must have the same size."
+        @assert all(d -> -2000 <= d <= 2000, snow_drift) "snow_drift values unrealistic. Ensure units are kg/m^2/yr (an annual rate, positive for erosion)."
+    end
 
     # Set defaults for metadata with warnings
     if isnan(temperature_air_mean)
@@ -171,6 +186,8 @@ function initialize_forcing(
         Float64(precipitation_mean),
         Float64(temperature_observation_height),
         Float64(wind_observation_height);
+        snow_drift=snow_drift === nothing ? nothing :
+                   DimArray(Float64.(snow_drift), (tdim,)),
         accumulation_mean=Float64(accumulation_mean),
         temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
@@ -276,6 +293,11 @@ function initialize_forcing(stack::DimStack)
     shortwave_downward = parent(stack[:shortwave_downward])
     longwave_downward = parent(stack[:longwave_downward])
 
+    # Optional drift layer. A *layer*, not metadata, because it is a time series like
+    # precipitation — unlike the optical properties below, which are scalars promoted to
+    # `Fill` layers. Absent for every forcing that predates it, hence `nothing`.
+    snow_drift = haskey(stack, :snow_drift) ? parent(stack[:snow_drift]) : nothing
+
     # Extract required metadata
     meta = metadata(stack)
 
@@ -348,6 +370,7 @@ function initialize_forcing(stack::DimStack)
         solar_zenith_angle = solar_zenith_angle,
         shortwave_downward_diffuse = shortwave_downward_diffuse,
         cloud_fraction = cloud_fraction,
+        snow_drift = snow_drift,
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,
