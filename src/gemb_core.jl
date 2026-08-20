@@ -23,18 +23,13 @@ one column being stepped — give each concurrent thread its own.
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
     n_target::Int=length(state.dz), z_target::Float64=sum(state.dz),
     thermal_workspace::ThermalWorkspace=ThermalWorkspace())
-    # Destructure state - arrays are mutated in-place by physics functions.
-    # This is safe because gemb_driver rebinds state to new_state after each call.
-    temperature = state.temperature
-    dz = state.dz
-    density = state.density
-    water = state.water
-    grain_radius = state.grain_radius
-    grain_dendricity = state.grain_dendricity
-    grain_sphericity = state.grain_sphericity
-    age = state.age
-    evaporation_condensation = state.evaporation_condensation
-    melt_surface = state.melt_surface
+
+    # Destructure state - arrays are mutated in-place by physics functions, and the names are
+    # rebound to the new arrays the physics functions return. This is safe because gemb_driver
+    # rebinds state to new_state after each call. `evaporation_condensation` is deliberately
+    # absent: step 5 assigns it unconditionally before any read, so binding it here would be dead.
+    (; temperature, dz, density, water, grain_radius, grain_dendricity,
+       grain_sphericity, age, melt_surface) = state
 
     # 0. Advance the age clock, before any mass moves, so mass added later in this timestep
     #    reads as age 0 in this timestep's output. The column carries no absolute time, so
@@ -89,21 +84,16 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_accumulation(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
 
-    # 7b. Wind rework of snow already on the ground: wind-slab compaction, grain fragmentation,
-    # and (opt-in) blowing-snow sublimation, plus any prescribed drift divergence. After
-    # `calculate_accumulation`, because wind acts on snow once it has landed and the snow that
-    # fell this timestep is the most driftable in the column; before `calculate_melt`, so a wind
-    # slab formed now can block this timestep's percolation. Before the grid controllers (step
-    # 9), so a cell driven out of its thickness band by either term is fixed up immediately.
-    #
-    # The two terms are independent and may both be on: the computed scheme reworks the column
-    # without moving mass across the surface (except its sublimation), the prescribed one moves
-    # mass and nothing else. A no-op at the `blowing_snow_method = :none`, `drift_rate = 0.0`
-    # defaults, which is what leaves the default path bit-identical.
+    # 7b. Wind rework of snow already on the ground (both schemes are in `blowing_snow.jl`).
+    # Here because wind acts on snow once it has landed, and this timestep's snowfall is the most
+    # driftable in the column; before `calculate_melt`, so a wind slab formed now can block this
+    # timestep's percolation; before the grid controllers (step 9), so a cell driven out of its
+    # thickness band is fixed up immediately. The two schemes are independent and may both be on.
+    # A no-op at the `blowing_snow_method = :none`, `drift_rate = 0.0` defaults.
     cols_drift = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
-    # Both terms are signed as a flux *into* the column, like `mass_lateral`: sublimation is
-    # always negative, prescribed drift is negative under erosion and positive under deposition.
+
+    # Both signed as a flux *into* the column, like `mass_lateral`.
     mass_sublimated, E_sublimated = apply_blowing_snow!(cols_drift, cfs, mp)
     mass_drift, E_drift = apply_prescribed_drift!(cols_drift, cfs, mp)
     mass_blowing_snow = mass_sublimated + mass_drift
@@ -142,19 +132,15 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)
 
-    # Opt-in viscosity diagnostic. Allocated here rather than carried in `state` because it
-    # is a per-step diagnostic, not column state, and `output_viscosity` is false by default
-    # so the hot path allocates nothing. The grid controllers have already run (step 9), and
-    # nothing after this merges or splits cells, so these indices line up with the `dz` and
-    # `density` profiles this timestep reports — including the deepest cell, which
-    # `trim_bottom!` may thin but never re-indexes.
+    # Opt-in viscosity diagnostic — a per-step diagnostic, not column state, so it is allocated
+    # here rather than carried in `state`. Allocated after the grid controllers (step 9), and
+    # nothing below merges or splits cells, so these indices match the `dz`/`density` profiles
+    # this timestep reports.
     #
-    # "Off" is the empty `NO_VISCOSITY` vector, not `nothing`: `viscosity` lands in `flux`,
-    # and a `Union{Nothing,Vector{Float64}}` field would make `flux`'s type depend on
-    # `output_viscosity`, so `gemb_core`'s return type would not be concrete and the driver
-    # would box every one of `flux`'s ~40 `Float64` fields on every timestep (measured: 42
-    # allocations per step). A `Vector{Float64}` that happens to be empty keeps the type
-    # concrete on both settings; length, not type, is what says "not requested".
+    # "Off" is empty `NO_VISCOSITY`, not `nothing`: `viscosity` lands in `flux`, and a
+    # `Union{Nothing,Vector{Float64}}` field would make `flux`'s type depend on
+    # `output_viscosity`, boxing its ~40 `Float64` fields every timestep (measured: 42 allocations
+    # per step). Length, not type, is what says "not requested".
     viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
 
     dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp;
@@ -164,9 +150,9 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     # 11. Thin the column by the horizontal (ice-dynamic) strain rate, at constant density.
     # After `calculate_density`, which rebuilds `dz` from the conserved cell mass and would
-    # overwrite this; before `trim_bottom!`, which restores the fixed column depth. The mass
-    # this exports leaves laterally, not through the base, and is reported separately.
-    # A no-op when `horizontal_strain_rate == 0` (the default).
+    # overwrite this; before `trim_bottom!`, which restores the fixed column depth. The mass it
+    # exports leaves laterally, not basally, so it is reported separately. A no-op at the
+    # `horizontal_strain_rate = 0.0` default.
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
     mass_lateral, strain_energy = apply_horizontal_strain!(cols, cfs.dt, mp)
@@ -213,10 +199,6 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
         E_total_final = E_thermal + E_water + E_runoff
         E_used = E_total_final - E_total_initial
-        # `E_blowing_snow` is a separate term rather than folded into `E_added` because it is a
-        # surface flux, not a grid-operation correction: it is the enthalpy the sublimated and
-        # drifted mass carried, including `LS` for the part that left as vapour. Zero on the
-        # defaults, so this line does not change the default budget.
         E_supplied = E_shortwave + E_longwave + E_thf + E_snow + E_rain + E_basal +
                      E_evaporation_condensation + E_added + E_blowing_snow
         E_delta = E_used - E_supplied
@@ -270,11 +252,6 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         shortwave_net=shortwave_net,
         heat_flux_sensible=heat_flux_sensible,
         heat_flux_latent=heat_flux_latent,
-        # The conductive flux diagnosed across the deepest interior face — *not* a prescribed
-        # geothermal flux, which is why it is not named `ghf`. It is what the fixed bottom
-        # cell supplies to the column to hold itself at its initial temperature, so it is an
-        # output of the Dirichlet condition rather than a boundary condition GEMB imposes.
-        # Already a term in the verbose energy budget above; now also reported.
         heat_flux_basal=heat_flux_basal,
         longwave_upward=longwave_upward,
         rain=rain,
@@ -283,25 +260,15 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         refreeze=refreeze,
         mass_added=mass_added,
         mass_lateral=mass_lateral,
-        # Net mass across the surface from wind rework [kg m-2], signed as a flux into the
-        # column: blowing-snow sublimation and prescribed erosion are negative, prescribed
-        # deposition positive. One term, not two, because the two paths are alternatives for the
-        # same process and a run with both on wants their sum.
         mass_blowing_snow=mass_blowing_snow,
         E_added=E_added,
         densification_from_compaction=densification_from_compaction,
         densification_from_melt=densification_from_melt,
-        # Diagnostics. Read-only: deliberately absent from the conservation checks above
-        # because they move no mass and carry no energy. `percolation_depth` is necessarily
-        # mid-timestep (it describes an event during percolation); the slab terms are taken
-        # at step 13, on the final column.
         percolation_depth=percolation_depth,
         ice_slab_thickness=ice_slab_thickness,
         ice_slab_depth=ice_slab_depth,
         aquifer_thickness=aquifer_thickness,
         aquifer_depth=aquifer_depth,
-        # Empty unless `mp.output_viscosity` — see the allocation note at the buffer's
-        # creation for why this is an empty vector rather than `nothing`.
         viscosity=viscosity,
     )
 
