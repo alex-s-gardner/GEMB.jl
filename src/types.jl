@@ -144,7 +144,8 @@ count set by the single stiffest cell in the column.
 A stateless singleton; the scheme's scratch buffers live in a [`ThermalWorkspace`](@ref).
 
 # References
-- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 3-4.
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
+  Ch. 3-4.
 """
 struct ExplicitThermal <: AbstractThermalSolver end
 
@@ -158,8 +159,10 @@ layers; `mp.dt_divisors` and `GEMB._max_safe_dt` are unused on this path.
 A stateless singleton; the scheme's scratch buffers live in a [`ThermalWorkspace`](@ref).
 
 # References
-- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4.
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
+  Ch. 4.
 - Thomas, L. H. (1949). *Elliptic Problems in Linear Difference Equations over a Network*.
+  Watson Scientific Computing Laboratory, Columbia University.
 """
 struct ImplicitThermal <: AbstractThermalSolver end
 
@@ -214,6 +217,67 @@ defaults of the Community Firn Model and IMAU-FDM. See the parameter table in `R
 Parameterized on the thermal solver type so that `thermal_solver` is concretely typed and the
 scheme is resolved at compile time. `::ModelParameters` in a signature still matches every
 instance.
+
+# References
+
+Works cited in the per-field notes below. Each option's own physics is documented, with its
+equation numbers, on the function named in that field's comment — this list resolves the
+author-year mentions to full entries in one place.
+
+- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
+  In situ measurements of Antarctic snow compaction compared with predictions of models.
+  *J. Geophys. Res.* 115, F03011. (`densification_method`, `grain_growth_method`)
+- Barnola, J.-M., Pimienta, P., Raynaud, D., and Korotkevich, Y. S. (1991). CO2-climate
+  relationship as deduced from the Vostok ice core: a re-examination based on new measurements
+  and on a re-evaluation of the air dating. *Tellus B* 43, 83-90. (`density_ice`)
+- Calonne, N., Flin, F., Morin, S., Lesaffre, B., Rolland du Roscoat, S., and Geindreau, C.
+  (2011). Numerical and experimental investigations of the effective thermal conductivity of
+  snow. *Geophys. Res. Lett.* 38, L23501. (`thermal_conductivity_method = :Calonne`)
+- Calonne, N., Milliancourt, L., Burr, A., Philip, A., Martin, C. L., Flin, F., and
+  Geindreau, C. (2019). Thermal conductivity of snow, firn, and porous ice from 3-D
+  image-based computations. *Geophys. Res. Lett.* 46, 13079-13089.
+  (`thermal_conductivity_method` = `:Calonne2019`/`:Calonne2019Air`, and `density_ice`)
+- Colbeck, S. C. (1974). Water flow through snow overlying an impermeable boundary.
+  *Water Resour. Res.* 10, 119-123. (`water_irreducible_method = :constant`)
+- Coléou, C. and Lesaffre, B. (1998). Irreducible water saturation in snow: experimental
+  results in a cold laboratory. *Ann. Glaciol.* 26, 64-68.
+  (`water_irreducible_method = :ColeouLesaffre`)
+- Cuffey, K. M. and Paterson, W. S. B. (2010). *The Physics of Glaciers*, 4th ed.
+  Butterworth-Heinemann. eq. 9.1. (`heat_capacity_method = :CuffeyPaterson`)
+- Fausto, R. S., et al. (2018). A snow density dataset for improving surface boundary
+  conditions in Greenland ice sheet firn modeling. *Front. Earth Sci.* 6, 51.
+  (`new_snow_method` = `:Fausto`/`:FaustoFit`)
+- Fourteau, K., Brondex, J., Cancès, C., and Dumont, M. (2026). Numerical strategies for
+  representing Richards' equation and its couplings in snowpack models. *Geosci. Model Dev.*
+  19, 3193-3212. Sect. 2.3. (`melt_geometry = :density`)
+- Gordon, M., Simon, K., and Taylor, P. A. (2006). On snow depth predictions with the Canadian
+  land surface scheme including a parametrization of blowing snow sublimation.
+  *Atmos.-Ocean* 44, 239-255. (`blowing_snow_sublimation`)
+- Gregory, S. A., Albert, M. R., and Baker, I. (2014). Impact of physical properties and
+  accumulation rate on pore close-off in layered firn. *The Cryosphere* 8, 91-105.
+  (`impermeable_density`)
+- Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
+  *Geosci. Model Dev.* 19, 6273-6334. (`blowing_snow_method`, `blowing_snow_sublimation`,
+  `new_snow_method = :Pahaut`)
+- Lundin, J. M. D., et al. (2017). Firn Model Intercomparison Experiment (FirnMICE).
+  *J. Glaciol.* 63, 401-422.
+- Marchenko, S., et al. (2019). Thermal conductivity of firn at Lomonosovfonna, Svalbard,
+  derived from subsurface temperature measurements. *The Cryosphere* 13, 1843-1859.
+  (`thermal_conductivity_method = :Marchenko2019`)
+- Pahaut, E. (1975). *La métamorphose des cristaux de neige*. Monographies de la Météorologie
+  Nationale 96, Météo-France. (`new_snow_method = :Pahaut`)
+- Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
+  seasonal snow. *J. Glaciol.* 43, 26-41. (`thermal_conductivity_method = :Sturm`)
+- Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
+  (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
+  sheet. *The Cryosphere* 14, 3785-3810. (`thermal_conductivity_method`,
+  `water_irreducible_method`, `impermeable_density`, `runoff_method`)
+- Vionnet, V., et al. (2012). The detailed snowpack scheme Crocus and its implementation in
+  SURFEX v7.2. *Geosci. Model Dev.* 5, 773-791. (`densification_method`,
+  `blowing_snow_method`)
+- Zuo, Z. and Oerlemans, J. (1996). Modelling albedo and specific balance of the Greenland ice
+  sheet: calculations for the Søndre Strømfjord transect. *J. Glaciol.* 42, 305-317.
+  (`runoff_method = :ZuoOerlemans`)
 """
 Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # --- Density & Densification ---
@@ -300,7 +364,7 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
 
     # --- Melt & Water ---
     # `:ColeouLesaffre` (the default) makes the irreducible water content density-dependent
-    # after Coleou & Lesaffre (1998) and ignores `water_irreducible_saturation`. It is what the
+    # after Coléou & Lesaffre (1998) and ignores `water_irreducible_saturation`. It is what the
     # Community Firn Model ships (`ColeouLesaffre: true`) and what IMAU-FDM implements, and
     # RetMIP Sect. 5.4 found it gave realistic percolation depths at Dye-2. `:constant` holds
     # `water_irreducible_saturation` at every density (Colbeck, 1974). See

@@ -51,6 +51,11 @@ Specific humidity from vapour and total pressure, `q = εe/(P - (1-ε)e)` with
 Used by [`blowing_snow_sublimation_rate`](@ref), which needs `q` rather than `e` because the
 Gordon et al. (2006) sublimation rate is written against the saturation *specific humidity*.
 The turbulent latent-heat flux works in vapour pressure directly and does not call this.
+
+# References
+- Gordon, M., Simon, K. and Taylor, P. A. (2006). On snow depth predictions with the Canadian
+  land surface scheme including a parametrization of blowing snow sublimation.
+  *Atmos.-Ocean* 44, 239-255.
 """
 @inline specific_humidity(vapor_pressure::Real, pressure_air::Real) =
     MOLAR_MASS_RATIO_VAPOR_AIR * vapor_pressure /
@@ -65,6 +70,10 @@ snow, and bare ice each get their own value (`Z0_SNOW_DRY`, `Z0_SNOW_WET`, `Z0_I
 
 Read by the turbulent fluxes in [`calculate_temperature`](@ref) and by the 5 m gust speed in
 [`drift_wind_speed`](@ref), so both see the same surface.
+
+# References
+- Bougamont, M., Bamber, J. L. and Greuell, W. (2005). A surface mass balance model for the
+  Greenland Ice Sheet. *J. Geophys. Res.* 110, F04018.
 """
 @inline function surface_roughness(mp::ModelParameters, density_surface::Real,
     water_surface::Real)
@@ -90,6 +99,10 @@ Three inline copies of this expression predate the helper —
 `GDN_TOLERANCE` on the radius where this floors at `GDN_TOLERANCE*2` on the diameter, and the
 two differ in the degenerate branch only; unifying them is not bit-identical. New callers
 should use this.
+
+# References
+- Brun, E., David, P., Sudul, M. and Brunot, G. (1992). A numerical model to simulate
+  snow-cover stratigraphy for operational avalanche forecasting. *J. Glaciol.* 38, 13-22.
 """
 @inline dendritic_grain_radius(dendricity::Real, sphericity::Real) =
     max(0.1 * (dendricity / 0.99 + (1.0 - 1.0 * dendricity / 0.99) *
@@ -162,6 +175,10 @@ reports (e.g. Vandecrux et al., 2019), so they are what a whole-column value can
 compared against.
 
 Allocation-free: called every timestep from the `gemb` time loop.
+
+# References
+- Vandecrux, B., et al. (2019). Firn data compilation reveals widespread decrease of firn air
+  content in western Greenland. *The Cryosphere* 13, 845-859.
 """
 function firn_air_content(dz::AbstractVector, density::AbstractVector,
     density_ice::Real, z_max::Real=Inf)

@@ -59,8 +59,11 @@ if the march never reached ice.
   the burial rate.
 
 # References
-- Arthern, R. J., et al. (2010). J. Geophys. Res., 115, F03011.
-- Herron, M. and Langway, C. (1980). J. Glaciol., 25, 373-385.
+- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
+  In situ measurements of Antarctic snow compaction compared with predictions of models.
+  *J. Geophys. Res.* 115, F03011. eq. 1.
+- Herron, M. M. and Langway, C. C. (1980). Firn densification: an empirical model.
+  *J. Glaciol.* 25, 373-385.
 """
 function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     mp::ModelParameters; n_age::Int=2000)

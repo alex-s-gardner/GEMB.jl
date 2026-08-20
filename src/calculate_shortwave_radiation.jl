@@ -14,8 +14,17 @@ Depending on model configuration:
 Returns `shortwave_flux` vector [W m-2] of absorbed shortwave radiation per grid cell.
 
 # References
-- Lefebre, F., et al. (2003). J. Geophys. Res., 108, 4231.
-- Greuell, W. and Konzelmann, T. (1994). Global Planet. Change, 9, 91-114.
+- Lefebre, F., Gallée, H., van Ypersele, J.-P., and Greuell, W. (2003). Modeling of snow and
+  ice melt at ETH Camp (West Greenland): a study of surface albedo. *J. Geophys. Res.* 108,
+  4231.
+- Bassford, R. P. (2002). *Geophysical and numerical modelling investigations of the ice caps
+  on Severnaya Zemlya*. PhD thesis, University of Bristol. Source of the `Bs`/`Bi`
+  extinction coefficients of the density-dependent branch. Inherited from the MATLAB
+  implementation, which cites this work as "Bassford, 2002" for the formulation and
+  "Bassford, 2006" for the same two coefficients; the thesis is the only work of that name
+  carrying them, so the date is unified here. The 2006 *Arct. Antarct. Alp. Res.* papers of
+  Bassford et al. are the published mass-balance results of the same modelling and do not
+  tabulate these coefficients.
 """
 function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Float64},
     grain_radius::Vector{Float64}, albedo_broadband::Float64,
@@ -88,8 +97,8 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
             swf_ss = (1 - SWs) * (1 - albedo_broadband) * cfs.shortwave_downward
 
             # SW extinction coefficients
-            Bs = 10.0    # snow SW extinction coefficient [m-1] (Bassford, 2006)
-            Bi = 1.3     # ice SW extinction coefficient [m-1] (Bassford, 2006)
+            Bs = 10.0    # snow SW extinction coefficient [m-1] (Bassford, 2002)
+            Bi = 1.3     # ice SW extinction coefficient [m-1] (Bassford, 2002)
 
             # calculate extinction coefficient B [m-1] vector
             B = Bs .+ (300 .- density) .* ((Bs - Bi) / (mp.density_ice - 300))

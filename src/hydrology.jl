@@ -18,6 +18,30 @@ Neither runs at the `runoff_method = :instantaneous` default, which leaves outpu
 MATLAB. Both require [`calculate_melt`](@ref) to have let water exceed irreducible saturation
 in the first place — a rate law has nothing to act on otherwise, which is why the two changes
 are one feature.
+
+# References
+- Zuo, Z. and Oerlemans, J. (1996). Modelling albedo and specific balance of the Greenland ice
+  sheet: calculations for the Søndre Strømfjord transect. *J. Glaciol.* 42, 305-317. (eq. 22,
+  the `:ZuoOerlemans` timescale.)
+- Calonne, N., Geindreau, C., Flin, F., Morin, S., Lesaffre, B., Rolland du Roscoat, S., and
+  Charrier, P. (2012). 3-D image-based numerical computations of snow permeability: links to
+  specific surface area, density, and microstructural anisotropy. *The Cryosphere* 6, 939-951.
+  (eq. 6, the saturated conductivity of the `:Darcy` flux.)
+- van Genuchten, M. T. (1980). A closed-form equation for predicting the hydraulic
+  conductivity of unsaturated soils. *Soil Sci. Soc. Am. J.* 44, 892-898.
+- Yamaguchi, S., Watanabe, K., Katsushima, T., Sato, A., and Kumakura, T. (2012). Dependence
+  of the water retention curve of snow on snow characteristics. *Ann. Glaciol.* 53, 6-12.
+  (eq. 7, the `n` parameterization.)
+- Hirashima, H., Yamaguchi, S., Sato, A., and Lehning, M. (2010). Numerical modeling of liquid
+  water movement through layered snow based on new measurements of the water retention curve.
+  *Cold Reg. Sci. Technol.* 64, 94-103. (eq. 10, the form combining the two above.)
+- Lefebre, F., Gallée, H., van Ypersele, J.-P., and Greuell, W. (2003). Modeling of snow and
+  ice melt at ETH Camp (West Greenland): a study of surface albedo. *J. Geophys. Res.* 108,
+  4231. (One of the two lineages quoting the `c1`/`c2` timescale coefficients.)
+- Langen, P. L., et al. (2017). Liquid water flow and retention on the Greenland ice sheet in
+  the regional climate model HIRHAM5. *Front. Earth Sci.* 4, 110.
+- Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
+  (RetMIP). *The Cryosphere* 14, 3785-3810.
 """
 
 # Zuo and Oerlemans (1996) eq. 22 timescale coefficients, in seconds and dimensionless.

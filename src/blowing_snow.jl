@@ -54,7 +54,16 @@ term.
 - Lenaerts, J. T. M., et al. (2012). Modeling drifting snow in Antarctica with a regional
   climate model: 1. Methods and model evaluation. *J. Geophys. Res.* 117, D05108.
 - Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
-  *Geosci. Model Dev.* 19, 6273-6334.
+  *Geosci. Model Dev.* 19, 6273-6334. https://doi.org/10.5194/gmd-19-6273-2026
+- Noël, B., van de Berg, W. J., van Wessem, J. M., et al. (2018). Modelling the climate and
+  surface mass balance of polar ice sheets using RACMO2 - Part 1: Greenland (1958-2016).
+  *The Cryosphere* 12, 811-831.
+- Purdie, H., Mackintosh, A., Lawson, W., Anderson, B., Morgenstern, U., Chinn, T., and
+  Mayewski, P. (2011). Interannual variability in net accumulation on Tasman Glacier and its
+  relationship with climate. *Global Planet. Change* 77, 142-152.
+- Brun, E., David, P., Sudul, M., and Brunot, G. (1992). A numerical model to simulate
+  snow-cover stratigraphy for operational avalanche forecasting. *J. Glaciol.* 38, 13-22.
+  (The coded dendricity/sphericity integers Crocus stores.)
 """
 
 # Crocus SNOWDRIFT calibration constants, from `src/SURFEX/modd_snow_par.F90:290-326`. The
