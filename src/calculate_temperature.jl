@@ -425,18 +425,13 @@ Three deliberate crudenesses, each licensed by that:
   where wet columns sit. Clamping costs convergence rate, never correctness.
 
 !!! note "An analytic turbulent slope was tried and reverted"
-    The extra `_turbulent_heat_flux` call is the dominant cost of the implicit path, so an
-    analytic replacement was measured. `dQ_shf/dT` and `dQ_lhf/dT` are both algebraic in
-    quantities the flux evaluation already computes — the transfer-coefficient products and the
-    saturation vapour pressure — *if* the coefficients themselves are held fixed. They cannot
-    be: `coefM`, `coefHT`, `coefHQ` depend on `T_surface` through the bulk Richardson number,
-    and the term dropped by freezing them substantially cancels the rest. Measured over 675
-    sampled surface states, the frozen-coefficient slope overshot the true derivative by up to
-    10x, with 9% of states outside a factor of two. Overshoot under-relaxes Newton: the
-    iteration count more than doubled, hit `THERMAL_IMPLICIT_MAX_ITERATIONS`, and whole-model
-    runtime *rose* 43% (15.2 s to 21.8 s) while the unconverged output drifted 15 K. Correct in
-    principle — `Λ` really does affect only the rate — but the rate is exactly what it cost.
-    Differentiating the stability branches too would be sound, and is the open option here.
+    `dQ_shf/dT` and `dQ_lhf/dT` are both algebraic in quantities the flux evaluation already
+    computes, *if* the transfer coefficients are held fixed — and they cannot be, because
+    `coefM`/`coefHT`/`coefHQ` depend on `T_surface` through the bulk Richardson number and the
+    term dropped by freezing them substantially cancels the rest. The frozen-coefficient slope
+    overshoots, which under-relaxes Newton and made the run slower, not faster. Differentiating
+    the stability branches too would be sound, and remains open. Measurements on the
+    [Thermal solvers](@ref) page.
 """
 @inline function _surface_energy_balance_slope(T1::Float64, emissivity::Float64,
     sfc::_ThermalSurface, cfs::ClimateForcingStep, longwave_upward::Float64,
@@ -496,109 +491,68 @@ cannot manufacture a new extremum.
 
 ## The surface row: Newton, not lagged Picard
 
-The surface flux `Q(T_1)` is strongly nonlinear and must be taken implicitly. Lagging it — a
-Picard iteration on the previous iterate's flux — *diverges* here: the fixed-point gain
-`|dQ/dT_1|·Δt/(M_1 c_1)` exceeds 1 for a centimetre-scale surface cell at any Δt of interest.
-(That is precisely why the explicit path's lagged sub-steps are stable: their tiny `dt` drives
-the same gain far below 1.)
+The surface flux `Q(T_1)` is strongly nonlinear and must be taken implicitly. Lagging it — Picard
+iteration on the previous iterate's flux — *diverges* here: the fixed-point gain
+`|dQ/dT_1|·Δt/(M_1 c_1)` exceeds 1 for a centimetre-scale surface cell at any Δt of interest. (The
+explicit path's lagged sub-steps are stable for the converse reason: their tiny `dt` drives the
+same gain far below 1.)
 
-So the flux is linearized into the diagonal, `Q(T_1) ≈ Q_k + Λ_k(T_1 − T_{1,k})` with
-`Λ_k ≤ 0` from [`_surface_energy_balance_slope`](@ref), which *strengthens* the already dominant
-diagonal. Because `Q_k` is the true nonlinear flux at the iterate, the two `Λ` terms cancel at
-convergence and the residual satisfied is the true nonlinear surface balance. **`Λ` therefore
-affects only the convergence rate, never the answer** — the licence for its finite-difference
-turbulent terms and its clamp.
+So the flux is linearized into the diagonal, `Q(T_1) ≈ Q_k + Λ_k(T_1 − T_{1,k})` with `Λ_k ≤ 0`
+from [`_surface_energy_balance_slope`](@ref), which *strengthens* the already dominant diagonal.
+Since `Q_k` is the true nonlinear flux at the iterate, the two `Λ` terms cancel at convergence and
+the residual satisfied is the true nonlinear surface balance. **`Λ` therefore affects only the
+convergence rate, never the answer** — the licence for its finite-difference turbulent terms and
+its clamp.
 
-The two discontinuities are kept as far *outside* the iteration as they can be: the emissivity
-melt switch is evaluated once per sub-step, as on the explicit path, and the `LV`/`LS`
-latent-heat switch is absorbed by the `Λ` clamp.
-
-That is not sufficient on its own. Measured over a year of 3-hourly synthetic forcing (3.77M
-sub-step solves), 39% of solves reached `THERMAL_IMPLICIT_MAX_ITERATIONS` without converging,
-and the iterate traces show **limit cycles** rather than divergence: 2- and 3-cycles of ~0.02 K
-median amplitude, many straddling 273.15 K, where the latent-heat switch still enters through
-`Q_k` itself even though `Λ` is clamped. The iteration is therefore **damped**: the step weight
-is halved whenever a step fails to shrink, which contracts a cycle onto its own mean, and the
-least-residual iterate is retained so a cycle still running at the cap is not left on its worse
-phase. This cut non-convergence 44x, to 0.9% of solves, at no measurable runtime cost, and
-leaves converging solves bit-identical — on the quadratic path the residual falls every
-iteration, so the weight never leaves 1 and the update is exactly the Newton step. See
-`THERMAL_IMPLICIT_DAMPING_FLOOR` for the measurement and for why sub-step halving —
-the remedy Fourteau et al. (2026) Sect. 3.1.3 pairs with their own Newton solve — was tried and
-rejected here.
+Both discontinuities are held as far outside the iteration as possible: the emissivity melt switch
+is evaluated once per sub-step, as on the explicit path, and the `LV`/`LS` latent-heat switch is
+absorbed by the `Λ` clamp. That is not quite sufficient — the latent-heat switch still enters
+through `Q_k` itself — so a fraction of solves end in small limit cycles across 273.15 K rather
+than converging, and the iteration is **damped**: the step weight halves whenever a step fails to
+shrink, contracting a cycle onto its own mean, and the least-residual iterate is retained so a
+cycle still running at the cap is not left on its worse phase. Converging solves are bit-identical
+under this, the weight never leaving 1 on the quadratic path. See
+`THERMAL_IMPLICIT_DAMPING_FLOOR` for the measurement.
 
 ## Conservation
 
 A Thomas sweep leaves a round-off residual, so the solved field is used as a *predictor of the
 implicit face temperatures* rather than written to `temperature` directly. The enthalpy update is
-then applied as one flux per face, `+F` to cell `i` and `−F` to cell `i+1` — structurally the same
-pass the explicit path uses. The pairwise cancellation is exact to the last bit, so the column
-total conserves independently of the solve residual, the Newton tolerance, and `c_p(T)`, and the
-verbose budget check is the explicit path's with no tolerance moved.
+applied as one flux per face, `+F` to cell `i` and `−F` to cell `i+1` — structurally the same pass
+the explicit path uses. Pairwise cancellation is exact to the last bit, so the column total
+conserves independently of the solve residual, the Newton tolerance, and `c_p(T)`, and the verbose
+budget check is the explicit path's with no tolerance moved.
 
-The surface flux applied in that pass is the *true* nonlinear flux at the converged iterate, not
-its linearization, and the returned averages are those same applied values — so `gemb_core`'s
+The flux applied at the surface in that pass is the *true* nonlinear flux at the converged iterate,
+not its linearization, and the returned averages are those same applied values — so `gemb_core`'s
 energy budget and the `evaporation_condensation` mass budget close by construction.
 
 ## Sub-stepping
 
-Sub-steps here buy **accuracy, not stability**: backward Euler is first-order and strongly
-damping, and the emissivity melt switch only resolves between sub-steps. The count follows
+Sub-steps here buy **accuracy, not stability**: backward Euler is first-order and strongly damping,
+and the emissivity melt switch only resolves between sub-steps. The count follows
 [`THERMAL_IMPLICIT_DT_TARGET`](@ref) and is independent of the cell count, of `dz`, and of the
-stiffest cell in the column — the property the explicit path lacks.
+stiffest cell — the property the explicit path lacks.
 
 ## Static condensation: Newton on a scalar, not on the column
 
 The nonlinearity is confined to row 1 — the surface energy balance. Rows `2 … n` are linear in
 the iterate under the default `:constant` heat capacity, so re-eliminating them once per Newton
-iteration is wasted work. Instead the interior is condensed **bottom-up, once per sub-step**,
+iteration would be wasted work. Instead the interior is condensed **bottom-up, once per sub-step**,
 each row reduced to an affine function of the cell above it (`T_i = rhs[i] + sup[i]·T_{i-1}`).
 Newton then iterates on a single scalar equation in `T_1`, at O(1) per iteration, and one forward
-substitution propagates the answer back down the column.
+substitution propagates the answer back down the column. The operator is constant across all
+Newton iterations of a sub-step, so it is factorized once and reused.
 
 Under `:CuffeyPaterson` the chord capacities depend on the iterate, so the condensation is
 repeated in an outer loop until they settle; under `:constant` the outer loop provably runs once.
 
-This is what the exponential-integrator idea in the design notes reduces to in cheap form: the
-operator is constant across all Newton iterations of a sub-step, so factorize it once and reuse
-it. Measured: **15.20 s to 5.70 s (2.67x)** on the benchmark below, with whole-model output
-agreeing to 1.2e-6 K and annual melt to 3.2e-8 kg m-2 — the same converged answer to round-off,
-as the `Λ`-independence property requires.
+## Cost
 
-## Performance: still slower than explicit, and why
-
-Measured on a year of 3-hourly synthetic forcing over a 264-cell column, whole-model runtime:
-
-| Solver | `DT_TARGET` | Runtime |
-|---|---|---|
-| `ExplicitThermal` | — | 2.44 s |
-| `ImplicitThermal` | 1800 s (6 sub-steps) | 3.59 s |
-| `ImplicitThermal` | 900 s (12 sub-steps, default) | 5.75 s |
-| `ImplicitThermal` | 450 s (24 sub-steps) | 9.62 s |
-
-So 1.5x at the coarsest usable accuracy and 2.4x at the calibrated default. Unconditional
-stability is the reason this scheme exists; throughput is not, and on a column with no stiff cell
-it does not beat the explicit path.
-
-What remains is the Newton iteration itself: **4.19 iterations per sub-step solve**, measured over
-1.12M solves. Capping the iteration at 1 takes the run to 4.98 s, so the iteration is most of the
-remaining cost, and it is irreducible — surface-only and whole-profile convergence criteria give
-identical counts (4.190 vs 4.190), i.e. cell 1 is always the last cell to converge.
-
-Two things are measured *not* to be the lever, recorded so they are not retried:
-
-- **The turbulent-flux calls.** Direct timing puts `_surface_energy_balance` at 65 ns and
-  `_surface_energy_balance_slope` at 69 ns, so all flux evaluations together are 0.70 s of the
-  pre-condensation 15.20 s. The earlier attribution of the cost to doubled flux calls was wrong;
-  the cost was the O(n) sweep per iteration, which is what condensation removed.
-- **The convergence tolerance.** Relaxing `THERMAL_IMPLICIT_T_TOLERANCE` from 1e-10 to 1e-3 —
-  seven orders of magnitude, far looser than the model's other branch tolerances — cut the
-  pre-condensation runtime only from 15.2 s to 10.8 s.
-
-Where this scheme wins is the case the explicit path cannot bound: its cost is independent of the
-stiffest cell. A single 1e-4 m refrozen lens drops the explicit stability limit from 903 s to
-3.98 s on this column (measured, `test_calculate_temperature.jl`) — a 227x sub-step increase for
-one thin cell — while the implicit count does not move. That is the reason to keep it available.
+Slower than the explicit path on a column with no stiff cell (~2.4x at the default sub-step
+target), and insensitive to the stiffest cell where the explicit path is not — which is the whole
+reason to select it. See the [Thermal solvers](@ref) page for the measured runtimes, the
+condensation speedup, and the optimizations that were tried and rejected.
 
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
@@ -611,8 +565,10 @@ one thin cell — while the implicit count does not move. That is the reason to 
   atmospheric models. *J. Appl. Meteorol.* 30, 327-341.
 - Fourteau, K., Brondex, J., Cancès, C., and Dumont, M. (2026). Numerical strategies for
   representing Richards' equation and its couplings in snowpack models. *Geosci. Model Dev.*
-  19, 3193-3212. Sect. 3.1.3 (non-global convergence of Newton's method, and the sub-step
-  halving rejected here — see `THERMAL_IMPLICIT_DAMPING_FLOOR`).
+  19, 3193-3212. Sect. 3.1.3 (non-global convergence of Newton's method).
+
+See also the [Thermal solvers](@ref) page, which carries the measured performance record and the
+rejected-optimization log for this scheme.
 """
 function _thermal_solve!(solver::ImplicitThermal,
     temperature::Vector{Float64}, dz::Vector{Float64},
