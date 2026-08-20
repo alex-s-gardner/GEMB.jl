@@ -27,7 +27,6 @@ const DENSIFICATION_COEFFS_M01 = Dict{String,Matrix{Float64}}(
     densification_lookup_M01(densification_coeffs_M01::Symbol)
 
 Return calibrated densification coefficients for the Ligtenberg model.
-Matches MATLAB's `densification_lookup_M01.m`.
 """
 function densification_lookup_M01(densification_coeffs_M01::Symbol)
     key = String(densification_coeffs_M01)

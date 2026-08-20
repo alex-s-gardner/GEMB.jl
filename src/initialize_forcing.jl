@@ -4,7 +4,6 @@
                        vapor_pressure; kwargs...)
 
 Create a `ClimateForcing` struct from time-series vectors.
-Matches MATLAB's `model_initialize_forcing.m`.
 
 # Arguments
 - `time::Vector{DateTime}`: Time stamps

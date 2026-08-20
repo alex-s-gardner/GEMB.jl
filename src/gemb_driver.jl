@@ -3,7 +3,6 @@
          verbose=false, thermal_workspace=ThermalWorkspace())
 
 Run the Glacier Energy and Mass Balance (GEMB) model.
-Matches MATLAB's `gemb.m`.
 
 Returns a DimStack containing time series of surface flux (monolevel)
 and vertical profiles at the specified output frequency.
@@ -702,8 +701,7 @@ falls in a different day/week/month. The final timestep is compared against a
 synthetic successor (`times[end] + dt`) rather than emitted unconditionally, so a
 trailing *partial* period (e.g. a lone midnight boundary step belonging to a new
 day) is not saved — only complete days/weeks/months are written. Weeks are grouped
-by Monday-anchored calendar week (`floor(Date, Week)`). This matches MATLAB's `gemb.m` output
-indexing (which appends `dates(end) + (dates(end)-dates(end-1))` before diffing).
+by Monday-anchored calendar week (`floor(Date, Week)`).
 """
 function _compute_output_times(times::Vector{DateTime}, frequency::Symbol)
     frequency == :all && return times

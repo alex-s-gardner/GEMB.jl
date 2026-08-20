@@ -2,7 +2,6 @@
     turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs::ClimateForcingStep; min_wind_speed=0.01)
 
 Compute sensible and latent heat fluxes using Monin-Obukhov similarity theory.
-Matches MATLAB's `turbulent_heat_flux.m`.
 
 `min_wind_speed` floors `cfs.wind_speed` (which would otherwise drive the bulk
 Richardson number to infinity at zero wind); clamping here avoids rebuilding the

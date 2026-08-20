@@ -118,14 +118,14 @@ Processes:
    being retained as pore water, or running off at impermeable ice lenses.
 
 Water is routed to runoff at a contiguous run of cells at or above `mp.impermeable_density`
-thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m, as in MATLAB; across
+thicker than `mp.impermeable_thickness` (defaults 830 kg m-3 and 0.1 m; across
 the RetMIP models the density criterion spans 810–917 kg m-3 — see `ModelParameters`).
 
 # Ponding above a barrier
 
 What happens to water that reaches a barrier depends on `mp.runoff_method`:
 
-- `:instantaneous` (the default, and MATLAB's behaviour) — it leaves the column in the same
+- `:instantaneous` (the default) — it leaves the column in the same
   timestep. Every cell is capped at its irreducible saturation, so the column can never hold
   standing water.
 - `:ZuoOerlemans` / `:Darcy` — it *backs up*. After the downward percolation loop, an upward
@@ -154,7 +154,6 @@ What happens to water that reaches a barrier depends on `mp.runoff_method`:
   evaluation for exactly this reason — models that cannot hold water above irreducible
   saturation cannot represent an aquifer at all.
 
-  This deviates from MATLAB, which has only the `:instantaneous` behaviour.
 
 # No preferential-flow domain
 
@@ -225,9 +224,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
-    # The density-based impermeability criterion. Both default to the MATLAB values
-    # (`DENSITY_PORE_CLOSEOFF` = 830 and 0.1 m) — see `ModelParameters` for why they are
-    # tunable and what range the literature supports.
+    # The density-based impermeability criterion. Defaults are `DENSITY_PORE_CLOSEOFF` = 830
+    # and 0.1 m — see `ModelParameters` for why they are tunable and what range the
+    # literature supports.
     d_phc = mp.impermeable_density       # pore hole close off density [kg m-3]
     ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
@@ -540,8 +539,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         end
 
         # Let blocked water back up into the pore space above the barrier instead of leaving
-        # in this timestep, unless `runoff_method` is `:instantaneous` (the MATLAB default,
-        # under which this returns the blocked mass unchanged and touches nothing).
+        # in this timestep, unless `runoff_method` is `:instantaneous` (the default, under
+        # which this returns the blocked mass unchanged and touches nothing).
         runoff_blocked = pond_blocked_water!(M, density, water, water_delta, age,
             runoff, flux_dn, flux_age, Xi, mp)
 
@@ -628,7 +627,7 @@ leaves the column.
 Called from [`calculate_melt`](@ref) after the percolation loop and before `water_delta` is
 applied, so it works on `water .+ water_delta` as the current pore water. A no-op under
 `mp.runoff_method === :instantaneous`, where it returns `flux_dn[Xi]` with `runoff`
-untouched, leaving the total identical to MATLAB's `sum(runoff) + flux_dn[Xi]`.
+untouched, so the total is the plain `sum(runoff) + flux_dn[Xi]`.
 
 Otherwise the blocked water is pooled (mass-weighted by [`mix_age`](@ref), since each
 contribution leaves its cell at that cell's outflow age `flux_age[i+1]`), the contributing

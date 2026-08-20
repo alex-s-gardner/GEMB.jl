@@ -6,8 +6,6 @@ Extract a column state from GEMB output as a Profile DimStack.
 
 If `time_extract` is not provided, the last time step is used.
 If `time_extract` does not exactly match any output time, the nearest time step is used.
-
-Matches MATLAB's `gemb_profile.m`.
 """
 function gemb_profile(out::DimStack, time_extract::DateTime)
     # Get output times

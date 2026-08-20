@@ -4,7 +4,6 @@
               thermal_workspace=ThermalWorkspace())
 
 Perform a single time-step of the GEMB model.
-Matches MATLAB's `gemb_core.m`.
 
 The column is returned with exactly `n_target` cells summing to exactly `z_target` metres,
 so both are invariant across the whole run (see `grid_ops.jl` for the two controllers that

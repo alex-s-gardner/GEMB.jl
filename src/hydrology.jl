@@ -14,8 +14,8 @@ immediately, produced runoff unrealistic enough to be excluded from the paper's 
 mean. Both laws being available makes the pair comparable within one model, which RetMIP could
 only do across models that differ in everything else.
 
-Neither runs at the `runoff_method = :instantaneous` default, which leaves output identical to
-MATLAB. Both require [`calculate_melt`](@ref) to have let water exceed irreducible saturation
+Neither runs at the `runoff_method = :instantaneous` default, which leaves output unchanged
+from a run without the feature. Both require [`calculate_melt`](@ref) to have let water exceed irreducible saturation
 in the first place — a rate law has nothing to act on otherwise, which is why the two changes
 are one feature.
 

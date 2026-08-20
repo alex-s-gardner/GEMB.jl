@@ -22,8 +22,6 @@ e.g. a closed interval `DateTime(1950,1,1) .. DateTime(1980,12,31)`, `At`, `Near
 or an index range. Both forms subset via `cf[Ti(...)]` before averaging.
 
 Typically used to build a repeating forcing cycle for [`gemb_spinup`](@ref).
-
-Matches MATLAB's `forcing_climatology.m`.
 """
 function forcing_climatology(cf::ClimateForcing, datetime_range::Tuple{DateTime,DateTime})
     # Record the requested window as climatology provenance on the result.
