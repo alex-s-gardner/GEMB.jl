@@ -2,7 +2,6 @@
     thermal_conductivity(temperature, density, mp::ModelParameters)
 
 Compute thermal conductivity for snow/firn/ice based on density and temperature.
-Matches MATLAB's `thermal_conductivity.m` for the two methods MATLAB carries.
 
 For snow/firn (density < density_ice), by `mp.thermal_conductivity_method`:
 
@@ -25,11 +24,10 @@ The two 2019 forms are the exception: each is continuous into ice by constructio
 return `K_ice(T)` at ρ = 917) and so is evaluated at all densities rather than
 short-circuiting to the ice branch.
 
-`:Sturm` and `:Calonne` are the MATLAB-equivalent options and either reproduces the
-reference to 1e-12. The `:Calonne2019` pair and `:Marchenko2019` are additions with no
-MATLAB counterpart, all recommended over the older fits by Vandecrux et al. (2020, RetMIP
-Sect. 5.1), who attribute part of a multi-model cold bias at Summit and Dye-2 to
-conductivity parameterizations.
+`:Sturm` and `:Calonne` are the two older density-only fits. The `:Calonne2019` pair and
+`:Marchenko2019` are recommended over them by Vandecrux et al. (2020, RetMIP Sect. 5.1), who
+attribute part of a multi-model cold bias at Summit and Dye-2 to conductivity
+parameterizations; `:Calonne2019` is the default.
 
 Returns vector of thermal conductivities [W m-1 K-1].
 

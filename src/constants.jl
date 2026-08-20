@@ -1,5 +1,6 @@
-# Physical constants used throughout GEMB
-# All values match the MATLAB implementation exactly
+# Physical constants and numerical tolerances used throughout GEMB.
+# Each carries its source in a comment; several have no counterpart in the MATLAB model the
+# code was originally translated from.
 
 const CtoK = 273.15        # Celsius to Kelvin conversion [K]
 
@@ -154,10 +155,11 @@ const DENSITY_FIRN_TOLERANCE = 0.5     # [kg m-3]
 const ALBEDO_FIXED_POINT_TOLERANCE = 1e-4
 
 # Numerical boundary tolerances.
-# These are float-safe offsets on branch comparisons (e.g. `x < threshold - D_TOLERANCE`)
-# that reproduce the original MATLAB's exact branch decisions. They are load-bearing for
-# MATLAB fidelity (the reference regression test diverges if they are removed), not
-# arbitrary fudge factors. Values are centralized here so there is a single source of truth.
+# These are float-safe offsets on branch comparisons (e.g. `x < threshold - D_TOLERANCE`).
+# They are load-bearing, not arbitrary fudge factors: a state sitting exactly on a threshold
+# is common (a cell at pore close-off, a dry cell at zero water), and without the offset the
+# branch taken depends on the last bit of an accumulated float. Removing them moves output.
+# Values are centralized here so there is a single source of truth.
 const D_TOLERANCE = 1e-11              # density / depth comparisons
 const T_TOLERANCE = 1e-10              # temperature-gradient branch boundaries
 const W_TOLERANCE = 1e-13              # surface (top-cell) water presence

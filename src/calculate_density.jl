@@ -32,11 +32,9 @@ settings — see the note in `gemb_core.jl`).
 reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
 ignore it.
 
-The accumulation-driven branches are scalar-loop implementations that are
-numerically identical, element by element, to the reference vectorized MATLAB
-translation, but avoid the mask / gather / broadcast temporaries (`mass_init`,
-`idx`, `H`, `c0`, `c1`, ...) the vectorized form allocated per call. `:ArthernB`
-deviates from the reference — see the comment on that branch.
+The accumulation-driven branches are scalar-loop implementations, numerically identical
+element by element to the vectorized form they replaced but without its mask / gather /
+broadcast temporaries (`mass_init`, `idx`, `H`, `c0`, `c1`, ...) allocated per call.
 
 # References
 - Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).

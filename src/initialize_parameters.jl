@@ -2,10 +2,10 @@
     initialize_parameters(; kwargs...)
 
 Create and validate a `ModelParameters` struct.
-Matches MATLAB's `model_initialize_parameters.m`.
 
-All parameters have defaults matching the MATLAB version.
-Validation checks are performed after construction.
+Defaults are documented per field on [`ModelParameters`](@ref); several were changed in
+v2.0.0 on the recommendation of the firn-model intercomparisons, so they are not the MATLAB
+model's. Validation checks are performed after construction.
 """
 function initialize_parameters(; kwargs...)
     mp = ModelParameters(; kwargs...)

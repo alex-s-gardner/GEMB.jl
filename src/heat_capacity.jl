@@ -11,8 +11,7 @@
 Specific heat capacity of the ice matrix at temperature `T` [K], per
 `mp.heat_capacity_method`:
 
-- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value). MATLAB
-  behaviour.
+- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value). The default.
 - `:CuffeyPaterson` — Cuffey and Paterson (2010) eq. 9.1, `c_p = 152.5 + 7.122·T`. Gives
   2097.9 at the melting point but only 1862 at 240 K and 1648 at 210 K, so the constant
   value over-permits refreezing in cold firn by +12.6% and +27.5% respectively.
@@ -71,8 +70,7 @@ end
 Specific enthalpy of the ice matrix at temperature `T` [K], measured from a 0 K
 reference: `h(T) = ∫₀ᵀ c_p dT′`.
 
-- `:constant` — `c·T` exactly, so the default path is bit-identical to the MATLAB
-  `M·T·C_ICE` accounting.
+- `:constant` — `c·T` exactly, so the enthalpy is a plain `M·c·T` product.
 - `:CuffeyPaterson` — `a·T + (b/2)T²`.
 
 !!! warning
@@ -157,7 +155,7 @@ end
     specific_enthalpy_water(mp::ModelParameters) -> h [J kg-1]
 
 Specific enthalpy of liquid water at the melting point: the enthalpy of ice at `CtoK`
-plus the latent heat of fusion. This is the `LF + CtoK * C_ICE` of the MATLAB budgets,
+plus the latent heat of fusion — the familiar `LF + CtoK·c` of a constant-`c_p` budget,
 generalized to a temperature-dependent `c_p`.
 
 GEMB carries pore water only at the melting point, so no liquid heat capacity is needed.
@@ -179,8 +177,8 @@ one-argument form, which this reduces to exactly at `T == CtoK`.
 `mp.rain_heat_capacity` selects the heat capacity of that sensible term:
 
 - `:water` (default) — [`HEAT_CAPACITY_WATER`](@ref) ≈ 4220 J kg-1 K-1, the physical value.
-- `:ice` — `heat_capacity(mp, CtoK)` ≈ 2102, which is what MATLAB and GEMB.jl before this
-  option used. It understates the rain's sensible heat by about a factor two: ~3.9 kJ kg-1
+- `:ice` — `heat_capacity(mp, CtoK)` ≈ 2102, which is what GEMB.jl used before this option
+  existed. It understates the rain's sensible heat by about a factor two: ~3.9 kJ kg-1
   for rain at 275 K, against 334.5 kJ kg-1 of `LF`. Small (~1% of the rain's energy) but
   systematic, and growing linearly with `T_air − CtoK`.
 
@@ -214,9 +212,8 @@ rather than a temperature).
 
 Under `:constant` the first form mixes in temperature space. That is not an approximation:
 for constant `c_p` the `c` cancels out of the enthalpy balance, so the mass-weighted mean
-*is* the exact enthalpy-conserving mixture. Doing it directly rather than via a
-`h`/`h⁻¹` round-trip keeps the default path bit-identical to the MATLAB arithmetic, which
-would otherwise drift at ~1e-13 per merge.
+*is* the exact enthalpy-conserving mixture. It is done directly rather than via an
+`h`/`h⁻¹` round-trip because the round-trip would drift at ~1e-13 per merge for no gain.
 
 Returns `T1` when the total mass is zero.
 """
@@ -255,10 +252,9 @@ Two callers, and they sit on opposite sides of the melting point:
 
 Under `:constant` the `c` cancels out of the enthalpy balance, so both are evaluated as a
 weighted mean of temperatures with the liquid at an effective temperature `h_liquid/c` —
-`T_liquid + LF/c` when the liquid's heat capacity is the matrix's, which is the grouping the
-MATLAB reference uses. Keeping that grouping is what makes the refreeze path (and
-`rain_heat_capacity = :ice`) bit-identical to the reference rather than drifting through an
-`h`/`h⁻¹` round-trip.
+`T_liquid + LF/c` when the liquid's heat capacity is the matrix's. That grouping is kept
+deliberately: it keeps the refreeze path (and `rain_heat_capacity = :ice`) exact in
+temperature space rather than drifting through an `h`/`h⁻¹` round-trip.
 
 Returns `T_solid` when the total mass is zero.
 """
@@ -302,7 +298,7 @@ cold content would not land the cell exactly at the melting point.
 """
 @inline function cold_content_mass(mp::ModelParameters, T::Real, M::Real)
     if mp.heat_capacity_method === :constant
-        # Grouped as the MATLAB reference groups it, so the default path is bit-identical.
+        # Grouped to stay exact in temperature space under `:constant` (see the docstring).
         return max(0.0, -((Float64(T) - CtoK) * Float64(M) * mp.heat_capacity_ice) / LF)
     end
     return max(0.0, Float64(M) * (specific_enthalpy(mp, CtoK) - specific_enthalpy(mp, T)) / LF)
@@ -313,10 +309,10 @@ end
 
 As above, for a cell given by its density [kg m-3] and thickness [m] rather than its mass.
 
-Not merely `cold_content_mass(mp, T, density*dz)`: the reference multiplies `ρ` and `dz` into
-the product separately at this site and pre-multiplied at the other, and floating-point
-multiplication is not associative. Keeping both groupings is what makes the `:constant` path
-bit-identical at *both* call sites.
+Not merely `cold_content_mass(mp, T, density*dz)`: this site multiplies `ρ` and `dz` into the
+product separately where the other pre-multiplies them, and floating-point multiplication is
+not associative. Both groupings are kept so neither call site's arithmetic is silently
+changed by routing it through the other.
 """
 @inline function cold_content_mass(mp::ModelParameters, T::Real, density::Real, dz::Real)
     if mp.heat_capacity_method === :constant

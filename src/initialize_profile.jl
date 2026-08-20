@@ -37,11 +37,11 @@ of solid ice.
 
 # Keyword arguments
 
-Both flags exist **only to reproduce the MATLAB `model_initialize_profile`
-initialization** for the fidelity and regression tests. They are not physically
-meaningful choices for a real run — the climate-derived guess is strictly better —
-and either one builds the grid on the configured `mp.column_depth_max`, bypassing the
-derived depth.
+Both flags exist to build a **simple, fully specified starting column** — the form the
+tests use, where a climate-derived initial guess would make an expected value depend on the
+whole initialization chain. They are not physically meaningful choices for a real run (the
+climate-derived guess is strictly better), and either one builds the grid on the configured
+`mp.column_depth_max`, bypassing the derived depth.
 
 - `constant_density`: fill density with `mp.density_ice`, with the matching
   bare-ice grain state (`grain_dendricity = 0`, `grain_sphericity = 0`,
@@ -50,12 +50,12 @@ derived depth.
   to the melt point as every other path is.
 
 Setting **both** takes a separate early-return path
-([`_uniform_ice_profile`](@ref)) that reproduces the MATLAB column exactly: pure
-ice, uniform mean-annual temperature, no march and no climate summary.
+([`_uniform_ice_profile`](@ref)): pure ice at a uniform mean-annual temperature, with no
+march and no climate summary.
 
 Every path here returns temperature at or below the melt point (273.15 K): the
 climate-derived march clamps in [`_steady_state_temperature`](@ref), and the
-fidelity paths clamp `cf.temperature_air_mean` (with a warning) before filling.
+two flag paths clamp `cf.temperature_air_mean` (with a warning) before filling.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
@@ -66,7 +66,7 @@ residence time the march itself integrated — the accumulated burial time at ea
 increasing downward — which makes age and residence-time diagnostics meaningful from the
 first timestep instead of only after a multi-century spinup has flushed the column. Under
 `:zero` the instant of initialization is the epoch and every cell starts at 0, which is
-what the fidelity paths do regardless (`constant_density` discards the march's density, so
+what the flag paths do regardless (`constant_density` discards the march's density, so
 its age describes a column that was replaced). Nothing in the physics reads `age`, so this
 choice is output-only.
 """
@@ -84,7 +84,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # enthalpy above `CtoK` (that energy is melt, and there is no water here to hold
     # it), so a warmer cell would be an unphysical heat reservoir that the first
     # timesteps discharge downward. The climate-derived path is already clamped in
-    # `_steady_state_temperature`; this clamp covers the two fidelity paths, which fill
+    # `_steady_state_temperature`; this clamp covers the two flag paths, which fill
     # `T_mean` verbatim.
     #
     # Applied only where `T_mean` is actually used — under `constant_temperature` — so a
@@ -95,15 +95,15 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         T_mean = CtoK
     end
 
-    # MATLAB-fidelity path: nothing here is climate-derived, so short-circuit
-    # before the summary and the march so neither can perturb it.
+    # Fully specified column: nothing here is climate-derived, so short-circuit before the
+    # summary and the march so neither can perturb it.
     if constant_density && constant_temperature
         return _uniform_ice_profile(mp, T_mean)
     end
 
     cs = initialize_climate_summary(cf, mp)
 
-    # Size the grid to the depth this climate needs, unless a fidelity flag pins it
+    # Size the grid to the depth this climate needs, unless a flag pins it
     # to the configured value. The depth is not returned: it is realized in `dz`,
     # which is what fixes the column depth for the run.
     depth = (constant_density || constant_temperature) ? mp.column_depth_max :
@@ -151,16 +151,16 @@ end
 """
     _uniform_ice_profile(mp::ModelParameters, T_mean) -> DimStack
 
-The MATLAB `model_initialize_profile` column: pure ice at a uniform temperature,
-with non-dendritic faceted ice grains (`grain_radius = 2.5` mm, the non-spherical
-cap in [`calculate_grain_size`](@ref)) and no pore water.
+A pure-ice column at a uniform temperature, with non-dendritic faceted ice grains
+(`grain_radius = 2.5` mm, the non-spherical cap in [`calculate_grain_size`](@ref)) and no
+pore water.
 
-Reached only when both fidelity flags of [`initialize_profile`](@ref) are set.
+Reached only when both keyword flags of [`initialize_profile`](@ref) are set.
 Kept as a separate function taking no climate-derived input so no future change to
 the steady-state scheme can perturb it.
 
 `T_mean` is expected already clamped to `CtoK` by the caller — the clamp lives
-there so it covers both fidelity paths in one place.
+there so it covers both flag paths in one place.
 """
 function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
     dz = initialize_grid(mp)
@@ -230,7 +230,6 @@ end
     initialize_grid(mp::ModelParameters, depth=mp.column_depth_max)
 
 Generate the initial vertical grid layer thicknesses, spanning `depth`.
-Matches MATLAB's `model_initialize_grid` (local function in model_initialize_profile.m).
 
 `depth` is an argument rather than read from `mp` because [`initialize_profile`](@ref)
 builds the grid on the climate-derived depth ([`_derive_column_depth`](@ref)), for

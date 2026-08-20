@@ -19,10 +19,10 @@ march — which has no instantaneous forcing to offer — gets a well-defined cl
 Methods:
 - `:Constant150` → 150, `:Constant315` → 315, `:Constant350` → 350: constants.
 - `:Fausto` → 315: the Fausto et al. (2018) Greenland fit frozen at one temperature (it is
-  `:FaustoFit` evaluated at T ≈ 256.2 K). Inherited from MATLAB and kept as the default for
-  reference fidelity. Numerically equal to `:Constant315`, but `:Fausto` additionally selects
-  the Crocus wind-dependent fresh-grain properties below, where `:Constant315` does not — use
-  `:Constant315` for a bare 315 kg m-3 with the default grain properties.
+  `:FaustoFit` evaluated at T ≈ 256.2 K). Numerically equal to `:Constant315`, but `:Fausto`
+  additionally selects the Crocus wind-dependent fresh-grain properties below, where
+  `:Constant315` does not — use `:Constant315` for a bare 315 kg m-3 with the default grain
+  properties.
 - `:FaustoFit` → `362.1 + 2.78·(T_air - CtoK)`: that same fit carrying its temperature
   dependence, as implemented in IMAU-FDM (`initialise_model.f90`) for its Greenland domain.
   Unbounded below as published, so callers clamp — see `calculate_accumulation` and

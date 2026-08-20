@@ -2,7 +2,7 @@
     air_density(pressure, temperature) -> ρ_air [kg m-3]
 
 Density of air from the ideal gas law, `ρ = 0.029·P/(R·T)`, with the 0.029 kg mol-1
-mean molar mass of dry air the MATLAB implementation uses.
+mean molar mass of dry air.
 
 Shared by the transient surface energy balance ([`calculate_temperature`](@ref))
 and the initial-guess one (`_seb_annual_melt`), so both use one expression.
@@ -113,7 +113,6 @@ should use this.
     fast_divisors(n::Integer)
 
 Find all positive divisors of integer `n`, returned sorted.
-Matches MATLAB's `fast_divisors.m`.
 """
 function fast_divisors(n::Integer)
     k = 1:ceil(Int, sqrt(n))
@@ -126,8 +125,6 @@ end
 
 Convert layer thicknesses `dz` to cell center heights (negative below surface).
 The surface is at z=0; centers are at negative depths.
-
-Matches MATLAB's `dz2z.m` for vector input.
 """
 function dz2z(dz::AbstractVector)
     z_center = -cumsum(dz) .+ dz[1] / 2
@@ -144,8 +141,6 @@ GEMB profile output is top-justified with a fixed row count, so this is a plain 
 sum with no padding to work around. Any NaN present in the input (e.g. an output array not
 yet fully written) propagates through its own column from that row down, as `cumsum`
 implies.
-
-Matches MATLAB's `dz2z.m` for matrix input.
 """
 function dz2z(dz::AbstractMatrix)
     z_center = similar(dz, Float64)
@@ -251,9 +246,9 @@ end
 
 Convert decimal year to MATLAB datenum format (days since 0000-01-01).
 
-Automatically accounts for leap years.
-
-Matches MATLAB's `decyear2datenum.m`.
+Automatically accounts for leap years. The output format is MATLAB's by definition — this is
+an interop convenience for callers exchanging dates with MATLAB tooling, not a statement
+about the model agreeing with the MATLAB implementation.
 """
 function decyear2datenum(decyear)
     year_part = floor.(Int, decyear)

@@ -61,8 +61,6 @@ When neither is given the spinup always runs `max_iterations` cycles.
   spinup. One belongs to one column; give each concurrent thread its own
   (see [`ThermalWorkspace`](@ref)).
 
-Derived from MATLAB's `gemb_spinup.m`; the drift criterion and the whole-column mean
-have no MATLAB counterpart.
 """
 function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      max_iterations::Int=100,

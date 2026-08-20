@@ -12,11 +12,12 @@ Accounts for different physical processes depending on snow state:
 `mp.grain_growth_method` governs the non-dendritic *dry* branch only; the dendritic and wet
 branches, and the sphericity caps, are the same on every setting.
 
-- `:Marbouty` (default, MATLAB's behaviour) — Marbouty (1980) everywhere. Its density factor
-  `H` vanishes at `DENSITY_MARBOUTY_MAX`, so grain radius is frozen throughout the firn
-  column below a few metres.
-- `:Arthern` — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`, `GRAIN_GROWTH_EG`) at every
-  density, dropping the temperature-gradient dependence entirely.
+- `:Marbouty` — Marbouty (1980) everywhere. Its density factor `H` vanishes at
+  `DENSITY_MARBOUTY_MAX`, so grain radius is frozen throughout the firn column below a few
+  metres.
+- `:Arthern` (the default) — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`,
+  `GRAIN_GROWTH_EG`) at every density, dropping the temperature-gradient dependence
+  entirely.
 - `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it. Seasonal snow
   keeps the temperature-gradient physics; firn grains keep growing, which matters because
   `:ArthernB` densification goes as `1/r²`.
@@ -26,11 +27,11 @@ in a real snowpack whichever albedo scheme is selected — and `grain_radius` is
 schemes across three modules ([`calculate_albedo`](@ref),
 [`calculate_shortwave_radiation`](@ref), `:ArthernB`/`:Crocus`/`:CrocusPure` densification in
 [`calculate_density`](@ref), and the grain-radius emissivity methods in
-[`calculate_temperature`](@ref)). MATLAB skips this function unless `albedo_method` is
-`:GardnerSharp` or `:BrunLefebre`, which covers only the first two, so the other
-configurations silently ran with grain size frozen at the initial profile. Enumerating the
-consumers to skip the work costs 11% on the runs that can skip it and re-breaks silently
-whenever a new consumer is added, so the work is simply always done.
+[`calculate_temperature`](@ref)). Gating the call on `albedo_method` (as this once did, and
+as the MATLAB model still does) covers only the first two, leaving the other configurations
+to run with grain size frozen at the initial profile — silently. Enumerating the consumers to
+skip the work costs 11% on the runs that can skip it and re-breaks silently whenever a new
+consumer is added, so the work is simply always done.
 
 Returns `(grain_radius, grain_dendricity, grain_sphericity)`. **All three are updated in
 place**, and the returned `grain_radius` is the same array that was passed in — pass a copy
@@ -38,9 +39,9 @@ if the incoming values are still needed. `grain_radius` used to be returned as a
 it now shares the mutation convention of the other two, which removed the largest allocation
 in the function (see the `gsz` comment below).
 
-This is a scalar-loop implementation that is numerically identical, element by
-element, to the reference vectorized MATLAB translation, but avoids the ~30 mask
-/ gather / broadcast temporaries the vectorized form allocated per call.
+This is a scalar-loop implementation, numerically identical element by element to the
+vectorized form it replaced but without the ~30 mask / gather / broadcast temporaries that
+form allocated per call.
 
 # References
 - Brun, E., David, P., Sudul, M., and Brunot, G. (1992). A numerical model to simulate

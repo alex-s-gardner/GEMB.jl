@@ -25,7 +25,6 @@ the near-basal temperature gradient into rock and produced firn temperatures abo
 melt point — values the model itself never holds. `NaN` says "no column here" instead,
 and Makie renders it as blank.
 
-Differs from MATLAB's `gemb_interp.m`, which extrapolates.
 """
 function gemb_interp(z_center::AbstractMatrix, A::AbstractMatrix, z_target::AbstractVector; interp_method::Symbol=:linear)
     @assert size(z_center) == size(A) "Dimensions of z_center and A must agree."
