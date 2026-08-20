@@ -19,6 +19,7 @@ makedocs(;
         "Model Architecture" => "architecture.md",
         "Model Parameters" => "parameters.md",
         "Physics Notes" => "physics_notes.md",
+        "Thermal Solvers" => "thermal_solvers.md",
         "Variable Reference" => "variables.md",
         "API Reference" => "api.md",
         "Model Comparisons" => [
