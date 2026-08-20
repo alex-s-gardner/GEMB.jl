@@ -3,12 +3,12 @@
 
 Compute new temperature profile accounting for energy absorption and thermal diffusion.
 
-Solves the 1D heat transfer equation using a finite-volume explicit scheme (Patankar, 1980).
-Accounts for:
+Solves the 1D heat transfer equation with a finite-volume scheme (Patankar, 1980), explicit or
+implicit per `mp.thermal_solver`. Accounts for:
 - Surface energy balance (turbulent fluxes, radiative fluxes)
 - Subsurface thermal diffusion
 - Shortwave penetration as a source term
-- Thermal conductivity updates (Sturm, 1997)
+- Thermal conductivity updates (per `mp.thermal_conductivity_method`)
 
 Sub-time steps are determined by Von Neumann stability analysis.
 
@@ -19,10 +19,16 @@ allocates a fresh one per call, which is convenient for a one-off call but alloc
 `gemb` passes a single workspace down for the whole run.
 
 # References
-- Bougamont, M., et al. (2005). (Surface roughness).
-- Foken, T. (2008). Micrometeorology. (Roughness lengths).
-- Patankar, S. V. (1980). Numerical Heat Transfer and Fluid Flow.
-- Sturm, M., et al. (1997). (Thermal conductivity).
+- Bougamont, M., Bamber, J. L., and Greuell, W. (2005). A surface mass balance model for the
+  Greenland Ice Sheet. *J. Geophys. Res.* 110, F04018. (Surface roughness lengths — see
+  [`surface_roughness`](@ref).)
+- Foken, T. (2008). *Micrometeorology*. Springer. (Textbook source for the scalar roughness
+  lengths being a fixed fraction of the momentum roughness, which is what
+  `mp.surface_roughness_effective_ratio` parameterizes.)
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing.
+- Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
+  seasonal snow. *J. Glaciol.* 43, 26-41. (One of the options of
+  [`thermal_conductivity`](@ref), which this function calls; not the default.)
 """
 function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water_surface::Float64,
@@ -71,7 +77,8 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     thf_logHQ = log(cfs.temperature_observation_height / zQ)
     thf_wind_ratio_sq = (thf_wind_speed / cfs.wind_observation_height)^2
 
-    ## THERMAL CONDUCTIVITY (Sturm, 1997)
+    ## THERMAL CONDUCTIVITY (per `mp.thermal_conductivity_method`; see
+    ## `thermal_conductivity` for the five fits and their sources)
     K = thermal_conductivity(temperature, density, mp)
 
     sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
@@ -129,7 +136,8 @@ This is one implementation of the [`AbstractThermalSolver`](@ref) interface; see
 invariants every scheme must honour.
 
 # References
-- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 3-4.
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
+  Ch. 3-4.
 """
 function _thermal_solve!(solver::ExplicitThermal,
     temperature::Vector{Float64}, dz::Vector{Float64},
@@ -593,12 +601,18 @@ stiffest cell. A single 1e-4 m refrozen lens drops the explicit stability limit 
 one thin cell — while the implicit count does not move. That is the reason to keep it available.
 
 # References
-- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4.
-- Versteeg, H. K. & Malalasekera, W. (2007). *An Introduction to Computational Fluid Dynamics*,
-  Ch. 8.
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
+  Ch. 4.
+- Versteeg, H. K. & Malalasekera, W. (2007). *An Introduction to Computational Fluid Dynamics:
+  The Finite Volume Method*, 2nd ed. Pearson, Ch. 8.
 - Thomas, L. H. (1949). *Elliptic Problems in Linear Difference Equations over a Network*.
-- Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces.
-  *J. Appl. Meteorol.* 30, 327-341.
+  Watson Scientific Computing Laboratory, Columbia University.
+- Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces for
+  atmospheric models. *J. Appl. Meteorol.* 30, 327-341.
+- Fourteau, K., Brondex, J., Cancès, C., and Dumont, M. (2026). Numerical strategies for
+  representing Richards' equation and its couplings in snowpack models. *Geosci. Model Dev.*
+  19, 3193-3212. Sect. 3.1.3 (non-global convergence of Newton's method, and the sub-step
+  halving rejected here — see `THERMAL_IMPLICIT_DAMPING_FLOOR`).
 """
 function _thermal_solve!(solver::ImplicitThermal,
     temperature::Vector{Float64}, dz::Vector{Float64},
@@ -926,8 +940,8 @@ form included it.
     this function deliberately does not take.
 
 # References
-- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*, Ch. 4 (positivity of the
-  explicit finite-volume coefficients).
+- Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
+  Ch. 4 (positivity of the explicit finite-volume coefficients).
 """
 function _max_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, K::Vector{Float64}, mp::ModelParameters)

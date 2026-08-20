@@ -39,17 +39,44 @@ translation, but avoid the mask / gather / broadcast temporaries (`mass_init`,
 deviates from the reference — see the comment on that branch.
 
 # References
-- Arthern, R. J., et al. (2010). J. Geophys. Res., 115, F03011.
-- Herron, M. and Langway, C. (1980). J. Glaciol., 25, 373-385.
-- Li, J. and Zwally, H. (2004). Ann. Glaciol., 38, 309-313.
-- Helsen, M. M., et al. (2008). Science, 320, 1626-1629.
-- Ligtenberg, S. R. M., et al. (2011). The Cryosphere, 5, 809-819.
-- Medley, B., et al. (2022). The Cryosphere, 16, 3971-4011.
-- Simonsen, S. B., et al. (2013). J. Glaciol., 59, 545-558.
-- Vionnet, V., et al. (2012). Geosci. Model Dev., 5, 773-791.
-- Lundin, J. M. D., et al. (2017). J. Glaciol., 63, 401-422. (FirnMICE; eqs. A36-A37)
-- Pimienta, P. and Duval, P. (1987). J. Phys. Colloques, 48, C1-243-C1-248.
-- Barnola, J.-M., Pimienta, P., Raynaud, D., and Korotkevich, Y. S. (1991). Tellus, 43B, 83-90.
+- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
+  In situ measurements of Antarctic snow compaction compared with predictions of models.
+  *J. Geophys. Res.* 115, F03011.
+- Herron, M. M. and Langway, C. C. (1980). Firn densification: an empirical model.
+  *J. Glaciol.* 25, 373-385.
+- Li, J. and Zwally, H. J. (2004). Modeling the density variation in the shallow firn layer.
+  *Ann. Glaciol.* 38, 309-313.
+- Helsen, M. M., van den Broeke, M. R., van de Wal, R. S. W., et al. (2008). Elevation changes
+  in Antarctica mainly determined by accumulation variability. *Science* 320, 1626-1629.
+- Ligtenberg, S. R. M., Helsen, M. M., and van den Broeke, M. R. (2011). An improved
+  semi-empirical model for the densification of Antarctic firn. *The Cryosphere* 5, 809-819.
+- Medley, B., Neumann, T. A., Zwally, H. J., Smith, B. E., and Stevens, C. M. (2022).
+  Simulations of firn processes over the Greenland and Antarctic ice sheets: 1980-2021.
+  *The Cryosphere* 16, 3971-4011.
+- Simonsen, S. B., Stenseng, L., Aðalgeirsdóttir, G., et al. (2013). Assessing a multilayered
+  dynamic firn-compaction model for Greenland with ASIRAS radar measurements.
+  *J. Glaciol.* 59, 545-558.
+- Vionnet, V., Brun, E., Morin, S., et al. (2012). The detailed snowpack scheme Crocus and its
+  implementation in SURFEX v7.2. *Geosci. Model Dev.* 5, 773-791.
+- Lundin, J. M. D., Stevens, C. M., Arthern, R., et al. (2017). Firn Model Intercomparison
+  Experiment (FirnMICE). *J. Glaciol.* 63, 401-422. (eqs. A36-A37.)
+- Pimienta, P. and Duval, P. (1987). Rate controlling processes in the creep of polar glacier
+  ice. *J. Phys. Colloques* 48, C1-243-C1-248.
+- Barnola, J.-M., Pimienta, P., Raynaud, D., and Korotkevich, Y. S. (1991). CO2-climate
+  relationship as deduced from the Vostok ice core: a re-examination based on new measurements
+  and on a re-evaluation of the air dating. *Tellus B* 43, 83-90.
+- Goujon, C., Barnola, J.-M., and Ritz, C. (2003). Modeling the densification of polar firn
+  including heat diffusion: application to close-off characteristics and gas isotopic
+  fractionation for Antarctica and Greenland sites. *J. Geophys. Res.* 108, 4792. (eqs.
+  A11-A12, the closed-form pressure term `:Barnola1991` omits — see the note on that branch.)
+- van Kampenhout, L., Lenaerts, J. T. M., Lipscomb, W. H., Sacks, W. J., Lawrence, D. M.,
+  Slater, A. G., and van den Broeke, M. R. (2017). Improving the representation of polar snow
+  and firn in the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
+  (eq. 8, the grain-size treatment the Crocus branch adopts.)
+- Wilkinson, D. S. and Ashby, M. F. (1975). Pressure sintering by power law creep.
+  *Acta Metall.* 23, 1277-1285. (The closed-pore `fs(ρ)` of Barnola's eq. 4.)
+- Doake, C. S. M. and Wolff, E. W. (1985). Flow law for ice in polar ice sheets. *Nature* 314,
+  255-257. (Cited by Barnola et al. for the *n* = 1 creep exponent — see `_barnola_n`.)
 """
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},

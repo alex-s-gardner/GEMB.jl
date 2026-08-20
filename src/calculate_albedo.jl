@@ -17,9 +17,17 @@ fixed 50° effective zenith angle), which is also the only method whose consumer
 other methods return it equal to `albedo`.
 
 # References
-- Gardner, A. S. and Sharp, M. J. (2010). J. Geophys. Res., 115, F01009.
-- Lefebre, F., et al. (2003). J. Geophys. Res., 108, 4231.
-- Greuell, W. and Konzelmann, T. (1994). Global Planet. Change, 9, 91-114.
+- Gardner, A. S. and Sharp, M. J. (2010). A review of snow and ice albedo and the development
+  of a new physically based broadband albedo parameterization. *J. Geophys. Res.* 115, F01009.
+- Lefebre, F., Gallée, H., van Ypersele, J.-P., and Greuell, W. (2003). Modeling of snow and
+  ice melt at ETH Camp (West Greenland): a study of surface albedo. *J. Geophys. Res.* 108,
+  4231.
+- Greuell, W. and Konzelmann, T. (1994). Numerical modelling of the energy balance and the
+  englacial temperature of the Greenland ice sheet. *Global Planet. Change* 9, 91-114.
+- Alexander, P. M., Tedesco, M., Fettweis, X., van de Wal, R. S. W., Smeets, C. J. P. P., and
+  van den Broeke, M. R. (2014). Assessing spatio-temporal variability and trends in modelled
+  and measured Greenland Ice Sheet albedo (2000-2013). *The Cryosphere* 8, 2293-2312. (Source
+  of the `albedo_snow_min` = 0.65 floor used by the bare-ice blend below.)
 """
 function calculate_albedo(dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},

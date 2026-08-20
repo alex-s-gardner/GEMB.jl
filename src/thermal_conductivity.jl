@@ -32,6 +32,25 @@ Sect. 5.1), who attribute part of a multi-model cold bias at Summit and Dye-2 to
 conductivity parameterizations.
 
 Returns vector of thermal conductivities [W m-1 K-1].
+
+# References
+- Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
+  seasonal snow. *J. Glaciol.* 43, 26-41.
+- Calonne, N., Flin, F., Morin, S., Lesaffre, B., Rolland du Roscoat, S., and Geindreau, C.
+  (2011). Numerical and experimental investigations of the effective thermal conductivity of
+  snow. *Geophys. Res. Lett.* 38, L23501.
+- Calonne, N., Milliancourt, L., Burr, A., Philip, A., Martin, C. L., Flin, F., and
+  Geindreau, C. (2019). Thermal conductivity of snow, firn, and porous ice from 3-D
+  image-based computations. *Geophys. Res. Lett.* 46, 13079-13089.
+- Marchenko, S., Cheng, G., Lötstedt, P., Pohjola, V., Pettersson, R., van Pelt, W., and
+  Reijmer, C. (2019). Thermal conductivity of firn at Lomonosovfonna, Svalbard, derived from
+  subsurface temperature measurements. *The Cryosphere* 13, 1843-1859.
+- Yen, Y.-C. (1981). *Review of thermal properties of snow, ice and sea ice*. CRREL Report
+  81-10, U.S. Army Cold Regions Research and Engineering Laboratory. (Ice branch.)
+- Reid, R. C., Prausnitz, J. M., and Sherwood, T. K. (1966). *The Properties of Gases and
+  Liquids*. McGraw-Hill. (Air conductivity, `:Calonne2019Air` only.)
+- Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
+  (RetMIP). *The Cryosphere* 14, 3785-3810. Sects. 5.1 and 7.
 """
 function thermal_conductivity(temperature::AbstractVector, density::AbstractVector, mp::ModelParameters)
     K = Vector{Float64}(undef, length(density))

@@ -40,13 +40,26 @@ Methods:
   overestimate fresh-snow density there, which suppresses the albedo of new snow and speeds
   its burial. The published floor of 50 kg m-3 is retained (it binds below about -10 °C in
   calm air).
-- `:Kaspers`, `:KuipersMunneke`: temperature/accumulation/wind-dependent fits.
+- `:Kaspers` → `(7.36e-2 + 1.06e-3·T + 6.69e-2·P/1000 + 4.77e-3·U)·1000`: the Antarctic
+  fit of Kaspers et al. (2004), the only method here depending on all three climatological
+  means. Temperature is capped at the melting point, as published.
+- `:KuipersMunneke` → `481.0 + 4.834·(T - CtoK)`: the Antarctic fit used by Kuipers Munneke
+  et al. (2015). Both take *climatological* means rather than instantaneous forcing.
 
 # References
 - Pahaut, E. (1975). *La métamorphose des cristaux de neige (Snow crystal metamorphosis)*.
   Monographies de la Météorologie Nationale 96, Météo-France.
-- Lafaysse, M., et al. (2026). The SURFEX/Crocus v3.0.2 snowpack model.
-  *Geosci. Model Dev.* 19, 6273-6320.
+- Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
+  *Geosci. Model Dev.* 19, 6273-6334. https://doi.org/10.5194/gmd-19-6273-2026
+- Fausto, R. S., et al. (2018). A snow density dataset for improving surface boundary
+  conditions in Greenland ice sheet firn modeling. *Front. Earth Sci.* 6, 51.
+- Vionnet, V., et al. (2012). The detailed snowpack scheme Crocus and its implementation in
+  SURFEX v7.2. *Geosci. Model Dev.* 5, 773-791.
+- Kaspers, K. A., et al. (2004). Model calculations of the age of firn air across the
+  Antarctic continent. *Atmos. Chem. Phys.* 4, 1365-1380. (`:Kaspers`)
+- Kuipers Munneke, P., et al. (2015). Elevation change of the Greenland Ice Sheet due to
+  surface mass balance and firn processes, 1960-2014. *The Cryosphere* 9, 2009-2025.
+  (`:KuipersMunneke`)
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     precip_mean::Real, wind_speed_mean::Real, T_air::Real=T_air_mean,

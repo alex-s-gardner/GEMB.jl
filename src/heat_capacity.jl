@@ -22,6 +22,10 @@ pore water contribute nothing to this term.
 
 For anything that accumulates or balances joules, use [`specific_enthalpy`](@ref) — not
 `T * heat_capacity(mp, T)`.
+
+# References
+- Cuffey, K. M. and Paterson, W. S. B. (2010). *The Physics of Glaciers*, 4th ed.
+  Butterworth-Heinemann. eq. 9.1.
 """
 @inline function heat_capacity(mp::ModelParameters, T::Real)
     if mp.heat_capacity_method === :constant

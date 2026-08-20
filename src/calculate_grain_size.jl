@@ -43,9 +43,16 @@ element, to the reference vectorized MATLAB translation, but avoids the ~30 mask
 / gather / broadcast temporaries the vectorized form allocated per call.
 
 # References
-- Brun, E., et al. (1992). J. Glaciol., 38, 13-22.
-- Marbouty, D. (1980). J. Glaciol., 26, 303-312.
-- Brun, E. (1989). Ann. Glaciol., 13, 22-26.
+- Brun, E., David, P., Sudul, M., and Brunot, G. (1992). A numerical model to simulate
+  snow-cover stratigraphy for operational avalanche forecasting. *J. Glaciol.* 38, 13-22.
+- Marbouty, D. (1980). An experimental study of temperature-gradient metamorphism.
+  *J. Glaciol.* 26, 303-312.
+- Brun, E. (1989). Investigation on wet-snow metamorphism in respect of liquid-water content.
+  *Ann. Glaciol.* 13, 22-26.
+- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
+  In situ measurements of Antarctic snow compaction compared with predictions of models.
+  *J. Geophys. Res.* 115, F03011. (`grain_growth_method = :Arthern`, and the Arthern half
+  of `:hybrid`.)
 """
 function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
@@ -263,7 +270,7 @@ end
     _grain_lwc(water, density, dz)
 
 Liquid-water content as a mass fraction [%] for a single cell, capped at 9%
-(Brun, 1980).
+(Brun, 1989 — the upper end of the range his wet-snow growth law was fitted over).
 """
 @inline function _grain_lwc(water::Float64, density::Float64, dz::Float64)
     lwc = water / (density * dz) * 100

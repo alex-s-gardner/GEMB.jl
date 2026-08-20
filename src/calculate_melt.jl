@@ -28,6 +28,15 @@ The gate is the *constant* `DENSITY_PORE_CLOSEOFF`, deliberately not the tunable
 capillary retention ceases for want of connected pore space, while `impermeable_density` is
 where a lens stops conducting flow at the scale the model represents. Tying them together
 would make lowering the flow criterion silently change retention too.
+
+# References
+- Coléou, C. and Lesaffre, B. (1998). Irreducible water saturation in snow: experimental
+  results in a cold laboratory. *Ann. Glaciol.* 26, 64-68. (eq. 3.)
+- Langen, P. L., et al. (2017). Liquid water flow and retention on the Greenland ice sheet in
+  the regional climate model HIRHAM5. *Front. Earth Sci.* 4, 110. (eq. 4, the form of
+  Coléou and Lesaffre's eq. 3 implemented here.)
+- Colbeck, S. C. (1974). Water flow through snow overlying an impermeable boundary.
+  *Water Resour. Res.* 10, 119-123. (The `:constant` saturation.)
 """
 @inline function irreducible_saturation(mp::ModelParameters, density::Float64)
     if mp.water_irreducible_method === :constant
@@ -76,6 +85,9 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
   19, 3193–3212. Sect. 2.3.
 - Bartelt, P. and Lehning, M. (2002). A physical SNOWPACK model for the Swiss avalanche
   warning: Part I. *Cold Reg. Sci. Technol.*, 35, 123–145.
+- D'Amboise, C. J. L., Müller, K., Oxarango, L., Morin, S., and Schuler, T. V. (2017).
+  Implementation of a physically based water percolation routine in the Crocus/SURFEX
+  (V7.3) snowpack model. *Geosci. Model Dev.* 10, 3547-3566. (The `:thickness` treatment.)
 """
 @inline function remove_melt!(mp::ModelParameters, M::Vector{Float64},
     density::Vector{Float64}, dz::Vector{Float64}, i::Int, melt_i::Float64)
@@ -188,6 +200,22 @@ than the loop index. The companion slab diagnostics are taken in
 [`gemb_core`](@ref) via [`ice_slab_diagnostics`](@ref), after the grid controllers run.
 
 Arrays may shrink (cells deleted when mass=0).
+
+# References
+- Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
+  (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
+  sheet. *The Cryosphere* 14, 3785-3810. Sects. 5.2 and 5.4 (the preferential-flow comparison
+  and the aquifer site excluded from the retention evaluation).
+- Coléou, C. and Lesaffre, B. (1998). Irreducible water saturation in snow: experimental
+  results in a cold laboratory. *Ann. Glaciol.* 26, 64-68.
+- Colbeck, S. C. (1974). Water flow through snow overlying an impermeable boundary.
+  *Water Resour. Res.* 10, 119-123.
+- Gregory, S. A., Albert, M. R., and Baker, I. (2014). Impact of physical properties and
+  accumulation rate on pore close-off in layered firn. *The Cryosphere* 8, 91-105. (The
+  810 kg m-3 end of the `impermeable_density` range.)
+- Fourteau, K., Brondex, J., Cancès, C., and Dumont, M. (2026). Numerical strategies for
+  representing Richards' equation and its couplings in snowpack models. *Geosci. Model Dev.*
+  19, 3193-3212.
 """
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
