@@ -5,12 +5,19 @@
 # `test_blowing_snow.jl`). What is tested here is the contract shared by both methods and the
 # `:representative` path in full.
 #
-# The motivating measurement, from `bench/calibrate_initial_guess.jl` over a 21-site fleet: melt
-# integrated over an *averaged* one-year cycle is identically 0.0 at every site, including sites
-# melting up to 384 kg m-2 yr-1 over their real record. Melt is rectified — zero until the skin
-# reaches the melt point — so averaging years slot-by-slot cancels the warm excursions that carry
-# it. `:representative` exists for that, and the tests below pin the properties that make it a
-# real alternative: the forcing it returns is unmodified real data, and its selection is on melt.
+# The motivating measurement, from `bench/greenland_spinup_forcing.jl` over 12 real ERA5-Land
+# Greenland sites: melt integrated over an *averaged* one-year cycle has a median of 12% of the
+# record's, with 5 of 10 melting sites below 10%. Melt is rectified — zero until the skin reaches
+# the melt point — so averaging years slot-by-slot cancels the warm excursions that carry it at
+# every site high enough to melt from the tail of the distribution rather than from the mean.
+#
+# (An earlier synthetic fleet suggested 0% universally. That was an artifact of sites sharing one
+# parent seasonal cycle; real forcing keeps a coherent cycle that survives averaging at low
+# elevations. The tests below assert structure and invariants, not either figure.)
+#
+# `:representative` exists for that, and the tests here pin the properties that make it a real
+# alternative: the forcing it returns is unmodified real data, its selection responds to the
+# scoring variable, and the accumulation guard cannot make its own trigger worse.
 
 # `Statistics` via GEMB rather than as a direct dependency, matching
 # `test_synthetic_regression.jl` — `runtests.jl` does not import it into `Main`.
@@ -271,4 +278,88 @@ end
     # `verbose=false` silences the reporting entirely, including the guard.
     @test_logs (forcing_climatology(cold; method=:representative, model_parameters=mp,
                                     n_years=1, verbose=false))
+end
+
+@testset "forcing_climatology: rank_by options" begin
+    cf = _multiyear_forcing(years=1990:1994, warm_years=(1992,))
+    mp = GEMB.ModelParameters()
+
+    # All three scoring variables are accepted and return a real block of the requested length.
+    for rank_by in (:model, :smb, :estimate)
+        cycle = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                    n_years=2, rank_by=rank_by, verbose=false)
+        ys = DimensionalData.metadata(cycle)[:climatology_representative_year]
+        @test length(ys) == 2
+        @test all(y -> y in 1990:1994, ys)
+        @test length(DimensionalData.dims(cycle, Ti)) == 2 * 365
+    end
+
+    @test_throws ArgumentError forcing_climatology(cf; method=:representative,
+        model_parameters=mp, rank_by=:smbb)
+
+    # `:smb` ranks on surface mass balance, which is a genuinely different quantity from melt: it
+    # carries accumulation too. `_year_smb` must therefore agree with the model's own SMB
+    # diagnostic rather than being a melt proxy — this is what makes the option meaningful.
+    profile = initialize_profile(mp, cf)
+    mp_last = GEMB.ModelParameters(output_frequency=:last)
+    cy = GEMB._complete_years(cf)
+    year_1992 = GEMB._year_slice(cf, cy, 1992)
+    smb = GEMB._year_smb(profile, year_1992, mp_last)
+    out = gemb(profile, year_1992, mp_last)
+    years = length(DimensionalData.dims(year_1992, Ti)) * year_1992.time_step /
+            GEMB.SECONDS_PER_YEAR
+    @test smb ≈ GEMB._smb_rate(out, years, mp_last.density_ice)
+    # SMB is a signed rate in m of ice per year, not a melt total, so it must be finite and
+    # (at this accumulating site) positive — a sign error would make the ranking meaningless.
+    @test isfinite(smb)
+end
+
+@testset "forcing_climatology: accumulation fallback guard" begin
+    # The guard bounds the failure mode measured on real forcing: melt-ranking optimizes melt and
+    # leaves accumulation to chance, missing the record's accumulation by 30.2% at one Greenland
+    # site. Here the assertions are structural — that the guard is opt-out, that it never returns
+    # a worse accumulation match than it was given, and that it cannot fire when its own trigger
+    # cannot be exceeded — since a synthetic fixture cannot reproduce a specific real bias.
+    cf = _multiyear_forcing(years=1990:1994, warm_years=(1992,))
+    mp = GEMB.ModelParameters()
+
+    acc_record = GEMB.initialize_climate_summary(cf, mp).accumulation
+    acc_err(cycle) = abs(GEMB.initialize_climate_summary(cycle, mp).accumulation /
+                         acc_record - 1)
+
+    unguarded = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                    n_years=2, fallback_accumulation_tolerance=nothing,
+                                    verbose=false)
+    guarded = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                  n_years=2, fallback_accumulation_tolerance=0.0,
+                                  verbose=false)
+
+    # A zero tolerance asks the guard to consider every block, and it accepts the SMB re-selection
+    # only when that improves the accumulation match. So the guarded result can never be worse
+    # than the unguarded one on the quantity the guard is about. This is the property that makes
+    # the guard safe to have on by default.
+    @test acc_err(guarded) <= acc_err(unguarded) + 1e-12
+
+    # `nothing` disables it: the result is then exactly the melt-ranked block.
+    @test DimensionalData.metadata(unguarded)[:climatology_representative_year] ==
+          DimensionalData.metadata(
+              forcing_climatology(cf; method=:representative, model_parameters=mp, n_years=2,
+                                  fallback_accumulation_tolerance=nothing,
+                                  verbose=false))[:climatology_representative_year]
+
+    # An unreachable tolerance can never fire, so it must reproduce the unguarded block exactly.
+    huge = forcing_climatology(cf; method=:representative, model_parameters=mp, n_years=2,
+                               fallback_accumulation_tolerance=1e6, verbose=false)
+    @test DimensionalData.metadata(huge)[:climatology_representative_year] ==
+          DimensionalData.metadata(unguarded)[:climatology_representative_year]
+
+    # The guard is inert under `rank_by=:smb`, which is already what it would fall back to.
+    smb_guarded = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                      n_years=2, rank_by=:smb,
+                                      fallback_accumulation_tolerance=0.0, verbose=false)
+    smb_plain = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                    n_years=2, rank_by=:smb,
+                                    fallback_accumulation_tolerance=nothing, verbose=false)
+    @test DimensionalData.metadata(smb_guarded)[:climatology_representative_year] ==
+          DimensionalData.metadata(smb_plain)[:climatology_representative_year]
 end

@@ -35,55 +35,62 @@ and the peaks that carried the melt stop crossing the threshold. This is Jensen'
 a convex, one-sided response: the mean of the melt is not the melt of the mean, and for a
 threshold process the loss is *total*, not a percentage.
 
-Measured over a 21-site synthetic fleet (`bench/calibrate_initial_guess.jl`), melt on the cycle
-as a fraction of melt over the real record, summed across the 18 sites that melt:
+Measured on **real ERA5-Land forcing** at 12 glacierized Greenland sites, 2000-2019
+(`bench/greenland_spinup_forcing.jl`), as melt on the cycle over melt on the full record. Report
+the per-site distribution, not the aggregate: the aggregate is dominated by the highest-melt
+sites and hides the ones where averaging fails completely.
 
-| method | melt recovered |
-|---|---|
-| `:average` | **0%** — identically 0.0 at *every* site, including one melting 384 kg m-2 yr-1 |
-| `:representative`, `n_years=1` | 99% |
-| `:representative`, `n_years=3` | 116% |
-| `:representative`, `n_years=5` | 100% |
+| method | melt retained, median | sites below 10% | accumulation error, median |
+|---|---|---|---|
+| `:average` | **12%** | **5 of 10** | 6.2% |
+| `:representative`, `n_years=1` | 104% | 0 of 10 | 18.5% |
+| `:representative`, `n_years=3` | 102% | 1 of 10 | 6.9% |
 
-A melting site spun up under `:average` therefore equilibrates as a melt-free site, with its
-firn air content and refreeze terms wrong by construction — which matters most for work reading
-those terms directly, such as altimetry.
+Averaging's failure tracks **elevation and absolute melt magnitude, not the melt/accumulation
+ratio**: retention is 0% at Saddle (2456 m, 23.5 kg m-2 yr-1), 0% at DYE-2 (2094 m, 81.6), 24% at
+KAN-M (1300 m, 857.5) and 86-115% at the lowest three sites (271-577 m). High sites melt from the
+*tail* of the distribution, which averaging removes; low sites melt from the mean, which it
+preserves. A high melting site spun up under `:average` therefore equilibrates as a melt-free
+site, with its firn air content and refreeze terms wrong by construction — which matters most for
+work reading those terms directly, such as altimetry.
 
-# Which method to use: it depends on the regime
+!!! note "An earlier version of this docstring claimed `:average` recovers 0% of melt"
+    That was measured on a synthetic fleet derived from a single parent site, whose one seasonal
+    cycle plus noise averages away almost completely. Real forcing has a coherent seasonal cycle
+    that survives averaging at low elevations, so the true figure is a median of 12% and not zero.
+    The synthetic 21-site "critical band" of melt/accumulation 0.3-1.0 did not reproduce either:
+    only one real site landed in it, and no real site lost its firn there.
 
-Classifying the same fleet by the ratio of melt to accumulation gives three regimes, and they
-want different things. Counts are sites whose equilibrated firn air content fell below 1 m:
+# Which method to use
 
-| regime | melt/accumulation | n | `:average` | `:representative` |
-|---|---|---|---|---|
-| dry / cold | ~0 | 3 | fine | fine (agrees to ~10%) |
-| percolation | 0.3 or below | 14 | fine | fine (agrees to ~10-20%) |
-| percolation | 0.3 to 1.0 | 2 | keeps firn | **goes to ice** |
-| ablation | above 1.0 | 2 | keeps firn (wrongly) | goes to ice (correctly) |
-
-So:
-
-- **Dry and cold: use `:average`.** With no melt the column responds through densification and
-  heat diffusion, both smooth in temperature, and averaging costs essentially nothing. This is
-  why it remains the default. Not *exactly* linear even there — the densification rate carries a
-  convex Arrhenius factor, and a 12 K shift moves it 3.9x — but the error is a fraction of the
-  term rather than all of it.
+- **Negligible melt: use `:average`.** It preserves accumulation essentially exactly (0.1-0.5% at
+  the three dry Greenland sites, against 22% and 15% errors for a melt-ranked block there), and it
+  integrates less than half the model-years. This is why it remains the default. Averaging is not
+  *exactly* neutral even here — the densification rate carries a convex Arrhenius factor — but the
+  measured temperature offset of both methods was 0.00 K at every site, so that channel is inert.
+- **Significant melt: use `:representative`.** Melt is recovered to a median 102% (`n_years=3`)
+  against 12% for averaging.
 - **Ablation (melt above accumulation): use `:representative`.** The column equilibrates to bare
-  ice, which is correct: accumulation resets each year and what matters is the mean melt driving
-  latent-heat warming. `:representative` reproduces that melt; `:average` sets it to zero and
-  returns a firn column the site does not have.
-- **Melt approaching accumulation: neither is trustworthy — compare them.** This is the genuinely
-  unresolved band. `:average` deletes the melt; `:representative` can drive the column to ice
-  because the record's *mean* ratio being below 1 does not stop individual years exceeding it
-  (the two sites that lost their firn had record ratios of 0.83 and 0.93). See
-  [`_warn_cycle_melt_ratio`](@ref), which warns on the constructed cycle's own ratio.
+  ice, which is correct there — accumulation resets each year and what matters is the mean melt
+  driving latent-heat warming, which `:average` can set to zero.
 
-A longer block does **not** fix that band: 3- and 5-year blocks lose the firn at those sites too
-(FAC 0.12-0.75 m), so interannual alternation within a short cycle is not enough to sustain a
-column whose mean melt is near its accumulation.
+A regime-specific composite (average / SMB-ranked / melt-ranked by zone) was measured and is
+**worse than simply using `n_years=3` everywhere** (median joint error 7.9% against 4.8%), so it
+is not offered.
 
-These boundaries come from 21 synthetic sites derived from one parent site, with only 2 sites in
-the critical band and 2 in ablation. Treat 0.3 and 1.0 as directions, not as calibrated numbers.
+# What this does not tell you
+
+Every number above is **forcing fidelity** — how well the cycle reproduces the record's melt and
+accumulation. The equilibrated-column comparison that would close the loop was attempted and
+abandoned: under strict convergence criteria 6 of these 12 sites do not converge within 800
+cycles, and a multi-variant sweep ran for over an hour and 4000+ model-years without finishing
+(see `bench/greenland_block_length.jl`). So it is not established that better forcing fidelity
+translates proportionally into a better spun-up column.
+
+`:representative` also costs about **2.2x the model-years** of `:average` (13116 against 6096 over
+these 12 sites). Cycle counts are not comparable between the methods — `:average` integrates one
+year per cycle and `:representative` integrates `n_years`, so a longer cycle lowers the count
+without lowering the work.
 
 # Keyword arguments
 
@@ -91,39 +98,61 @@ the critical band and 2 in ablation. Treat 0.3 and 1.0 as directions, not as cal
 - `model_parameters`: a [`ModelParameters`](@ref). **Required** for `:representative`, which
   needs the physics to rank candidate years; ignored by `:average`.
 - `n_years`: for `:representative`, the block length (default 3). Clamped to the number of
-  complete years available, with a warning. The measured differences between 1, 3 and 5 are
-  modest and not monotonic (see the melt table above), so this is not a strong lever; 3 is a
-  compromise between carrying some interannual variability and keeping the cycle short enough
-  that `gemb_spinup`'s per-cycle criteria are judged often. **Cycling the whole record is
-  deliberately not offered**: it would give one convergence comparison per record length, so a
+  complete years available, with a warning. 3 is the measured optimum on the Greenland sites: a
+  single year matches melt marginally better (median 104% against 102%) but is a noisy sample of
+  accumulation (median error 18.5% against 6.9%, worst 37.8%), and on a joint melt-and-accumulation
+  score 3 years beat both 1 and 5 (median 4.8% against 10.9% and 5.9%). **Cycling the whole record
+  is deliberately not offered**: it would give one convergence comparison per record length, so a
   10-cycle drift window would span 10 records.
 - `statistic`: for `:representative`, which year to call representative — `:mean` (default) or
-  `:median` of the candidate years' melt. `:mean` is the default because the column equilibrates
-  to a long-run mean and the annual melt distribution is right-skewed (measured at one fleet
-  site: mean 150.8 against median 127.3 kg m-2 yr-1), so selecting on the median biases the
-  spinup low.
-- `rank_by`: for `:representative`, how each candidate year's melt is measured — `:model`
-  (default) runs one year of [`gemb`](@ref) per candidate, `:estimate` uses
-  [`initialize_climate_summary`](@ref)'s surface-energy-balance estimate. `:model` is the default
-  because it is both more accurate and cheap: 32 candidate years cost 2.4 s (0.074 s/yr), against
-  the hundreds of cycles the spinup it feeds will run. `:estimate` avoids needing a starting
-  profile and is retained for that case, but its melt is biased ~2.6x high, and while a uniform
-  bias cancels when *ordering* years it does not cancel when picking the year nearest a target
-  value.
-- `profile`: for `:representative` with `rank_by = :model`, the column to run the candidate
-  years on. Defaults to [`initialize_profile`](@ref)`(model_parameters, cf)`. Only the *ranking*
-  depends on it, never the forcing returned.
+  `:median` of the candidate years' score. `:mean` is the default because the column equilibrates
+  to a long-run mean and the annual melt distribution is right-skewed (measured at one synthetic
+  site: mean 150.8 against median 127.3 kg m-2 yr-1), so selecting on the median biases the spinup
+  low. Measured on the Greenland sites, `:median` was worse than `:mean` under SMB ranking
+  (median joint error 6.1% against 4.7%).
+- `rank_by`: for `:representative`, what each candidate year is scored on.
+  - `:model` (default) — annual melt, integrated by running one year of [`gemb`](@ref) per
+    candidate. The default because melt is the term averaging destroys, and because it is cheap:
+    32 candidate years cost 2.4 s (0.074 s/yr) against the hundreds of cycles the spinup it feeds
+    will run.
+  - `:smb` — annual surface mass balance instead, via the same `_smb_rate` [`gemb_spinup`](@ref)
+    reports. Combines accumulation and melt with the weighting the mass balance gives them, so it
+    matches accumulation far better (median 2.5% against 6.9% for `:model` over 12 Greenland
+    sites) at some cost in melt fidelity (median 95% against 102%). The cost concentrates where
+    accumulation dominates SMB: at a percolation site with 485 kg m-2 yr-1 of accumulation against
+    55 of melt, an SMB-matched year says little about melt and recovered only 33% of it. Prefer it
+    when accumulation and firn air content matter more than melt.
+  - `:estimate` — the surface-energy-balance melt from [`initialize_climate_summary`](@ref), which
+    needs no model integration and so is much the cheapest. Its melt is biased ~2.6x high, and
+    while a uniform bias cancels when *ordering* years, it does not cancel when picking the year
+    nearest a target value, so prefer `:model` unless the ranking cost matters.
+- `fallback_accumulation_tolerance`: guard on the selected block's accumulation, as a fraction
+  (default `0.05`); `nothing` disables it. Melt-ranking optimizes melt and leaves accumulation to
+  chance — measured, that chance is sometimes bad, missing the record's accumulation by 30.2% at
+  QAS-L and 18.0% at KAN-U. When the block exceeds this tolerance the selection is re-run with
+  `rank_by = :smb`, and the result is kept only if it actually improves the accumulation match.
+  Ignored under `rank_by = :smb`, which is already the fallback. Measured at the default tolerance
+  over 9 melting Greenland sites: median joint (melt, accumulation) error 4.0% -> 3.5%, firing at
+  4 sites — a small average gain whose value is bounding the 30% tail rather than shifting the
+  median.
+- `profile`: for `:representative`, the column the candidate years are integrated on. Defaults to
+  [`initialize_profile`](@ref)`(model_parameters, cf)`. Only the *ranking* depends on it, never the
+  forcing returned. Built even under `rank_by = :estimate`, which does not use it, because the
+  accumulation fallback may re-select on `:smb`, which does.
 - `verbose`: for `:representative`, report the selected year and how typical it is (default
   `true`). See the caveat below.
 
-# The single-year caveat
+# The short-block caveat
 
-A representative year is one weather sequence, repeated for the whole spinup, and selecting it on
-melt cannot make it typical in every other term. `verbose=true` reports the chosen year's melt,
-accumulation and mean temperature as percentiles of the candidates, and warns when it is an
-outlier in accumulation or temperature — a real warning, which fires on real records (at one
-fleet site the melt-representative year was also the warmest of 32). The averaged year is equally
-a single sequence, with the difference that it is not one that ever occurred.
+A block is a handful of real weather sequences repeated for the whole spinup, and scoring it on
+one variable cannot make it typical in every other. The measured failure mode is **accumulation**:
+melt-ranking left the block 30.2% off the record's accumulation at QAS-L and 18.0% at KAN-U, which
+`fallback_accumulation_tolerance` exists to bound. Temperature, by contrast, was *not* a problem —
+the mean offset of both methods was 0.00 K at all 12 Greenland sites.
+
+`verbose=true` reports the chosen block, its score against the target, and its accumulation and
+temperature offsets, and warns when either is large. The averaged year is equally a single
+sequence, with the difference that it is not one that ever occurred.
 
 # Provenance
 
@@ -206,6 +235,7 @@ function forcing_climatology(cf::ClimateForcing; window=nothing,
                              n_years::Integer=3,
                              statistic::Symbol=:mean,
                              rank_by::Symbol=:model,
+                             fallback_accumulation_tolerance=0.05,
                              profile=nothing,
                              verbose::Bool=true)
 
@@ -215,6 +245,7 @@ function forcing_climatology(cf::ClimateForcing; window=nothing,
             "ranking candidate years needs the physics that turns forcing into melt."))
         return _representative_block(cf, model_parameters; n_years=n_years, window=window,
                                      statistic=statistic, rank_by=rank_by,
+                                     fallback_accumulation_tolerance=fallback_accumulation_tolerance,
                                      profile=profile, verbose=verbose)
     elseif method !== :average
         throw(ArgumentError(
@@ -297,9 +328,11 @@ length tried. Where mean melt approaches mean accumulation, a short cycle of rea
 sustain the column, and lengthening it within the range that keeps convergence judgeable does not
 help. See [`_warn_cycle_melt_ratio`](@ref).
 
-So the block length is a mild knob, not a fix: 1, 3 and 5 years recovered 99%, 116% and 100% of
-record melt respectively — differences that are not monotonic and are small against the 0% that
-`:average` recovers.
+What a block **does** buy, measured on real Greenland forcing, is accumulation fidelity. A single
+year matches melt marginally better (median 104% against 102%) but samples accumulation badly
+(median error 18.5%, worst 37.8%, against 6.9% and 30.2% for three years). On a joint
+melt-and-accumulation score, 3 years beat both 1 and 5 (median 4.8% against 10.9% and 5.9%). That
+is the case for the default, and it is about accumulation rather than about sustaining the column.
 
 **Consecutive** years, not the `n` individually-closest ones: a hand-assembled set would break
 the transition between successive years — the carry-over of a warm summer into the following
@@ -316,12 +349,13 @@ in [`forcing_climatology`](@ref)).
 function _representative_block(cf::ClimateForcing, mp::ModelParameters;
                                n_years::Integer=3, window=nothing,
                                statistic::Symbol=:mean, rank_by::Symbol=:model,
+                               fallback_accumulation_tolerance=0.05,
                                profile=nothing, verbose::Bool=true)
 
     statistic in (:mean, :median) ||
         throw(ArgumentError("statistic must be :mean or :median, got $(repr(statistic))"))
-    rank_by in (:model, :estimate) ||
-        throw(ArgumentError("rank_by must be :model or :estimate, got $(repr(rank_by))"))
+    rank_by in (:smb, :model, :estimate) ||
+        throw(ArgumentError("rank_by must be :smb, :model or :estimate, got $(repr(rank_by))"))
     n_years >= 1 ||
         throw(ArgumentError("n_years must be at least 1, got $n_years"))
 
@@ -336,36 +370,102 @@ function _representative_block(cf::ClimateForcing, mp::ModelParameters;
               "using a $(n_block)-year block instead of the requested $n_years."
     end
 
-    # Annual melt per candidate year. `:model` integrates each year on a real column, which is
-    # the quantity being matched; `:estimate` uses the summary's surface-energy-balance melt,
-    # which needs no column but is biased ~2.6x high.
-    melts = if rank_by === :model
-        col = profile === nothing ? initialize_profile(mp, cf) : profile
+    # The ranking column. Built unless the caller supplied one, and needed even under
+    # `rank_by = :estimate` — which does not use it itself — because the accumulation guard below
+    # may re-select on `:smb`, which does. Building it is cheap next to the spinup this feeds.
+    col = profile === nothing ? initialize_profile(mp, cf) : profile
+    sel = _select_block(cf, cy, years, n_block, mp, statistic, rank_by, col)
+
+    # Accumulation guard. Melt-ranking optimizes melt and leaves accumulation to chance, and on
+    # real Greenland forcing that chance is sometimes bad: the melt-ranked 3-year block missed
+    # the record's accumulation by 30.2% at QAS-L and 18.0% at KAN-U. Since accumulation drives
+    # the firn column directly, a block that far off is a poor cycle whatever its melt fidelity.
+    #
+    # The re-selection ranks on SMB instead, which matched accumulation to ~2.5% median across
+    # the same sites because SMB carries accumulation with the weighting the mass balance gives
+    # it. Measured effect of the guard at a 5% tolerance over 9 melting sites: median joint
+    # (melt, accumulation) error 4.0% -> 3.5%, median accumulation error 4.1% -> 3.6%, firing at
+    # 4 sites. A small average gain whose real value is bounding the 30% tail.
+    #
+    # **The trigger is the accumulation error itself, not the block's SMB bias.** SMB bias was
+    # tried first and is the wrong signal: SMB = accumulation - melt, so at an ablation site it is
+    # dominated by melt and says little about accumulation. Measured, the two are effectively
+    # uncorrelated — SwissCamp had the largest SMB bias of any site (-52.2%) with a 0.7%
+    # accumulation error, while QAS-L had the worst accumulation error (30.2%) at -16.3% SMB bias.
+    # An SMB-triggered guard fired on the wrong sites and made the median *worse* at every
+    # threshold tried.
+    fallback_used = false
+    if fallback_accumulation_tolerance !== nothing && rank_by !== :smb
+        tol = Float64(fallback_accumulation_tolerance)
+        acc_record = initialize_climate_summary(cf, mp).accumulation
+        if acc_record > 0
+            acc_block = initialize_climate_summary(sel.cycle, mp).accumulation
+            rel = abs(acc_block / acc_record - 1)
+            if rel > tol
+                alt = _select_block(cf, cy, years, n_block, mp, statistic, :smb, col)
+                acc_alt = initialize_climate_summary(alt.cycle, mp).accumulation
+                # Only accept the fallback if it actually improves the quantity that triggered
+                # it. SMB ranking is better on accumulation *on average*, not at every site, and
+                # a guard that can make its own trigger worse is not a guard.
+                if abs(acc_alt / acc_record - 1) < rel
+                    verbose && @info "forcing_climatology: melt-ranked block accumulation is " *
+                        "$(round(100 * rel, digits=1))% off the record (tolerance " *
+                        "$(round(100 * tol, digits=1))%); re-selected on SMB" *
+                        " (now $(round(100 * abs(acc_alt / acc_record - 1), digits=1))%)." *
+                        " Set `fallback_accumulation_tolerance=nothing` to disable."
+                    sel = alt
+                    fallback_used = true
+                end
+            end
+        end
+    end
+
+    if verbose
+        _report_representative_block(years, sel.scores, sel.block_years, sel.block_score,
+                                     sel.target, statistic,
+                                     fallback_used ? :smb : rank_by, cf, cy, mp)
+        _warn_cycle_melt_ratio(sel.cycle, sel.block_years, sel.block_score, sel.scores, mp)
+    end
+
+    return _stamp_representative(sel.cycle, sel.block_years, cy.steps_per_year, window)
+end
+
+"""
+    _select_block(cf, cy, years, n_block, mp, statistic, rank_by, col) -> NamedTuple
+
+Score every candidate year, then return the `n_block`-long consecutive run whose mean score is
+closest to the `statistic` of the per-year scores.
+
+Factored out of [`_representative_block`](@ref) because the accumulation guard re-runs the whole
+selection under a different `rank_by`, and a guard that duplicated the scoring logic could drift
+from it. Returns the chosen `cycle`, its `block_years`, the per-year `scores`, the chosen block's
+own mean `block_score`, and the `target` it was matched against.
+"""
+function _select_block(cf::ClimateForcing, cy, years, n_block::Int, mp::ModelParameters,
+                       statistic::Symbol, rank_by::Symbol, col)
+    # The ranking score per candidate year. `:smb` and `:model` integrate each year on a real
+    # column; `:estimate` reads the summary's surface-energy-balance melt, which needs no column
+    # but is biased ~2.6x high.
+    scores = if rank_by === :estimate
+        [initialize_climate_summary(_year_slice(cf, cy, y), mp).melt for y in years]
+    else
         mp_last = ModelParameters(;
             (f => getfield(mp, f) for f in fieldnames(ModelParameters)
              if f != :output_frequency)..., output_frequency=:last)
-        [_year_melt(col, _year_slice(cf, cy, y), mp_last) for y in years]
-    else
-        [initialize_climate_summary(_year_slice(cf, cy, y), mp).melt for y in years]
+        f = rank_by === :smb ? _year_smb : _year_melt
+        [f(col, _year_slice(cf, cy, y), mp_last) for y in years]
     end
 
     # Target is the statistic over every candidate *year*, so it describes the record rather
-    # than the blocks; each block is then scored by its own mean melt against it.
-    target = statistic === :mean ? Statistics.mean(melts) : Statistics.median(melts)
+    # than the blocks; each block is then scored by its own mean against it.
+    target = statistic === :mean ? Statistics.mean(scores) : Statistics.median(scores)
     n_windows = length(years) - n_block + 1
-    block_melts = [Statistics.mean(@view melts[i:(i + n_block - 1)]) for i in 1:n_windows]
-    start = argmin(abs.(block_melts .- target))
+    block_scores = [Statistics.mean(@view scores[i:(i + n_block - 1)]) for i in 1:n_windows]
+    start = argmin(abs.(block_scores .- target))
     block_years = years[start:(start + n_block - 1)]
 
-    cycle = _years_slice(cf, cy, block_years)
-
-    if verbose
-        _report_representative_block(years, melts, block_years, block_melts[start],
-                                     target, statistic, rank_by, cf, cy, mp)
-        _warn_cycle_melt_ratio(cycle, block_years, block_melts[start], melts, mp)
-    end
-
-    return _stamp_representative(cycle, block_years, cy.steps_per_year, window)
+    return (cycle = _years_slice(cf, cy, block_years), block_years = block_years,
+            scores = scores, block_score = block_scores[start], target = target)
 end
 
 """
@@ -431,6 +531,27 @@ function _year_melt(col, year_forcing::ClimateForcing, mp_last::ModelParameters)
     out = gemb(col, year_forcing, mp_last; thermal_workspace=ThermalWorkspace())
     years = length(dims(year_forcing, Ti)) * year_forcing.time_step / SECONDS_PER_YEAR
     return years > 0 ? sum(parent(out[:melt])) / years : NaN
+end
+
+"""
+    _year_smb(col, year_forcing, mp_last) -> m of ice per year
+
+Mean surface mass balance of one candidate year, integrated by the model on `col`.
+
+The physically motivated ranking variable, and the reason `rank_by = :smb` exists: SMB is
+`precipitation + evaporation_condensation - runoff`, so it combines accumulation and melt with
+the weighting the mass balance itself gives them, rather than optimizing one and letting the
+other fall where it may. Ranking on melt alone measurably does the latter — on 12 Greenland
+sites a melt-ranked single year matched record melt to a median 104% but missed accumulation by
+up to 38%, because one year is a noisy sample of snowfall.
+
+Shares `_smb_rate` with [`gemb_spinup`](@ref)'s own SMB diagnostic, so the ranking and the
+reported `spinup_smb_rate` cannot disagree about what SMB means.
+"""
+function _year_smb(col, year_forcing::ClimateForcing, mp_last::ModelParameters)
+    out = gemb(col, year_forcing, mp_last; thermal_workspace=ThermalWorkspace())
+    years = length(dims(year_forcing, Ti)) * year_forcing.time_step / SECONDS_PER_YEAR
+    return _smb_rate(out, years, mp_last.density_ice)
 end
 
 # One or more complete years of `cf` as a standalone `ClimateForcing`, carrying every layer and

@@ -47,3 +47,7 @@ bench/Manifest.toml
 # artifact (`... truth`, ~14 min on 8 threads) whose contents are Julia-version-specific
 # Serialization output, not a reviewable input.
 bench/calibrate_initial_guess_truth.jls
+
+# ERA5-Land point forcing cached by bench/greenland_*.jl. ~11 MB per site of regenerable
+# download (needs a CDS key), not a reviewable input.
+bench/greenland_forcing_cache/
