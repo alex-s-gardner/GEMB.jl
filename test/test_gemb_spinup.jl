@@ -465,8 +465,10 @@ using Dates
         @test GEMB._column_mean_density(coarse) ≈ 600.0
     end
 
-    @testset "Density drift: least-squares slope" begin
-        drift = GEMB._density_drift
+    @testset "Drift: least-squares slope" begin
+        # Quantity-agnostic: the same regression serves the density and FAC criteria, so this
+        # exercises it on bare numbers rather than on either quantity's units.
+        drift = GEMB._least_squares_slope
 
         # Exact recovery of a known slope, and sign follows the trend direction.
         rising = [100.0 + 3.0 * k for k in 0:9]
@@ -535,6 +537,110 @@ using Dates
         # A window too short to fit a slope is rejected up front, not silently ignored.
         @test_throws ErrorException gemb_spinup(profile, forcing, params;
             max_iterations=1, convergence_drift_density=1.0, drift_window=1)
+    end
+
+    @testset "FAC convergence criterion" begin
+        # Why FAC is a criterion in its own right rather than a density tolerance in disguise:
+        # `FAC = Σ dz (ρᵢ − ρ)/ρᵢ`, so at fixed column depth `Z`, `∂FAC/∂ρ̄ = −Z/ρᵢ`. The FAC
+        # residual a given density tolerance admits therefore scales with column depth, and the
+        # deep cold columns that altimetry work cares about are exactly where it is loosest
+        # (measured across a 21-site fleet: 0.02 mm of FAC per 1e-3 kg/m³ at 14 m against
+        # 0.23 mm at 212 m — a 12x spread). The first testset below pins that scaling directly,
+        # since it is the whole justification for the criterion existing.
+        n = 365
+        time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
+        forcing = initialize_forcing(
+            time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
+            fill(50.0, n), fill(180.0, n), fill(80.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
+        params = initialize_parameters(output_frequency=:last)
+        profile = initialize_profile(params, forcing)
+
+        @testset "FAC sensitivity to mean density scales with depth" begin
+            # Two columns of the same uniform density, differing only in depth. Perturbing the
+            # density by the same amount moves the deeper column's FAC proportionally more.
+            zdim(m) = Z(1:m)
+            uniform(m, dz, rho) = DimStack((
+                dz=DimArray(fill(dz, m), (zdim(m),)),
+                density=DimArray(fill(rho, m), (zdim(m),))))
+
+            ρ, Δρ = 600.0, 1.0
+            shallow, deep = uniform(10, 1.0, ρ), uniform(100, 1.0, ρ)      # 10 m vs 100 m
+            dfac(col_a, col_b) = abs(GEMB._column_fac(col_a, params) -
+                                     GEMB._column_fac(col_b, params))
+
+            d_shallow = dfac(shallow, uniform(10, 1.0, ρ + Δρ))
+            d_deep    = dfac(deep,    uniform(100, 1.0, ρ + Δρ))
+
+            # Ten times the depth, ten times the FAC movement for the same Δρ̄.
+            @test d_deep ≈ 10 * d_shallow rtol = 1e-12
+            # And the analytic value, Z·Δρ/ρᵢ.
+            @test d_deep ≈ 100.0 * Δρ / params.density_ice rtol = 1e-12
+        end
+
+        # FAC alone converges, and reports its own measures while leaving the density ones
+        # untouched at NaN — an unrequested quantity must be distinguishable from a measured
+        # zero.
+        prof_f = gemb_spinup(profile, forcing, params;
+                             max_iterations=6, convergence_delta_fac=1e3)
+        pf = DimensionalData.metadata(prof_f)
+        @test pf[:spinup_converged] == true
+        @test pf[:spinup_cycles] == 2                  # earliest a step test can fire
+        @test isfinite(pf[:spinup_final_delta_fac])
+        @test pf[:spinup_final_delta_fac] >= 0.0        # magnitude
+        @test pf[:spinup_convergence_delta_fac] == 1e3
+        @test isnan(pf[:spinup_final_delta_density])
+        @test pf[:spinup_convergence_delta_density] === nothing
+
+        # FAC drift, like density drift, cannot fire before the window is full.
+        prof_fd = gemb_spinup(profile, forcing, params;
+                              max_iterations=12, convergence_drift_fac=1e3,
+                              drift_window=3)
+        pfd = DimensionalData.metadata(prof_fd)
+        @test pfd[:spinup_converged] == true
+        @test pfd[:spinup_cycles] == 3
+        @test isfinite(pfd[:spinup_final_drift_fac])
+        @test pfd[:spinup_final_drift_fac] >= 0.0
+        @test isnan(pfd[:spinup_final_drift_density])
+
+        # The criteria are conjunctive *across quantities*, not only within one: an
+        # unreachable FAC tolerance blocks convergence however loose the density one is, and
+        # vice versa. This is the property that makes adding a criterion always a tightening.
+        pb1 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
+            max_iterations=4, convergence_delta_density=1e3, convergence_delta_fac=0.0))
+        @test pb1[:spinup_converged] == false
+        @test pb1[:spinup_final_delta_density] < 1e3    # density alone would have passed
+
+        pb2 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
+            max_iterations=4, convergence_delta_density=0.0, convergence_delta_fac=1e3))
+        @test pb2[:spinup_converged] == false
+        @test pb2[:spinup_final_delta_fac] < 1e3        # FAC alone would have passed
+
+        # Both loose → converges as soon as both are computable.
+        pb3 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
+            max_iterations=12, convergence_delta_density=1e3, convergence_delta_fac=1e3))
+        @test pb3[:spinup_cycles] == 2
+        @test pb3[:spinup_converged] == true
+
+        # `drift_window` is validated for the FAC drift criterion too, not only the density one.
+        @test_throws ErrorException gemb_spinup(profile, forcing, params;
+            max_iterations=1, convergence_drift_fac=1.0, drift_window=1)
+
+        # The default call requests nothing, so every measure is NaN/nothing and the spinup
+        # runs its full iteration count — unchanged by this feature existing.
+        pn = DimensionalData.metadata(gemb_spinup(profile, forcing, params; max_iterations=2))
+        @test pn[:spinup_converged] == false
+        @test pn[:spinup_cycles] == 2
+        @test isnan(pn[:spinup_final_delta_fac])
+        @test isnan(pn[:spinup_final_drift_fac])
+        @test pn[:spinup_convergence_delta_fac] === nothing
+        @test pn[:spinup_convergence_drift_fac] === nothing
+
+        # `_column_fac` is the same integral the `gemb` output reports, so a criterion and a
+        # diagnostic cannot disagree about what FAC means.
+        @test GEMB._column_fac(profile, params) ≈
+              firn_air_content(parent(profile[:dz]), parent(profile[:density]),
+                               params.density_ice)
     end
 
     @testset "Spinup with zero accumulation" begin
