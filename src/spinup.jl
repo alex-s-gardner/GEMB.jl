@@ -9,19 +9,24 @@ const SPINUP_DRIFT_WINDOW = 10
 Step-and-trend convergence bookkeeping for one scalar diagnostic of the column.
 
 One of these per convergence *quantity* (column-mean density, firn air content), so the two
-share this logic rather than each carrying its own copy of the history, the previous value, the
-`NaN` sentinels and the abstention rule. Adding a third quantity is a third instance and one
-`_update!` call, with no new branching in [`gemb_spinup`](@ref)'s loop.
+share this logic rather than each carrying its own copy of the history, the step, the drift
+regression, the `NaN` sentinels and the abstention rule.
 
 Either tolerance may be `nothing`, meaning "not requested"; a tracker with both unset is inert
 and [`_is_satisfied`](@ref) returns `true` for it, which is what makes the criteria conjunctive
 without special-casing the unused ones.
+
+This factors out the *per-quantity* bookkeeping — the history, the step, the drift regression, the
+`NaN` sentinels and the abstention rule — and nothing more. Adding a third quantity still touches
+`gemb_spinup`'s signature, the `drift_window` guard, the `checking` disjunction, the
+`_is_satisfied` conjunction, the verbose message, the `@info` summary, and both ends of
+`_attach_spinup_provenance`. Turning the criteria into a collection would fix that; the shape here
+is deliberately the smaller change, appropriate while there are two quantities.
 """
 mutable struct _SpinupTracker
     delta_tolerance::Union{Nothing,Float64}
     drift_tolerance::Union{Nothing,Float64}
     history::Vector{Float64}
-    previous::Union{Nothing,Float64}
     final_delta::Float64
     final_drift::Float64
 end
@@ -29,7 +34,7 @@ end
 _SpinupTracker(delta_tolerance, drift_tolerance) = _SpinupTracker(
     delta_tolerance === nothing ? nothing : Float64(delta_tolerance),
     drift_tolerance === nothing ? nothing : Float64(drift_tolerance),
-    Float64[], nothing, NaN, NaN)
+    Float64[], NaN, NaN)
 
 # Whether this quantity is being tested at all.
 _is_checking(t::_SpinupTracker) =
@@ -44,20 +49,19 @@ The step is computed unconditionally once there is a previous cycle to compare a
 drift regression is only run when its tolerance was requested *and* the window is full — the
 slope of a partial window is not the slope the criterion is about.
 
-A no-op for an inert tracker, so an unrequested quantity costs neither the `firn_air_content`
-integral that produced it nor a growing history.
+Callers must skip this entirely for an inert tracker (`_is_checking` false) — Julia evaluates
+arguments eagerly, so guarding *inside* here would still pay for whatever integral produced
+`value`. The `gemb_spinup` loop does exactly that.
 """
 function _update!(t::_SpinupTracker, value::Float64, drift_window::Int)
-    _is_checking(t) || return t
+    # The step needs the previous cycle's value, which is the last thing pushed — so it is read
+    # from `history` rather than mirrored in a second field that could desynchronize.
+    isempty(t.history) || (t.final_delta = abs(value - t.history[end]))
     push!(t.history, value)
-    if t.previous !== nothing
-        t.final_delta = abs(value - t.previous)
-    end
-    t.previous = value
     if t.drift_tolerance !== nothing && length(t.history) >= drift_window
         t.final_drift = abs(_least_squares_slope(t.history, drift_window))
     end
-    return t
+    return nothing
 end
 
 """
@@ -204,8 +208,14 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
 
         checking || continue
 
-        _update!(rho_track, _column_mean_density(current_profile), drift_window)
-        _update!(fac_track, _column_fac(current_profile, mp), drift_window)
+        # Guarded at the call site, not inside `_update!`: Julia evaluates arguments eagerly, so
+        # an unguarded call would run the `firn_air_content` integral (and the density average) on
+        # every cycle of every spinup regardless of what was requested — including on the default
+        # path, which asks for neither FAC measure.
+        _is_checking(rho_track) &&
+            _update!(rho_track, _column_mean_density(current_profile), drift_window)
+        _is_checking(fac_track) &&
+            _update!(fac_track, _column_fac(current_profile, mp), drift_window)
 
         # Conjunctive across every requested criterion. Each reports `nothing` while it lacks
         # the cycles to judge, which is distinct from reporting "not converged": an unmet

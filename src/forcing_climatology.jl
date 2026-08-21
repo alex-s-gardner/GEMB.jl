@@ -219,8 +219,16 @@ function _complete_years(cf::ClimateForcing)
     # Indices (within the leap-day-filtered series) for complete years only
     forcing_index = [yr in complete_years for yr in years_all]
 
+    # `complete_idx` composes both masks into one index vector over the *original* series, so a
+    # slice is a single gather rather than two record-sized intermediate copies (see
+    # `_years_slice`). `years_complete` is the calendar year per retained step, precomputed
+    # because every slice would otherwise re-broadcast `Dates.year` over the whole series.
+    complete_idx = findall(non_leap)[forcing_index]
+
     return (non_leap=non_leap, forcing_index=forcing_index,
+            complete_idx=complete_idx,
             times_complete=times_noleap[forcing_index],
+            years_complete=Dates.year.(times_noleap[forcing_index]),
             complete_years=complete_years,
             n_complete_years=length(complete_years),
             steps_per_year=max_count)
@@ -374,7 +382,20 @@ function _representative_block(cf::ClimateForcing, mp::ModelParameters;
     # `rank_by = :estimate` — which does not use it itself — because the accumulation guard below
     # may re-select on `:smb`, which does. Building it is cheap next to the spinup this feeds.
     col = profile === nothing ? initialize_profile(mp, cf) : profile
-    sel = _select_block(cf, cy, years, n_block, mp, statistic, rank_by, col)
+
+    # `(melt, smb)` per candidate year, from one `gemb` pass each, computed once and shared by
+    # both the initial selection and the fallback's re-selection. One thermal workspace is reused
+    # across all years, as `gemb_spinup` does across cycles. Skipped entirely under `:estimate`,
+    # which integrates nothing — but the fallback may still need SMB, so it is computed lazily
+    # there rather than never.
+    mp_last = ModelParameters(;
+        (f => getfield(mp, f) for f in fieldnames(ModelParameters)
+         if f != :output_frequency)..., output_frequency=:last)
+    ws = ThermalWorkspace()
+    year_scores = rank_by === :estimate ? nothing :
+        [_year_scores(col, _year_slice(cf, cy, y), mp_last, ws) for y in years]
+
+    sel = _select_block(cf, cy, years, n_block, mp, statistic, rank_by, col, year_scores)
 
     # Accumulation guard. Melt-ranking optimizes melt and leaves accumulation to chance, and on
     # real Greenland forcing that chance is sometimes bad: the melt-ranked 3-year block missed
@@ -394,40 +415,51 @@ function _representative_block(cf::ClimateForcing, mp::ModelParameters;
     # accumulation error, while QAS-L had the worst accumulation error (30.2%) at -16.3% SMB bias.
     # An SMB-triggered guard fired on the wrong sites and made the median *worse* at every
     # threshold tried.
-    fallback_used = false
-    if fallback_accumulation_tolerance !== nothing && rank_by !== :smb
-        tol = Float64(fallback_accumulation_tolerance)
-        acc_record = initialize_climate_summary(cf, mp).accumulation
-        if acc_record > 0
-            acc_block = initialize_climate_summary(sel.cycle, mp).accumulation
-            rel = abs(acc_block / acc_record - 1)
-            if rel > tol
-                alt = _select_block(cf, cy, years, n_block, mp, statistic, :smb, col)
-                acc_alt = initialize_climate_summary(alt.cycle, mp).accumulation
-                # Only accept the fallback if it actually improves the quantity that triggered
-                # it. SMB ranking is better on accumulation *on average*, not at every site, and
-                # a guard that can make its own trigger worse is not a guard.
-                if abs(acc_alt / acc_record - 1) < rel
-                    verbose && @info "forcing_climatology: melt-ranked block accumulation is " *
-                        "$(round(100 * rel, digits=1))% off the record (tolerance " *
-                        "$(round(100 * tol, digits=1))%); re-selected on SMB" *
-                        " (now $(round(100 * abs(acc_alt / acc_record - 1), digits=1))%)." *
-                        " Set `fallback_accumulation_tolerance=nothing` to disable."
-                    sel = alt
-                    fallback_used = true
-                end
-            end
+    # Both summaries are needed by the guard, the diagnostics and the warning, so each is computed
+    # once here and threaded down rather than re-derived at each consumer.
+    record_summary = initialize_climate_summary(cf, mp)
+    cycle_summary = initialize_climate_summary(sel.cycle, mp)
+    acc_record = record_summary.accumulation
+    effective_rank = rank_by
+    accumulation_error = acc_record > 0 ?
+        abs(cycle_summary.accumulation / acc_record - 1) : NaN
+
+    if fallback_accumulation_tolerance !== nothing && rank_by !== :smb &&
+       isfinite(accumulation_error) &&
+       accumulation_error > Float64(fallback_accumulation_tolerance)
+
+        # Reuses `year_scores`, so the re-selection costs no further integrations — only under
+        # `:estimate`, which computed none, is the scoring pass paid here.
+        alt_scores = year_scores === nothing ?
+            [_year_scores(col, _year_slice(cf, cy, y), mp_last, ws) for y in years] : year_scores
+        alt = _select_block(cf, cy, years, n_block, mp, statistic, :smb, col, alt_scores)
+        alt_summary = initialize_climate_summary(alt.cycle, mp)
+        alt_error = abs(alt_summary.accumulation / acc_record - 1)
+        # Only accept the fallback if it actually improves the quantity that triggered it. SMB
+        # ranking is better on accumulation *on average*, not at every site, and a guard that can
+        # make its own trigger worse is not a guard.
+        if alt_error < accumulation_error
+            verbose && @info "forcing_climatology: melt-ranked block accumulation is " *
+                "$(round(100 * accumulation_error, digits=1))% off the record (tolerance " *
+                "$(round(100 * Float64(fallback_accumulation_tolerance), digits=1))%); " *
+                "re-selected on SMB (now $(round(100 * alt_error, digits=1))%). " *
+                "Set `fallback_accumulation_tolerance=nothing` to disable."
+            sel, cycle_summary, accumulation_error = alt, alt_summary, alt_error
+            effective_rank = :smb
         end
     end
 
     if verbose
-        _report_representative_block(years, sel.scores, sel.block_years, sel.block_score,
-                                     sel.target, statistic,
-                                     fallback_used ? :smb : rank_by, cf, cy, mp)
-        _warn_cycle_melt_ratio(sel.cycle, sel.block_years, sel.block_score, sel.scores, mp)
+        _report_representative_block(sel, record_summary, cycle_summary, accumulation_error,
+                                     statistic, effective_rank)
+        _warn_cycle_melt_ratio(cycle_summary, sel.block_years)
     end
 
-    return _stamp_representative(sel.cycle, sel.block_years, cy.steps_per_year, window)
+    return _stamp_representative(sel.cycle, sel.block_years, cy.steps_per_year, window;
+                                 rank_by=effective_rank,
+                                 accumulation_error=accumulation_error,
+                                 melt_ratio=cycle_summary.accumulation > 0 ?
+                                     cycle_summary.melt / cycle_summary.accumulation : NaN)
 end
 
 """
@@ -442,18 +474,18 @@ from it. Returns the chosen `cycle`, its `block_years`, the per-year `scores`, t
 own mean `block_score`, and the `target` it was matched against.
 """
 function _select_block(cf::ClimateForcing, cy, years, n_block::Int, mp::ModelParameters,
-                       statistic::Symbol, rank_by::Symbol, col)
-    # The ranking score per candidate year. `:smb` and `:model` integrate each year on a real
-    # column; `:estimate` reads the summary's surface-energy-balance melt, which needs no column
-    # but is biased ~2.6x high.
+                       statistic::Symbol, rank_by::Symbol, col, year_scores)
+    # The ranking score per candidate year. `:model` and `:smb` both read `year_scores`, which
+    # holds `(melt, smb)` per year from a single `gemb` pass each — the two are different
+    # reductions of the same integration, so scoring one after the other would double the
+    # model-years for nothing. That matters because the accumulation guard re-selects under
+    # `:smb`. `:estimate` instead reads the summary's surface-energy-balance melt, which needs no
+    # integration at all but is biased ~2.6x high.
     scores = if rank_by === :estimate
         [initialize_climate_summary(_year_slice(cf, cy, y), mp).melt for y in years]
     else
-        mp_last = ModelParameters(;
-            (f => getfield(mp, f) for f in fieldnames(ModelParameters)
-             if f != :output_frequency)..., output_frequency=:last)
-        f = rank_by === :smb ? _year_smb : _year_melt
-        [f(col, _year_slice(cf, cy, y), mp_last) for y in years]
+        take = rank_by === :smb ? last : first
+        [take(year_scores[i]) for i in eachindex(years)]
     end
 
     # Target is the statistic over every candidate *year*, so it describes the record rather
@@ -461,15 +493,21 @@ function _select_block(cf::ClimateForcing, cy, years, n_block::Int, mp::ModelPar
     target = statistic === :mean ? Statistics.mean(scores) : Statistics.median(scores)
     n_windows = length(years) - n_block + 1
     block_scores = [Statistics.mean(@view scores[i:(i + n_block - 1)]) for i in 1:n_windows]
-    start = argmin(abs.(block_scores .- target))
+    # Non-allocating: the broadcast form would build two temporary vectors to pick one index.
+    start = argmin(i -> abs(block_scores[i] - target), eachindex(block_scores))
     block_years = years[start:(start + n_block - 1)]
 
     return (cycle = _years_slice(cf, cy, block_years), block_years = block_years,
             scores = scores, block_score = block_scores[start], target = target)
 end
 
+# Melt-to-accumulation ratio of a constructed cycle above which `_warn_cycle_melt_ratio` speaks.
+# Deliberately below 1.0: the useful signal is "approaching the threshold", because a cycle whose
+# *mean* ratio is 0.8 can contain individual years above 1.
+const CYCLE_MELT_RATIO_WARN = 0.6
+
 """
-    _warn_cycle_melt_ratio(cycle, block_years, block_melt, year_melts, mp)
+    _warn_cycle_melt_ratio(cycle_summary::ClimateSummary, block_years)
 
 Warn when the selected cycle's own melt-to-accumulation ratio puts it at or past the point where
 repeating it drives the column to solid ice.
@@ -478,32 +516,33 @@ The test is on the **constructed cycle**, not on the record, and that distinctio
 point. `melt/accumulation > 1` over a record means the site is ablating, and a cycle that
 equilibrates to ice is then the *correct* answer. But the record's ratio is a mean, and
 interannual variability puts individual years above 1 while the mean sits below it — so a site
-whose record ratio is 0.9 can still yield a cycle that ablates. Measured on the fleet: the two
-sites that lost their firn to a repeated block (equilibrated FAC falling from ~4.8 m to
-0.12-0.75 m) had *record* ratios of 0.83 and 0.93, i.e. both below 1, and would pass a check
-made on the record.
-
-`CYCLE_MELT_RATIO_WARN` is deliberately below 1.0 for that reason: the useful signal is
-"approaching the threshold", since a cycle at 0.8 of a mean can straddle it. Sites well below it
-(ratio <= ~0.3 on the fleet) reproduce the averaged climatology's equilibrium closely and need no
-warning.
+whose record ratio is 0.9 can still yield a cycle that ablates.
 
 Not an error, and not a refusal to return the cycle: at a genuinely ablating site the ice column
 *is* the answer, and what matters there is that the mean melt — and so the latent-heat warming
 it drives — is right, which is exactly what this path gets right and `:average` does not.
-"""
-const CYCLE_MELT_RATIO_WARN = 0.6
 
-function _warn_cycle_melt_ratio(cycle::ClimateForcing, block_years, block_melt,
-                                year_melts, mp::ModelParameters)
-    cs = initialize_climate_summary(cycle, mp)
-    acc = cs.accumulation
+The ratio that motivated the sub-1.0 threshold was measured on the **synthetic** fleet, where two
+sites with record ratios of 0.83 and 0.93 lost their firn to a repeated block. That firn loss did
+**not** reproduce on real Greenland forcing (see [`forcing_climatology`](@ref)), so the threshold
+is a conservative guard rather than a calibrated boundary.
+"""
+
+# `cycle_summary` is a `ClimateSummary`, left unannotated because
+# `initialize_climate_summary.jl` (which defines that type) is included after this file.
+function _warn_cycle_melt_ratio(cycle_summary, block_years)
+    acc = cycle_summary.accumulation
     acc > 0.0 || return nothing
 
-    # The cycle's own ratio, plus the worst single year inside it — a block can average below
-    # the threshold while containing a year far above it, and it is the repeated *block* that
-    # equilibrates, so both are worth reporting.
-    ratio = block_melt / acc
+    # The ratio is formed from the cycle's *own* summary melt, deliberately not from the block's
+    # selection score. Those are the same quantity only under `rank_by = :model`: under `:smb`
+    # the score is a surface mass balance in m of ice per year, and under `:estimate` it is a
+    # melt biased ~2.6x high. Dividing either by an accumulation in kg m-2 and comparing to
+    # `CYCLE_MELT_RATIO_WARN` is meaningless — and it would fail in the worst possible way,
+    # because the accumulation guard switches the effective ranking to `:smb` at precisely the
+    # melting sites this warning exists for, so the units break would silence it exactly where
+    # it is needed. Reading melt from the summary makes the test correct under every ranking.
+    ratio = cycle_summary.melt / acc
     ratio < CYCLE_MELT_RATIO_WARN && return nothing
 
     if ratio > 1.0
@@ -524,34 +563,29 @@ function _warn_cycle_melt_ratio(cycle::ClimateForcing, block_years, block_melt,
     return nothing
 end
 
-# Annual melt [kg m-2 yr-1] of one candidate year, integrated by the model itself on `col`.
-# `output_frequency=:last` leaves a single step holding the year's total, so the sum is that
-# total and the year length comes from the forcing rather than from the output times.
-function _year_melt(col, year_forcing::ClimateForcing, mp_last::ModelParameters)
-    out = gemb(col, year_forcing, mp_last; thermal_workspace=ThermalWorkspace())
-    years = length(dims(year_forcing, Ti)) * year_forcing.time_step / SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
-
 """
-    _year_smb(col, year_forcing, mp_last) -> m of ice per year
+    _year_scores(col, year_forcing, mp_last) -> (melt, smb)
 
-Mean surface mass balance of one candidate year, integrated by the model on `col`.
+Annual melt [kg m-2 yr-1] and surface mass balance [m of ice per year] of one candidate year,
+integrated by the model itself on `col`.
 
-The physically motivated ranking variable, and the reason `rank_by = :smb` exists: SMB is
-`precipitation + evaporation_condensation - runoff`, so it combines accumulation and melt with
-the weighting the mass balance itself gives them, rather than optimizing one and letting the
-other fall where it may. Ranking on melt alone measurably does the latter — on 12 Greenland
-sites a melt-ranked single year matched record melt to a median 104% but missed accumulation by
-up to 38%, because one year is a noisy sample of snowfall.
+Both from **one** `gemb` pass. They are different reductions of the same integration — melt sums
+the `melt` flux, SMB is `precipitation + evaporation_condensation - runoff` via
+[`_smb_rate`](@ref) — so computing them separately would double the model-years spent ranking,
+which the accumulation fallback would then double again when it re-selects on SMB.
 
-Shares `_smb_rate` with [`gemb_spinup`](@ref)'s own SMB diagnostic, so the ranking and the
+`output_frequency=:last` leaves a single step holding the year's total, so the sum is that total,
+and the year length comes from the forcing rather than from the output times.
+
+SMB shares `_smb_rate` with [`gemb_spinup`](@ref)'s own diagnostic, so the ranking and the
 reported `spinup_smb_rate` cannot disagree about what SMB means.
 """
-function _year_smb(col, year_forcing::ClimateForcing, mp_last::ModelParameters)
-    out = gemb(col, year_forcing, mp_last; thermal_workspace=ThermalWorkspace())
+function _year_scores(col, year_forcing::ClimateForcing, mp_last::ModelParameters,
+                      ws::ThermalWorkspace)
+    out = gemb(col, year_forcing, mp_last; thermal_workspace=ws)
     years = length(dims(year_forcing, Ti)) * year_forcing.time_step / SECONDS_PER_YEAR
-    return _smb_rate(out, years, mp_last.density_ice)
+    years > 0 || return (NaN, NaN)
+    return (sum(parent(out[:melt])) / years, _smb_rate(out, years, mp_last.density_ice))
 end
 
 # One or more complete years of `cf` as a standalone `ClimateForcing`, carrying every layer and
@@ -564,11 +598,14 @@ end
 _year_slice(cf::ClimateForcing, cy, year::Integer) = _years_slice(cf, cy, (year,))
 
 function _years_slice(cf::ClimateForcing, cy, years)
-    times = collect(lookup(dims(cf.temperature_air, Ti)))[cy.non_leap][cy.forcing_index]
-    wanted = Set(Int.(years))
-    keep = findall(y -> y in wanted, Dates.year.(times))
-    tdim = Ti(times[keep])
-    _slice(a) = DimArray(parent(a)[cy.non_leap][cy.forcing_index][keep], (tdim,))
+    # One composed index vector, then one gather per layer. Indexing with the two masks in
+    # succession (`parent(a)[non_leap][forcing_index][keep]`) would allocate two *record-sized*
+    # temporaries per layer before producing the small result — 14 layers x 3 allocations per
+    # slice, and a slice happens once per candidate year plus once per selected block.
+    keep = findall(in(Set(Int.(years))), cy.years_complete)
+    idx = cy.complete_idx[keep]
+    tdim = Ti(cy.times_complete[keep])
+    _slice(a) = DimArray(parent(a)[idx], (tdim,))
 
     return ClimateForcing(
         _slice(cf.temperature_air), _slice(cf.pressure_air), _slice(cf.precipitation),
@@ -593,7 +630,8 @@ end
 # a one-year block, a `Vector{Int}` otherwise), and its presence is what distinguishes this path
 # from `:average` after the fact. The requested `window` is preserved when given, so the
 # provenance still says what was asked for and not only what was selected from it.
-function _stamp_representative(cf::ClimateForcing, years, steps_per_year::Integer, window)
+function _stamp_representative(cf::ClimateForcing, years, steps_per_year::Integer, window;
+                               rank_by::Symbol, accumulation_error, melt_ratio)
     times = collect(lookup(dims(cf.temperature_air, Ti)))
     ys = Int.(collect(years))
     meta = merge(DD.metadata(cf), (
@@ -602,6 +640,15 @@ function _stamp_representative(cf::ClimateForcing, years, steps_per_year::Intege
         climatology_n_years = length(ys),
         climatology_steps_per_year = Int(steps_per_year),
         climatology_representative_year = length(ys) == 1 ? ys[1] : ys,
+        # Diagnostics recorded rather than only logged. `verbose` controls *printing*; these are
+        # always measured, so a batch caller running with `verbose=false` can still act on them —
+        # in particular on `climatology_melt_ratio`, which is the "this cycle will equilibrate to
+        # bare ice" signal that would otherwise exist only as warning text.
+        # `climatology_rank_by` is the ranking actually used, which differs from the requested one
+        # when the accumulation fallback fired.
+        climatology_rank_by = rank_by,
+        climatology_accumulation_error = Float64(accumulation_error),
+        climatology_melt_ratio = Float64(melt_ratio),
     ))
     return rebuild(cf; metadata=meta)
 end
@@ -615,35 +662,37 @@ end
 # fraction and as a difference respectively, rather than as percentile ranks: a block of `n`
 # consecutive years has only `n_years - n + 1` candidates, so a rank over them is too coarse to
 # mean anything once `n` is a meaningful fraction of the record.
-function _report_representative_block(years, melts, block_years, block_melt, target,
-                                      statistic, rank_by, cf, cy, mp)
-    all_summaries = [initialize_climate_summary(_year_slice(cf, cy, y), mp) for y in years]
-    block_set = Set(Int.(block_years))
-    in_block = [Int(y) in block_set for y in years]
+"""
+    _report_representative_block(sel, record_summary, cycle_summary, accumulation_error,
+                                 statistic, rank_by)
 
-    acc_all = Statistics.mean(s.accumulation for s in all_summaries)
-    acc_blk = Statistics.mean(all_summaries[i].accumulation for i in eachindex(years) if in_block[i])
-    t_all = Statistics.mean(s.temperature_air_mean for s in all_summaries)
-    t_blk = Statistics.mean(all_summaries[i].temperature_air_mean for i in eachindex(years) if in_block[i])
+Report which block was selected, how closely its score matched the target, and how far its
+accumulation is from the record's.
 
-    acc_ratio = acc_all > 0 ? acc_blk / acc_all : NaN
-    t_delta = t_blk - t_all
+Takes the two summaries already computed by [`_representative_block`](@ref) rather than deriving
+its own. An earlier version built one `ClimateSummary` **per candidate year** — 20 extra
+surface-energy-balance sweeps on a 20-year record — to produce two numbers, and computed a
+second, differently-defined accumulation offset (mean-of-year-means rather than the block cycle's
+own) that could disagree with the guard's in the same log line.
 
-    @info "Representative spinup block selected" years=block_years n_years=length(block_years) statistic=statistic rank_by=rank_by n_candidate_years=length(years) block_melt=block_melt melt_target=target melt_ratio=(target > 0 ? block_melt / target : NaN) accumulation_ratio=acc_ratio temperature_offset=t_delta
+No temperature diagnostic is reported. `_years_slice` carries `cf.temperature_air_mean` through
+unchanged and `initialize_climate_summary` reads that scalar rather than recomputing it, so a
+per-block temperature offset is **identically zero by construction** — not a physical result. The
+earlier version reported it and warned above 0.5 K, a branch that could never fire.
+"""
+# The two summaries are `ClimateSummary`s, left unannotated for the include-order reason above.
+function _report_representative_block(sel, record_summary, cycle_summary, accumulation_error,
+                                      statistic::Symbol, rank_by::Symbol)
+    @info "Representative spinup block selected" years=sel.block_years n_years=length(sel.block_years) statistic=statistic rank_by=rank_by n_candidate_years=length(sel.scores) block_score=sel.block_score score_target=sel.target accumulation_error=accumulation_error record_melt=record_summary.melt cycle_melt=cycle_summary.melt
 
-    # 10% in accumulation and 0.5 K in mean temperature: both are large enough that a spinup
-    # would equilibrate a visibly different column, and loose enough not to fire on the ordinary
-    # sampling spread of a few years drawn from a few decades.
-    if isfinite(acc_ratio) && abs(acc_ratio - 1) > 0.1
-        @warn "Representative block $(block_years) was chosen on melt but its mean " *
-              "accumulation is $(round(100 * (acc_ratio - 1), digits=1))% off the record's. " *
+    # 10%: large enough that a spinup would equilibrate a visibly different column, loose enough
+    # not to fire on the ordinary sampling spread of a few years drawn from a few decades. This
+    # fires only when the accumulation fallback did not already fix it — either because it was
+    # disabled, or because SMB ranking did not improve matters at this site.
+    if isfinite(accumulation_error) && accumulation_error > 0.1
+        @warn "Representative block $(sel.block_years) was chosen on `$(rank_by)` but its mean " *
+              "accumulation is $(round(100 * accumulation_error, digits=1))% off the record's. " *
               "The spinup will equilibrate that term to an atypical value; consider a longer " *
-              "block or a different window." maxlog=2
-    end
-    if abs(t_delta) > 0.5
-        @warn "Representative block $(block_years) was chosen on melt but its mean " *
-              "temperature is $(round(t_delta, digits=2)) K off the record's. Densification " *
-              "is Arrhenius in temperature, so this biases the equilibrated density " *
-              "profile; consider a longer block or a different window." maxlog=2
+              "block, a different window, or `rank_by=:smb`." maxlog=2
     end
 end

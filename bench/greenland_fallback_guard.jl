@@ -22,47 +22,12 @@
 #
 # Reuses the forcing cache written by `greenland_spinup_forcing.jl`.
 
-using GEMB
-using GEMB_ClimateForcing
-using Statistics
-using Printf
-using Serialization
-using Dates
-
-const DD = GEMB.DimensionalData
-
-const YEARS = (2000, 2019)
-const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
+include("greenland_common.jl")
 const MELT_FLOOR = 5.0          # kg m-2 yr-1; below this the rule uses `:average`
-
-const SITE_IDS = ["Summit", "NEEM", "EastGRIP", "DYE-2", "Saddle", "CP1",
-                  "KAN-U", "SwissCamp", "KAN-M", "KAN-L", "QAS-L", "THU-L"]
-
-function cached_forcing(id)
-    path = joinpath(CACHE_DIR, "$(id)_$(YEARS[1])_$(YEARS[2]).jls")
-    isfile(path) || error("no cached forcing for $id; run bench/greenland_spinup_forcing.jl first")
-    return deserialize(path)
-end
-
-function melt_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
-
-# SMB [m ice per year] over `forcing`, through the same `_smb_rate` the spinup and the `:smb`
-# ranking use, so all three agree on the definition.
-function smb_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return GEMB._smb_rate(out, years, mp_last.density_ice)
-end
 
 function analyze(id, mp)
     cf = initialize_forcing(cached_forcing(id))
-    mp_last = GEMB.ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(GEMB.ModelParameters)
-         if f != :output_frequency)..., output_frequency=:last)
+    mp_last = last_step_parameters(mp)
     profile = initialize_profile(mp, cf)
     cs = GEMB.initialize_climate_summary(cf, mp)
 
@@ -93,14 +58,12 @@ function analyze(id, mp)
             m3=score(m3), s3=score(s3))
 end
 
-joint(s) = (p = filter(isfinite, [s.melt_err, s.acc_err]); isempty(p) ? NaN : mean(p))
-
 const MP = GEMB.ModelParameters(output_frequency=:last)
-@printf("SMB-bias fallback test, %d sites, threads=%d\n", length(SITE_IDS), Threads.nthreads())
+@printf("SMB-bias fallback test, %d sites, threads=%d\n", length(site_ids()), Threads.nthreads())
 
 results = Any[]
 lk = ReentrantLock()
-Threads.@threads for id in SITE_IDS
+Threads.@threads for id in site_ids()
     try
         r = analyze(id, MP)
         lock(lk) do; push!(results, r); end
@@ -124,7 +87,7 @@ println("="^112)
 for r in candidates
     @printf("%-12s %8.1f %8.3f | %+8.1f%% %+8.1f%% | %7.1f%% %7.1f%% | %7.1f%% %7.1f%%\n",
             r.id, r.melt_rec, r.smb_rec, r.m3.smb_bias, r.s3.smb_bias,
-            r.m3.acc_err, r.s3.acc_err, joint(r.m3), joint(r.s3))
+            r.m3.acc_err, r.s3.acc_err, joint_error_of(r.m3), joint_error_of(r.s3))
 end
 
 println("\n", "="^112)
@@ -143,11 +106,11 @@ const TRIGGERS = ["smb_bias" => (r -> abs(r.m3.smb_bias)),
         "median joint (m3 -> guarded)", "median acc_err (m3 -> guarded)")
 for (tname, tfun) in TRIGGERS, thresh in (5.0, 10.0, 15.0, 20.0, 30.0)
     fires = [r for r in candidates if isfinite(tfun(r)) && tfun(r) > thresh]
-    guarded_joint = [(isfinite(tfun(r)) && tfun(r) > thresh) ? joint(r.s3) : joint(r.m3)
+    guarded_joint = [(isfinite(tfun(r)) && tfun(r) > thresh) ? joint_error_of(r.s3) : joint_error_of(r.m3)
                      for r in candidates]
     guarded_acc = [(isfinite(tfun(r)) && tfun(r) > thresh) ? r.s3.acc_err : r.m3.acc_err
                    for r in candidates]
-    base_joint = [joint(r.m3) for r in candidates]
+    base_joint = [joint_error_of(r.m3) for r in candidates]
     base_acc = [r.m3.acc_err for r in candidates]
     f(v) = median(filter(isfinite, v))
     @printf("%-9s %5.0f%% %6d | %10.1f%% -> %10.1f%%     | %10.1f%% -> %10.1f%%\n",
@@ -158,8 +121,8 @@ end
 println("\nPer-site effect of firing (acc_err and joint, m3 -> s3):")
 for r in candidates
     Δacc = r.s3.acc_err - r.m3.acc_err
-    Δj = joint(r.s3) - joint(r.m3)
+    Δj = joint_error_of(r.s3) - joint_error_of(r.m3)
     @printf("  %-12s smb_bias %+7.1f%%  acc %5.1f%% -> %5.1f%% (%+5.1f)  joint %5.1f%% -> %5.1f%% (%+5.1f) %s\n",
             r.id, r.m3.smb_bias, r.m3.acc_err, r.s3.acc_err, Δacc,
-            joint(r.m3), joint(r.s3), Δj, Δj < 0 ? "BETTER" : "worse")
+            joint_error_of(r.m3), joint_error_of(r.s3), Δj, Δj < 0 ? "BETTER" : "worse")
 end

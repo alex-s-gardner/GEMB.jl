@@ -18,146 +18,13 @@
 # Requires a CDS API key (ERA5-Land access). Downloads are cached under `CACHE_DIR` so a re-run
 # is offline; the cache is keyed by site and time range.
 
-using GEMB
-using GEMB_ClimateForcing
-using Statistics
-using Printf
-using Serialization
-using Dates
-
-const DD = GEMB.DimensionalData
-
-const YEARS = (2000, 2019)          # 20 complete years: enough for a climatology and a block
-const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
-const MAX_CYCLES = 800
-
-# Convergence criteria for the equilibrium comparison. All four, because this script compares
-# *equilibria* between two forcing cycles, and a step-only test cannot support that: a column
-# creeping steadily at just under the tolerance passes it while still drifting, so two columns
-# declared converged may simply be two columns stopped at different points on their way down.
-#
-# That is not hypothetical here. An earlier run of this script used `delta_density = 1e-2` alone
-# and reported EastGRIP converging in 18 cycles under `:average` against 214 under
-# `:representative`, with a 20.8% difference in equilibrated firn air content at a site with
-# 0.2 kg m-2 yr-1 of melt. An 18-cycle exit on a step-only criterion is far more likely a false
-# positive than an equilibrium, which would make that 20.8% a measurement of non-convergence
-# rather than of the method.
-#
-# The FAC criteria matter for the same reason they exist (see `gemb_spinup`): a density tolerance
-# admits a FAC residual proportional to column depth, so on a 200 m Greenland column a density
-# test alone is loose in exactly the quantity this script tabulates.
-const CONV_DELTA_DENSITY = 1e-3     # [kg m-3]
-const CONV_DRIFT_DENSITY = 1e-3     # [kg m-3 per cycle]
-const CONV_DELTA_FAC = 1e-4         # [m of air] — 0.1 mm
-const CONV_DRIFT_FAC = 1e-4         # [m of air per cycle]
-
-"""
-    sites() -> Vector{NamedTuple}
-
-Glacierized Greenland locations spanning the three regimes the synthetic fleet split into.
-
-Coordinates are long-running PROMICE/GC-Net station locations, which are on the ice sheet by
-construction and have published mass-balance regimes to compare against — the point of using
-real sites rather than more synthetic ones. ERA5-Land is on a ~9 km grid, so these are the
-reanalysis cell containing the station, not the station microclimate.
-"""
-sites() = [
-    # --- Dry-snow zone: high, cold, little or no melt ---
-    (id="Summit",        lat=72.58, lon=-38.46, zone="dry-snow"),
-    (id="NEEM",          lat=77.45, lon=-51.06, zone="dry-snow"),
-    (id="EastGRIP",      lat=75.63, lon=-35.99, zone="dry-snow"),
-    # --- Percolation zone: melt that refreezes in firn. The critical band. ---
-    (id="DYE-2",         lat=66.48, lon=-46.28, zone="percolation"),
-    (id="Saddle",        lat=66.00, lon=-44.50, zone="percolation"),
-    (id="CP1",           lat=69.88, lon=-46.99, zone="percolation"),
-    (id="KAN-U",         lat=67.00, lon=-47.03, zone="percolation"),
-    (id="SwissCamp",     lat=69.57, lon=-49.30, zone="percolation"),
-    # --- Ablation zone: melt exceeds accumulation, bare ice in summer ---
-    (id="KAN-M",         lat=67.07, lon=-48.84, zone="ablation"),
-    (id="KAN-L",         lat=67.10, lon=-49.95, zone="ablation"),
-    (id="QAS-L",         lat=61.03, lon=-46.85, zone="ablation"),
-    (id="THU-L",         lat=76.40, lon=-68.27, zone="ablation"),
-]
-
-"""
-    cds_token() -> String
-
-The CDS API key, from `CDS_API_KEY`/`CDSAPI_KEY` or from `~/.cdsapirc`.
-
-Reading `~/.cdsapirc` is the point: it is where the `cdsapi` client already keeps the key, so
-this needs no environment setup. Never logged — only its length is reported.
-"""
-function cds_token()
-    for var in ("CDS_API_KEY", "CDSAPI_KEY")
-        v = get(ENV, var, "")
-        isempty(v) || return String(strip(v))
-    end
-    path = expanduser("~/.cdsapirc")
-    if isfile(path)
-        for line in eachline(path)
-            m = match(r"^\s*key\s*:\s*(\S+)\s*$", line)
-            m === nothing || return String(m.captures[1])
-        end
-    end
-    error("no CDS API key: set CDS_API_KEY or put `key: <key>` in ~/.cdsapirc")
-end
-
-# Downloaded forcing, cached on disk. ERA5-Land point extraction is the slow step and it is
-# perfectly reproducible, so a re-run of the analysis should not repeat it.
-function forcing_for(site, token)
-    mkpath(CACHE_DIR)
-    path = joinpath(CACHE_DIR, "$(site.id)_$(YEARS[1])_$(YEARS[2]).jls")
-    if isfile(path)
-        return deserialize(path)
-    end
-    ds = climate_forcing(:era5land, site.lat, site.lon;
-        time_range=(DateTime(YEARS[1], 1, 1), DateTime(YEARS[2], 12, 31, 23)),
-        token=token)
-    serialize(path, ds)
-    return ds
-end
-
-mean_density(p) = sum(parent(p[:density]) .* parent(p[:dz])) / sum(parent(p[:dz]))
-
-# Annual melt [kg m-2 yr-1] integrated over `forcing`, on the column `profile`. The rate rather
-# than the total, so a one-year cycle, an n-year block and a 20-year record are comparable.
-function melt_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
-
-# Spin up on `cycle` and report the equilibrated column.
-function equilibrate(profile, cycle, mp)
-    g = gemb_spinup(profile, cycle, mp;
-        max_iterations=MAX_CYCLES,
-        convergence_delta_density=CONV_DELTA_DENSITY,
-        convergence_drift_density=CONV_DRIFT_DENSITY,
-        convergence_delta_fac=CONV_DELTA_FAC,
-        convergence_drift_fac=CONV_DRIFT_FAC,
-        thermal_workspace=GEMB.ThermalWorkspace())
-    md = DD.metadata(g)
-    # `years` is what the two methods must be compared on: cycle counts are not comparable
-    # because `:average` integrates one year per cycle and `:representative` integrates
-    # `n_years`, so a longer cycle mechanically lowers the count without lowering the work.
-    n_per_cycle = length(DD.dims(cycle, DD.Ti)) * cycle.time_step / GEMB.SECONDS_PER_YEAR
-    return (
-        fac = firn_air_content(parent(g[:dz]), parent(g[:density]), mp.density_ice),
-        density = mean_density(g),
-        temperature_deep = parent(g[:temperature])[end],
-        cycles = md[:spinup_cycles],
-        years = md[:spinup_cycles] * n_per_cycle,
-        converged = md[:spinup_converged],
-    )
-end
+include("greenland_common.jl")
 
 function analyze(site, token, mp)
     ds = forcing_for(site, token)
     cf = initialize_forcing(ds)
 
-    mp_last = GEMB.ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(GEMB.ModelParameters)
-         if f != :output_frequency)..., output_frequency=:last)
+    mp_last = last_step_parameters(mp)
 
     profile = initialize_profile(mp, cf)
     cs = GEMB.initialize_climate_summary(cf, mp)
@@ -202,7 +69,7 @@ end
 =============================================================================#
 
 const MP = GEMB.ModelParameters(output_frequency=:last)
-token = cds_token()
+token = get_cds_api_key()
 @printf("CDS token loaded (%d chars). Threads: %d\n", length(token), Threads.nthreads())
 @printf("Sites: %d, years %d-%d, cache: %s\n\n", length(sites()), YEARS[1], YEARS[2], CACHE_DIR)
 

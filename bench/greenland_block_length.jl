@@ -1,5 +1,13 @@
 # Does a single average-melt year beat a multi-year block, on real Greenland forcing?
 #
+# !! ABANDONED — DOES NOT COMPLETE. !!
+# This runs a full strict-criteria spinup per site per variant (12 sites x 5 variants), and was
+# killed after more than an hour and 4000+ model-years without finishing: a 5-year block at the
+# 800-cycle cap is 4000 model-years for one site-variant, and 6 of the 12 sites cannot satisfy
+# these criteria at all. `greenland_year_selection.jl` supersedes it by answering the same
+# question spinup-free, in seconds per site. Kept only as the record of what the design cost;
+# do not run it expecting output.
+#
 #   julia --project=bench --threads=auto bench/greenland_block_length.jl
 #
 # `greenland_spinup_forcing.jl` compared `:average` against `:representative` with `n_years=3`
@@ -16,19 +24,9 @@
 # 3-year block's -22.1% at EastGRIP suggests the sample is small enough that this does not
 # reliably hold, which is what the accumulation column here tests.
 #
-# Reuses the forcing cache written by `greenland_spinup_forcing.jl`, so it is offline and cheap.
+# Reuses the forcing cache written by `greenland_spinup_forcing.jl`, so it needs no CDS key.
 
-using GEMB
-using GEMB_ClimateForcing
-using Statistics
-using Printf
-using Serialization
-using Dates
-
-const DD = GEMB.DimensionalData
-
-const YEARS = (2000, 2019)
-const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
+include("greenland_common.jl")
 const BLOCK_LENGTHS = (1, 3, 5)
 
 # Melt below which the hybrid `auto` variant uses `:average`. 5 kg m-2 yr-1 is well under the
@@ -45,44 +43,9 @@ const CONV_DRIFT_DENSITY = 1e-3
 const CONV_DELTA_FAC = 1e-4
 const CONV_DRIFT_FAC = 1e-4
 
-const SITE_IDS = ["Summit", "NEEM", "EastGRIP", "DYE-2", "Saddle", "CP1",
-                  "KAN-U", "SwissCamp", "KAN-M", "KAN-L", "QAS-L", "THU-L"]
-
-function cached_forcing(id)
-    path = joinpath(CACHE_DIR, "$(id)_$(YEARS[1])_$(YEARS[2]).jls")
-    isfile(path) || error("no cached forcing for $id; run bench/greenland_spinup_forcing.jl first")
-    return deserialize(path)
-end
-
-mean_density(p) = sum(parent(p[:density]) .* parent(p[:dz])) / sum(parent(p[:dz]))
-
-function melt_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
-
-function equilibrate(profile, cycle, mp)
-    g = gemb_spinup(profile, cycle, mp;
-        max_iterations=MAX_CYCLES,
-        convergence_delta_density=CONV_DELTA_DENSITY,
-        convergence_drift_density=CONV_DRIFT_DENSITY,
-        convergence_delta_fac=CONV_DELTA_FAC,
-        convergence_drift_fac=CONV_DRIFT_FAC,
-        thermal_workspace=GEMB.ThermalWorkspace())
-    md = DD.metadata(g)
-    yr_per_cycle = length(DD.dims(cycle, DD.Ti)) * cycle.time_step / GEMB.SECONDS_PER_YEAR
-    return (fac = firn_air_content(parent(g[:dz]), parent(g[:density]), mp.density_ice),
-            density = mean_density(g),
-            years = md[:spinup_cycles] * yr_per_cycle,
-            converged = md[:spinup_converged])
-end
-
 function analyze(id, mp)
     cf = initialize_forcing(cached_forcing(id))
-    mp_last = GEMB.ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(GEMB.ModelParameters)
-         if f != :output_frequency)..., output_frequency=:last)
+    mp_last = last_step_parameters(mp)
     profile = initialize_profile(mp, cf)
     cs = GEMB.initialize_climate_summary(cf, mp)
     melt_record = melt_rate(profile, cf, mp_last)
@@ -122,11 +85,11 @@ end
 
 const MP = GEMB.ModelParameters(output_frequency=:last)
 @printf("Block-length comparison, %d Greenland sites, threads=%d\n\n",
-        length(SITE_IDS), Threads.nthreads())
+        length(site_ids()), Threads.nthreads())
 
 results = Any[]
 lk = ReentrantLock()
-Threads.@threads for id in SITE_IDS
+Threads.@threads for id in site_ids()
     try
         r = analyze(id, MP)
         lock(lk) do

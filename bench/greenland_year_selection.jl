@@ -15,41 +15,12 @@
 #
 # Reuses the forcing cache written by `greenland_spinup_forcing.jl`.
 
-using GEMB
-using GEMB_ClimateForcing
-using Statistics
-using Printf
-using Serialization
-using Dates
-
-const DD = GEMB.DimensionalData
-
-const YEARS = (2000, 2019)
-const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
+include("greenland_common.jl")
 const BLOCK_LENGTHS = (1, 3, 5)
-
-const SITE_IDS = ["Summit", "NEEM", "EastGRIP", "DYE-2", "Saddle", "CP1",
-                  "KAN-U", "SwissCamp", "KAN-M", "KAN-L", "QAS-L", "THU-L"]
-
-function cached_forcing(id)
-    path = joinpath(CACHE_DIR, "$(id)_$(YEARS[1])_$(YEARS[2]).jls")
-    isfile(path) || error("no cached forcing for $id; run bench/greenland_spinup_forcing.jl first")
-    return deserialize(path)
-end
-
-# Annual melt [kg m-2 yr-1] over `forcing`, on a fixed column. The column is the same for every
-# variant at a site, so differences are attributable to the forcing rather than to the state.
-function melt_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
 
 function analyze(id, mp)
     cf = initialize_forcing(cached_forcing(id))
-    mp_last = GEMB.ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(GEMB.ModelParameters)
-         if f != :output_frequency)..., output_frequency=:last)
+    mp_last = last_step_parameters(mp)
     profile = initialize_profile(mp, cf)
     cs = GEMB.initialize_climate_summary(cf, mp)
     melt_record = melt_rate(profile, cf, mp_last)
@@ -80,11 +51,11 @@ const MP = GEMB.ModelParameters(output_frequency=:last)
 const KEYS = ["avg", ("m$n" for n in BLOCK_LENGTHS)..., ("s$n" for n in BLOCK_LENGTHS)...]
 
 @printf("Year-selection comparison (no spinup), %d sites, threads=%d\n",
-        length(SITE_IDS), Threads.nthreads())
+        length(site_ids()), Threads.nthreads())
 
 results = Any[]
 lk = ReentrantLock()
-Threads.@threads for id in SITE_IDS
+Threads.@threads for id in site_ids()
     try
         r = analyze(id, MP)
         lock(lk) do; push!(results, r); end

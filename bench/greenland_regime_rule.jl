@@ -24,17 +24,7 @@
 #
 # Reuses the forcing cache written by `greenland_spinup_forcing.jl`.
 
-using GEMB
-using GEMB_ClimateForcing
-using Statistics
-using Printf
-using Serialization
-using Dates
-
-const DD = GEMB.DimensionalData
-
-const YEARS = (2000, 2019)
-const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
+include("greenland_common.jl")
 
 # Regime thresholds. Both are read off the measured distribution rather than fitted:
 #
@@ -45,21 +35,6 @@ const CACHE_DIR = joinpath(@__DIR__, "greenland_forcing_cache")
 #   rather than a tuned number: above it the column cannot retain a firn layer year on year.
 const MELT_FLOOR = 5.0
 const ABLATION_RATIO = 1.0
-
-const SITE_IDS = ["Summit", "NEEM", "EastGRIP", "DYE-2", "Saddle", "CP1",
-                  "KAN-U", "SwissCamp", "KAN-M", "KAN-L", "QAS-L", "THU-L"]
-
-function cached_forcing(id)
-    path = joinpath(CACHE_DIR, "$(id)_$(YEARS[1])_$(YEARS[2]).jls")
-    isfile(path) || error("no cached forcing for $id; run bench/greenland_spinup_forcing.jl first")
-    return deserialize(path)
-end
-
-function melt_rate(profile, forcing, mp_last)
-    out = gemb(profile, forcing, mp_last; thermal_workspace=GEMB.ThermalWorkspace())
-    years = length(DD.dims(forcing, DD.Ti)) * forcing.time_step / GEMB.SECONDS_PER_YEAR
-    return years > 0 ? sum(parent(out[:melt])) / years : NaN
-end
 
 """
     regime(melt, ratio) -> Symbol
@@ -96,9 +71,7 @@ const STRATEGIES = [
 
 function analyze(id, mp)
     cf = initialize_forcing(cached_forcing(id))
-    mp_last = GEMB.ModelParameters(;
-        (f => getfield(mp, f) for f in fieldnames(GEMB.ModelParameters)
-         if f != :output_frequency)..., output_frequency=:last)
+    mp_last = last_step_parameters(mp)
     profile = initialize_profile(mp, cf)
     cs = GEMB.initialize_climate_summary(cf, mp)
     melt_record = melt_rate(profile, cf, mp_last)
@@ -114,7 +87,6 @@ function analyze(id, mp)
             # since a ratio against ~0 is meaningless — those sites are scored on accumulation
             # alone, which is the only thing that can be wrong there.
             melt_err = melt_record > MELT_FLOOR ? 100 * abs(m / melt_record - 1) : NaN,
-            melt_pct = melt_record > 1.0 ? 100 * m / melt_record : NaN,
             acc_err = cs.accumulation > 0 ? 100 * abs(cs_c.accumulation / cs.accumulation - 1) : NaN,
         )
     end
@@ -123,20 +95,12 @@ function analyze(id, mp)
             regime=regime(melt_record, ratio), scores=scores)
 end
 
-# Joint error of one strategy at one site: the mean of its melt and accumulation errors, or
-# whichever is defined. Equal weight is a choice, not a derivation — an altimetry application
-# would weight accumulation higher — so the per-variable columns are printed too.
-function joint(s)
-    parts = filter(isfinite, [s.melt_err, s.acc_err])
-    return isempty(parts) ? NaN : mean(parts)
-end
-
 const MP = GEMB.ModelParameters(output_frequency=:last)
-@printf("Regime-rule test, %d sites, threads=%d\n", length(SITE_IDS), Threads.nthreads())
+@printf("Regime-rule test, %d sites, threads=%d\n", length(site_ids()), Threads.nthreads())
 
 results = Any[]
 lk = ReentrantLock()
-Threads.@threads for id in SITE_IDS
+Threads.@threads for id in site_ids()
     try
         r = analyze(id, MP)
         lock(lk) do; push!(results, r); end
@@ -170,9 +134,9 @@ println("="^108)
 @printf("%-12s %-10s | %s | %8s %8s\n", "site", "regime",
         join((lpad(n, 7) for n in NAMES), " "), "RULE", "RULEmed")
 for r in results
-    js = [joint(r.scores[n]) for n in NAMES]
-    jr = joint(r.scores[RULE[r.regime]])
-    jm = joint(r.scores[RULE_MED[r.regime]])
+    js = [joint_error_of(r.scores[n]) for n in NAMES]
+    jr = joint_error_of(r.scores[RULE[r.regime]])
+    jm = joint_error_of(r.scores[RULE_MED[r.regime]])
     @printf("%-12s %-10s | %s | %7.1f%% %7.1f%%\n", r.id, r.regime,
             join((@sprintf("%6.1f%%", j) for j in js), " "), jr, jm)
 end
@@ -186,15 +150,15 @@ function summarize(label, per_site)
             label, median(vals), mean(vals), maximum(vals))
 end
 for n in NAMES
-    summarize(n, [joint(r.scores[n]) for r in results])
+    summarize(n, [joint_error_of(r.scores[n]) for r in results])
 end
-summarize("RULE", [joint(r.scores[RULE[r.regime]]) for r in results])
-summarize("RULEmed", [joint(r.scores[RULE_MED[r.regime]]) for r in results])
+summarize("RULE", [joint_error_of(r.scores[RULE[r.regime]]) for r in results])
+summarize("RULEmed", [joint_error_of(r.scores[RULE_MED[r.regime]]) for r in results])
 
 # An oracle that picks the best strategy per site is the floor no rule can beat. If the composite
 # is close to it, the regime split captures most of what is available; if a fixed strategy is
 # already close, the split is not buying much.
-summarize("ORACLE", [minimum(filter(isfinite, [joint(r.scores[n]) for n in NAMES]))
+summarize("ORACLE", [minimum(filter(isfinite, [joint_error_of(r.scores[n]) for n in NAMES]))
                      for r in results])
 
 println("\nPer-regime breakdown (median joint error):")
@@ -202,8 +166,8 @@ println("\nPer-regime breakdown (median joint error):")
 for reg in (:no_melt, :moderate, :ablation)
     grp = [r for r in results if r.regime === reg]
     isempty(grp) && continue
-    meds = [median(filter(isfinite, [joint(r.scores[n]) for r in grp])) for n in NAMES]
-    ruled = median(filter(isfinite, [joint(r.scores[RULE[reg]]) for r in grp]))
+    meds = [median(filter(isfinite, [joint_error_of(r.scores[n]) for r in grp])) for n in NAMES]
+    ruled = median(filter(isfinite, [joint_error_of(r.scores[RULE[reg]]) for r in grp]))
     @printf("%-10s %3d | %s | %7.1f%%\n", reg, length(grp),
             join((@sprintf("%6.1f%%", m) for m in meds), " "), ruled)
 end
@@ -214,7 +178,7 @@ println("\nAgreement with the per-site optimum:")
 for (label, rule) in (("RULE", RULE), ("RULEmed", RULE_MED))
     agree = 0
     for r in results
-        js = Dict(n => joint(r.scores[n]) for n in NAMES)
+        js = Dict(n => joint_error_of(r.scores[n]) for n in NAMES)
         best = argmin(n -> isfinite(js[n]) ? js[n] : Inf, NAMES)
         chosen = rule[r.regime]
         # "Agrees" if the rule's pick is the optimum, or within 2 percentage points of it — a

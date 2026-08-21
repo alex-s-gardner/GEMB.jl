@@ -298,20 +298,25 @@ end
         model_parameters=mp, rank_by=:smbb)
 
     # `:smb` ranks on surface mass balance, which is a genuinely different quantity from melt: it
-    # carries accumulation too. `_year_smb` must therefore agree with the model's own SMB
-    # diagnostic rather than being a melt proxy — this is what makes the option meaningful.
+    # carries accumulation too. `_year_scores` must therefore agree with the model's own melt and
+    # SMB diagnostics rather than one being a proxy for the other — that is what makes the option
+    # meaningful rather than a relabelling.
     profile = initialize_profile(mp, cf)
     mp_last = GEMB.ModelParameters(output_frequency=:last)
     cy = GEMB._complete_years(cf)
     year_1992 = GEMB._year_slice(cf, cy, 1992)
-    smb = GEMB._year_smb(profile, year_1992, mp_last)
+    melt, smb = GEMB._year_scores(profile, year_1992, mp_last, GEMB.ThermalWorkspace())
+
     out = gemb(profile, year_1992, mp_last)
     years = length(DimensionalData.dims(year_1992, Ti)) * year_1992.time_step /
             GEMB.SECONDS_PER_YEAR
     @test smb ≈ GEMB._smb_rate(out, years, mp_last.density_ice)
-    # SMB is a signed rate in m of ice per year, not a melt total, so it must be finite and
-    # (at this accumulating site) positive — a sign error would make the ranking meaningless.
-    @test isfinite(smb)
+    @test melt ≈ sum(parent(out[:melt])) / years
+
+    # SMB is a signed rate in m of ice per year, positive under net accumulation. This site
+    # accumulates, so a sign error — or SMB silently returning the melt — would show up here.
+    @test smb > 0.0
+    @test melt >= 0.0
 end
 
 @testset "forcing_climatology: accumulation fallback guard" begin
@@ -340,18 +345,27 @@ end
     # the guard safe to have on by default.
     @test acc_err(guarded) <= acc_err(unguarded) + 1e-12
 
-    # `nothing` disables it: the result is then exactly the melt-ranked block.
-    @test DimensionalData.metadata(unguarded)[:climatology_representative_year] ==
-          DimensionalData.metadata(
-              forcing_climatology(cf; method=:representative, model_parameters=mp, n_years=2,
-                                  fallback_accumulation_tolerance=nothing,
-                                  verbose=false))[:climatology_representative_year]
-
     # An unreachable tolerance can never fire, so it must reproduce the unguarded block exactly.
+    # This is what pins "`nothing` disables the guard": the two disable it by different means and
+    # must agree. (Comparing `nothing` against a second identical `nothing` call would only assert
+    # that the function is deterministic.)
     huge = forcing_climatology(cf; method=:representative, model_parameters=mp, n_years=2,
                                fallback_accumulation_tolerance=1e6, verbose=false)
     @test DimensionalData.metadata(huge)[:climatology_representative_year] ==
           DimensionalData.metadata(unguarded)[:climatology_representative_year]
+
+    # Diagnostics are recorded in metadata, not only logged, so a `verbose=false` caller can
+    # still act on them. `climatology_rank_by` is the ranking *actually* used, which is what
+    # distinguishes a fired fallback from a melt-ranked block after the fact.
+    for cycle in (unguarded, guarded)
+        md = DimensionalData.metadata(cycle)
+        @test md[:climatology_rank_by] in (:model, :smb)
+        @test isfinite(md[:climatology_accumulation_error])
+        @test md[:climatology_accumulation_error] >= 0.0
+        @test isfinite(md[:climatology_melt_ratio])
+    end
+    # The unguarded block used the ranking it was asked for, by construction.
+    @test DimensionalData.metadata(unguarded)[:climatology_rank_by] === :model
 
     # The guard is inert under `rank_by=:smb`, which is already what it would fall back to.
     smb_guarded = forcing_climatology(cf; method=:representative, model_parameters=mp,
