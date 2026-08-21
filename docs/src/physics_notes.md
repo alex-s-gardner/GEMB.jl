@@ -444,3 +444,18 @@ What this changes for consumers of the output:
   `blowing_snow` and in the mass budget. MATLAB has neither; at the defaults (zero rate, no
   layer) the term is a no-op.
 
+- **Initialized deep temperature is now the mean *surface* temperature**, not the mean air
+  temperature, and refreezing's latent warming decays over the annual accumulation layer rather
+  than being applied at every depth. `ClimateSummary` gains `temperature_surface_mean`,
+  accumulated from the skin temperatures `_seb_annual_melt` already solves for (no extra pass
+  over the forcing). Affects the initial profile from `initialize_profile`, and therefore every
+  run that starts from one: the column is coupled to the atmosphere only through the surface
+  energy balance, so its deep mean tends to the surface mean, and the two differ by the whole
+  radiative and turbulent budget. This is not only an initialization detail — the deepest cell
+  is a Dirichlet reservoir, so the initialized value is a boundary condition no length of spinup
+  relaxes. Measured over a 21-site synthetic fleet
+  (`bench/calibrate_initial_guess.jl`), the old form was biased **+11.6 K warm on average and
+  never cold** (worst +24.5 K) against the self-consistent value, and the fix cuts the mean
+  temperature jump across that frozen cell from 0.79 K to 0.37 K. It **increases** spinup cycles
+  to convergence (309 to 455 on that fleet), which is a real cost accepted for the correctness:
+  a slower-densifying colder column starts further from its density attractor.

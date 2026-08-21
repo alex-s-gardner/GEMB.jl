@@ -24,7 +24,8 @@ annual temperature harmonic, and the net annual mass balance
 [`steady_state_profile`](@ref) then marches one parcel of snow forward in age with
 `b` as its burial rate, recording every state variable as it is buried: density
 (relaxing toward `mp.density_ice` under the run's own `mp.densification_method`),
-temperature (a damped annual wave about the latent-heat-warmed mean), grain size
+temperature (a damped annual wave about the mean *surface* temperature, warmed near
+the surface by refreezing latent heat), grain size
 (evolved by [`calculate_grain_size`](@ref) itself) and irreducible water. No albedo
 is stored: [`calculate_albedo`](@ref) diagnoses it from the column at the start of
 every timestep, including the first.

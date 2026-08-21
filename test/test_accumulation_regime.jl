@@ -94,13 +94,24 @@
                   sum(parent(out[:runoff]))
     @test net_surface > 0.0
 
-    # Mass leaves at the base to make room for it. The two do not cancel: compaction opens
-    # thickness that burial fills, so the basal loss exceeds the surface gain in ice-equivalent
-    # terms (measured: -713 vs +697 kg m-2) — the intended consequence of pinning the depth,
-    # not a leak. The whole-run budget closes under `verbose=true` above.
+    # Mass leaves at the base to make room for it — the intended consequence of pinning the
+    # depth, not a leak. The whole-run budget closes under `verbose=true` above.
+    #
+    # The two do not cancel, and the *sign* of the residual is set by which way the column's
+    # firn air content moved, not by a fixed inequality. Rearranging the elevation identity
+    # below (`-cum_flux = SMB/ρᵢ + ΔFAC`) and multiplying through by `ρᵢ`:
+    #
+    #     |basal_mass| − net_surface = ΔFAC · density_ice
+    #
+    # so a column whose FAC shrinks loses *less* at the base than it gains at the top, and one
+    # whose FAC grows loses more. Both are physical. Measured here: ΔFAC = −0.0502 m, i.e.
+    # −46.0 kg m-2, against |basal_mass| − net_surface = −45.7 — which is the real invariant.
+    # Asserting `abs(basal_mass) > net_surface` instead was pinning the sign of ΔFAC for this
+    # particular forcing, which is not a property of the accumulation regime.
     basal_mass = cum_flux[end] * mp.density_ice
+    fac = parent(out[:firn_air_content])
     @test basal_mass < 0.0
-    @test abs(basal_mass) > net_surface
+    @test abs(basal_mass) - net_surface ≈ (fac[end] - fac[1]) * mp.density_ice atol = 1.0
 
     # --- The elevation identity ----------------------------------------------------
     # Same identity as the ablation test, and it takes its simple form here because the column
@@ -110,10 +121,9 @@
     #     -cumsum(ice_flux) = SMB / density_ice + Δ(firn_air_content)
     #
     # A dry accumulating column is the cleanest case for it: the surface *rises* here
-    # (-cum_flux > 0) while FAC is nearly stationary, so the mass term carries essentially all
-    # of it.
+    # (-cum_flux > 0), and the mass term carries most of it (+0.760 m of the +0.710 m total,
+    # with the FAC term contributing -0.050 m as the column compacts).
     smb_ie = net_surface / mp.density_ice
-    fac = parent(out[:firn_air_content])
     @test -cum_flux[end] ≈ smb_ie + (fac[end] - fac[1]) atol = 1e-2
     @test -cum_flux[end] > 0.0                 # the surface rises
 
@@ -126,9 +136,22 @@
     @test all(density .<= mp.density_ice + 1e-6)
     @test all(dz_out .> 0.0)
 
-    # Burial with no melt gives a monotonically densifying column: every cell is at least as
-    # dense as the one above it, at the final step.
-    @test issorted(density[:, end])
+    # Burial with no melt gives a densifying column: every cell is at least as dense as the one
+    # above it, at the final step.
+    #
+    # The tolerance is not slop. Fresh snow arrives at a density set by the air temperature at
+    # the moment of snowfall, which swings 30 K over the seasonal cycle here, so cells buried in
+    # different seasons enter the column at different densities and the compaction that follows
+    # does not always erase the ordering. Measured: 6 inversions in 264 cells, worst
+    # -0.043 kg m-3 — a relative 1.1e-4, three orders of magnitude below the ~50 kg m-3 the
+    # fresh-snow density itself varies by across a year. A strict `issorted` asserts that
+    # seasonal density banding is fully overprinted by depth, which is not a property of the
+    # regime.
+    final_density = density[:, end]
+    @test all(diff(final_density) .>= -0.1)
+    # And densifying overall by far more than the banding amplitude, which is the physical
+    # claim the strict sort was standing in for.
+    @test final_density[end] - final_density[1] > 100.0
 
     # --- Spinup holds the same invariants -----------------------------------------
     spun = gemb_spinup(profile, cf, mp; max_iterations=4, verbose=true)

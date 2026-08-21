@@ -42,3 +42,8 @@ test/test_optimization_validation.jl
 .claude/settings.local.json
 test/Manifest.toml
 bench/Manifest.toml
+
+# Ground-truth cache for bench/calibrate_initial_guess.jl. A machine-local, regenerable
+# artifact (`... truth`, ~14 min on 8 threads) whose contents are Julia-version-specific
+# Serialization output, not a reviewable input.
+bench/calibrate_initial_guess_truth.jls
