@@ -459,3 +459,23 @@ What this changes for consumers of the output:
   temperature jump across that frozen cell from 0.79 K to 0.37 K. It **increases** spinup cycles
   to convergence (309 to 455 on that fleet), which is a real cost accepted for the correctness:
   a slower-densifying colder column starts further from its density attractor.
+- **Added `forcing_climatology(method=:representative)`** [default `:average`, unchanged], which
+  returns a block of `n_years` consecutive **real** years whose mean melt matches the record's,
+  instead of the cross-year average. Opt-in, so every existing spinup is bit-identical. The
+  averaged climatology preserves each field's mean but shrinks its variance by ~`1/n_years`, and
+  melt is *rectified* — zero until the surface energy balance reaches the melt point — so
+  averaging cancels the warm excursions that carry it. Measured over a 21-site synthetic fleet
+  (`bench/calibrate_initial_guess.jl`): melt integrated over the averaged cycle is **identically
+  0.0 at every site**, including sites melting up to 384 kg m-2 yr-1 over their real record, so a
+  melting site spun up on its own climatology equilibrates as a melt-free one. A representative
+  block recovers 99-116% of record melt. Which method is right depends on regime: averaging is
+  adequate where melt/accumulation is below ~0.3 (the two agree on equilibrated firn air content
+  to ~10-20%) and is why it stays the default; `:representative` is right in the ablation regime
+  (melt above accumulation), where the column correctly equilibrates to bare ice and what matters
+  is the mean melt driving latent-heat warming. In the band between (~0.3 to 1.0) **neither is
+  trustworthy** — averaging deletes the melt while a repeated real cycle can melt the firn away,
+  because the record's mean ratio being below 1 does not stop individual years exceeding it — and
+  a longer block does not fix it (3- and 5-year blocks lose the firn at the same sites).
+  `_warn_cycle_melt_ratio` warns on the constructed cycle's own ratio. The regime boundaries come
+  from 21 synthetic sites derived from one parent site, with only 2 in the critical band, so they
+  are directions rather than calibrated numbers.
