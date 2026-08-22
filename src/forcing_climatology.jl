@@ -381,7 +381,19 @@ function _representative_block(cf::ClimateForcing, mp::ModelParameters;
     # The ranking column. Built unless the caller supplied one, and needed even under
     # `rank_by = :estimate` — which does not use it itself — because the accumulation guard below
     # may re-select on `:smb`, which does. Building it is cheap next to the spinup this feeds.
-    col = profile === nothing ? initialize_profile(mp, cf) : profile
+    # The record's climate summary, computed once. The guard needs its accumulation, and
+    # `_report_representative_block` its melt — and building the ranking column needs the same
+    # summary internally, so it is built here and handed to `initialize_profile` rather than
+    # letting that recompute it. Measured on a 32-year 3-hourly record: 346 ms per summary, of a
+    # 3020 ms total, so the duplicate was ~11% of the whole call.
+    #
+    # Deliberately *not* short-cut to `cf.accumulation_mean`: that is derived from total
+    # precipitation and is 3x larger here (1177 against 386 kg m-2 yr-1), and a sliced block
+    # carries the record's value through unchanged, so comparing block metadata to record metadata
+    # would compare a number to itself.
+    record_summary = initialize_climate_summary(cf, mp)
+    col = profile === nothing ? initialize_profile(mp, cf; climate_summary=record_summary) :
+          profile
 
     # `(melt, smb)` per candidate year, from one `gemb` pass each, computed once and shared by
     # both the initial selection and the fallback's re-selection. One thermal workspace is reused
@@ -415,9 +427,8 @@ function _representative_block(cf::ClimateForcing, mp::ModelParameters;
     # accumulation error, while QAS-L had the worst accumulation error (30.2%) at -16.3% SMB bias.
     # An SMB-triggered guard fired on the wrong sites and made the median *worse* at every
     # threshold tried.
-    # Both summaries are needed by the guard, the diagnostics and the warning, so each is computed
-    # once here and threaded down rather than re-derived at each consumer.
-    record_summary = initialize_climate_summary(cf, mp)
+    # The cycle's own summary, for the guard, the diagnostics and the warning. The record's was
+    # computed above.
     cycle_summary = initialize_climate_summary(sel.cycle, mp)
     acc_record = record_summary.accumulation
     effective_rank = rank_by
@@ -581,7 +592,12 @@ SMB shares `_smb_rate` with [`gemb_spinup`](@ref)'s own diagnostic, so the ranki
 reported `spinup_smb_rate` cannot disagree about what SMB means.
 """
 function _year_scores(col, year_forcing::ClimateForcing, mp_last::ModelParameters,
-                      ws::ThermalWorkspace)
+                      ws::ThermalWorkspace)::Tuple{Float64,Float64}
+    # Return type annotated rather than left to inference. `gemb`'s output stack and the `col`
+    # profile are untyped here, so both reductions infer as `Any` and the tuple with them; the
+    # annotation makes what callers see concrete without narrowing either argument. Both
+    # quantities are `Float64` by construction (`_smb_rate` returns one, and the melt sum is over
+    # a `Float64` layer), so this converts nothing.
     out = gemb(col, year_forcing, mp_last; thermal_workspace=ws)
     years = length(dims(year_forcing, Ti)) * year_forcing.time_step / SECONDS_PER_YEAR
     years > 0 || return (NaN, NaN)

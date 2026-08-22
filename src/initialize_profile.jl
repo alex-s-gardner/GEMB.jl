@@ -1,6 +1,7 @@
 """
     initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-                       constant_density=false, constant_temperature=false)
+                       constant_density=false, constant_temperature=false,
+                       climate_summary=nothing)
         -> profile::DimStack
 
 Initialize a GEMB firn column profile as a DimStack, as a steady-state guess
@@ -54,6 +55,13 @@ Setting **both** takes a separate early-return path
 ([`_uniform_ice_profile`](@ref)): pure ice at a uniform mean-annual temperature, with no
 march and no climate summary.
 
+- `climate_summary`: a [`ClimateSummary`](@ref) for `cf`, when the caller already has one.
+  Purely an optimization — the summary is a pure function of `(cf, mp)`, so passing one cannot
+  change the result, and `nothing` (the default) builds it here as before. Exists because
+  `forcing_climatology(method=:representative)` needs the record's summary for its accumulation
+  guard and would otherwise pay for an identical second one: measured at 346 ms of a 3020 ms call
+  on a 32-year 3-hourly record.
+
 Every path here returns temperature at or below the melt point (273.15 K): the
 climate-derived march clamps in [`_steady_state_temperature`](@ref), and the
 two flag paths clamp `cf.temperature_air_mean` (with a warning) before filling.
@@ -72,7 +80,8 @@ its age describes a column that was replaced). Nothing in the physics reads `age
 choice is output-only.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
-    constant_density::Bool=false, constant_temperature::Bool=false)
+    constant_density::Bool=false, constant_temperature::Bool=false,
+    climate_summary=nothing)
 
     T_mean = Float64(cf.temperature_air_mean)
 
@@ -102,7 +111,11 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         return _uniform_ice_profile(mp, T_mean)
     end
 
-    cs = initialize_climate_summary(cf, mp)
+    # Reuse a caller's summary when given one. `forcing_climatology(method=:representative)`
+    # already needs the record's summary for its accumulation guard, and building it is not cheap
+    # (346 ms on a 32-year 3-hourly record), so recomputing an identical one here was ~11% of that
+    # call. `nothing` — every other caller — behaves exactly as before.
+    cs = climate_summary === nothing ? initialize_climate_summary(cf, mp) : climate_summary
 
     # Size the grid to the depth this climate needs, unless a flag pins it
     # to the configured value. The depth is not returned: it is realized in `dz`,
