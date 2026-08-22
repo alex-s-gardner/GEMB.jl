@@ -538,10 +538,9 @@ sites with record ratios of 0.83 and 0.93 lost their firn to a repeated block. T
 **not** reproduce on real Greenland forcing (see [`forcing_climatology`](@ref)), so the threshold
 is a conservative guard rather than a calibrated boundary.
 """
-
-# `cycle_summary` is a `ClimateSummary`, left unannotated because
-# `initialize_climate_summary.jl` (which defines that type) is included after this file.
 function _warn_cycle_melt_ratio(cycle_summary, block_years)
+    # `cycle_summary` is a `ClimateSummary`, left unannotated because
+    # `initialize_climate_summary.jl` (which defines that type) is included after this file.
     acc = cycle_summary.accumulation
     acc > 0.0 || return nothing
 
