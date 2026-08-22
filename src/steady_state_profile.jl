@@ -27,7 +27,8 @@ seeds:
   `mp.densification_method` — *not* always Herron–Langway.
 - **depth** follows from mass balance, `z(t) = b·∫₀ᵗ ds/ρ(s)`, where
   `b = cs.balance` [kg m-2 yr-1] is the mass buried per year.
-- **temperature** is a damped annual wave about the latent-heat-warmed mean; see
+- **temperature** is a damped annual wave about the mean surface temperature, warmed
+  near the surface by refreezing latent heat; see
   [`_steady_state_temperature`](@ref).
 - **grain size** is evolved by [`calculate_grain_size`](@ref) itself, so
   Marbouty/Brun metamorphism is not duplicated here.
@@ -86,7 +87,11 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     # rather than by a threshold test.
     # ---------------------------------------------------------------------
     if b <= 0.0
-        T_surf = min(cs.temperature_air_mean + cs.latent_warming, CtoK)
+        # The surface mean, for the same reason `_steady_state_temperature` uses it: this fills
+        # the whole column, including the Dirichlet bottom cell. `latent_warming` is retained
+        # here without a depth decay because an ablation column has no annual layer for it to
+        # decay over — nothing is buried — and it is zero at any site with no refreeze anyway.
+        T_surf = min(cs.temperature_surface_mean + cs.latent_warming, CtoK)
         return (
             density          = fill(ρi, m),
             temperature      = fill(T_surf, m),
@@ -317,27 +322,58 @@ end
     _steady_state_temperature(z, ρ, cs::ClimateSummary, mp::ModelParameters) -> T [K]
 
 Temperature at depth `z` [m, positive down] for a column in thermal steady state:
-a damped annual wave superposed on the mean, warmed by the latent heat that
+a damped annual wave superposed on the mean, warmed near the surface by the latent heat that
 refreezing releases.
 
-    T(z) = T̄ + ΔT_latent + A_T·exp(−z/d)·cos(φ − z/d)
+    T(z) = T_surface + ΔT_latent·exp(−z/z_annual) + A_T·exp(−z/d)·cos(φ − z/d)
 
 The damping depth `d = sqrt(2K/(ρ·c_p·ω))` uses the local density's own thermal
 conductivity from [`thermal_conductivity`](@ref), so the wave decays through a
 physically consistent column rather than a nominal one. `ω = 2π/yr`.
 
-`ΔT_latent = LF·R/(c_p·A_eff)` is self-limiting: at the cold-content cap it
-equals `(273.15 − T̄)·accumulation/A_eff`, which is strictly less than the gap to
-the melt point. The `min(·, CtoK)` clamp is therefore belt-and-braces, and also
-guards the ablation case where the mean itself is above freezing.
+## The mean is the *surface* mean, not the air mean
+
+The column exchanges heat with the atmosphere only through the surface energy balance, so its
+deep mean tends to `cs.temperature_surface_mean` — the mean skin temperature that balance
+produces — and not to the screen-level `cs.temperature_air_mean`. The two differ by the whole
+radiative and turbulent budget, and the difference is neither small nor of predictable sign: at
+the synthetic `test_1` site the surface is 5.1 K *colder* than the air.
+
+This matters more than a mean-state error normally would, because the deepest cell is a
+**Dirichlet reservoir** — `calculate_temperature` returns `temperature[m]` bit-unchanged by
+construction — so whatever this function returns at the base of the column is a boundary
+condition for the entire run, which no length of spinup relaxes. Using the air mean pinned the
+base ~9 K too warm at `test_1` and biased the converged mass-weighted mean density by
+~11 kg m-3. See `bench/calibrate_initial_guess.jl` for the measurement and the self-consistency
+criterion (zero temperature jump across that frozen cell) it is checked against.
+
+## Latent warming decays over the annual layer
+
+`ΔT_latent` is derived in [`initialize_climate_summary`](@ref) as the warming of **one annual
+accumulation layer** by one year of refreezing, `LF·R/(c_p·A_eff)`. Applying it at every depth
+therefore double-counts it: the heat released into this year's layer is not also released into
+firn buried a century ago. It is applied with an exponential decay over `z_annual`, the depth
+one year of accumulation occupies at the local density (`A_eff/ρ`), so the near-surface warming
+the reference intends is preserved while the deep asymptote is the surface mean alone.
+
+It remains self-limiting where it acts: at the cold-content cap it equals
+`(273.15 − T̄)·accumulation/A_eff`, strictly less than the gap to the melt point. The
+`min(·, CtoK)` clamp is therefore belt-and-braces, and also guards the ablation case where the
+mean itself is above freezing.
 """
 @inline function _steady_state_temperature(z::Real, ρ::Real, cs::ClimateSummary,
     mp::ModelParameters)
-    T_bar = cs.temperature_air_mean + cs.latent_warming
+    T_bar = cs.temperature_surface_mean
     d = thermal_damping_depth(T_bar, ρ, mp)
 
+    # Depth one year of accumulation occupies at this density. Floored so a vanishing
+    # accumulation cannot divide by zero; at that limit there is no annual layer to warm and
+    # the exponential collapses to zero below the surface, which is the correct limit.
+    z_annual = max(cs.accumulation_effective / max(Float64(ρ), 1.0), D_TOLERANCE)
+
+    latent = cs.latent_warming * exp(-Float64(z) / z_annual)
     decay = exp(-z / d)
-    T = T_bar + cs.temperature_amplitude * decay * cos(cs.temperature_phase - z / d)
+    T = T_bar + latent + cs.temperature_amplitude * decay * cos(cs.temperature_phase - z / d)
     return min(T, CtoK)
 end
 

@@ -51,6 +51,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "GEMB Spinup" begin
         include("test_gemb_spinup.jl")
     end
+    @testset "Forcing Climatology" begin
+        include("test_forcing_climatology.jl")
+    end
     @testset "Age" begin
         include("test_age.jl")
     end

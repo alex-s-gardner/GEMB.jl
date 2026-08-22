@@ -4,8 +4,85 @@
 const SPINUP_DRIFT_WINDOW = 10
 
 """
+    _SpinupTracker(delta_tolerance, drift_tolerance)
+
+Step-and-trend convergence bookkeeping for one scalar diagnostic of the column.
+
+One of these per convergence *quantity* (column-mean density, firn air content), so the two
+share this logic rather than each carrying its own copy of the history, the step, the drift
+regression, the `NaN` sentinels and the abstention rule.
+
+Either tolerance may be `nothing`, meaning "not requested"; a tracker with both unset is inert
+and [`_is_satisfied`](@ref) returns `true` for it, which is what makes the criteria conjunctive
+without special-casing the unused ones.
+
+This factors out the *per-quantity* bookkeeping — the history, the step, the drift regression, the
+`NaN` sentinels and the abstention rule — and nothing more. Adding a third quantity still touches
+`gemb_spinup`'s signature, the `drift_window` guard, the `checking` disjunction, the
+`_is_satisfied` conjunction, the verbose message, the `@info` summary, and both ends of
+`_attach_spinup_provenance`. Turning the criteria into a collection would fix that; the shape here
+is deliberately the smaller change, appropriate while there are two quantities.
+"""
+mutable struct _SpinupTracker
+    delta_tolerance::Union{Nothing,Float64}
+    drift_tolerance::Union{Nothing,Float64}
+    history::Vector{Float64}
+    final_delta::Float64
+    final_drift::Float64
+end
+
+_SpinupTracker(delta_tolerance, drift_tolerance) = _SpinupTracker(
+    delta_tolerance === nothing ? nothing : Float64(delta_tolerance),
+    drift_tolerance === nothing ? nothing : Float64(drift_tolerance),
+    Float64[], NaN, NaN)
+
+# Whether this quantity is being tested at all.
+_is_checking(t::_SpinupTracker) =
+    t.delta_tolerance !== nothing || t.drift_tolerance !== nothing
+
+"""
+    _update!(t::_SpinupTracker, value, drift_window)
+
+Record this cycle's `value` and refresh the tracker's step and drift measures.
+
+The step is computed unconditionally once there is a previous cycle to compare against, but the
+drift regression is only run when its tolerance was requested *and* the window is full — the
+slope of a partial window is not the slope the criterion is about.
+
+Callers must skip this entirely for an inert tracker (`_is_checking` false) — Julia evaluates
+arguments eagerly, so guarding *inside* here would still pay for whatever integral produced
+`value`. The `gemb_spinup` loop does exactly that.
+"""
+function _update!(t::_SpinupTracker, value::Float64, drift_window::Int)
+    # The step needs the previous cycle's value, which is the last thing pushed — so it is read
+    # from `history` rather than mirrored in a second field that could desynchronize.
+    isempty(t.history) || (t.final_delta = abs(value - t.history[end]))
+    push!(t.history, value)
+    if t.drift_tolerance !== nothing && length(t.history) >= drift_window
+        t.final_drift = abs(_least_squares_slope(t.history, drift_window))
+    end
+    return nothing
+end
+
+"""
+    _is_satisfied(t::_SpinupTracker) -> Bool
+
+Whether every criterion this tracker was given currently holds. `true` for an inert tracker
+(nothing was asked of it), and `false` while a requested measure is still `NaN` — an unmet
+criterion must not pass by abstention.
+"""
+function _is_satisfied(t::_SpinupTracker)
+    delta_ok = t.delta_tolerance === nothing ||
+               (!isnan(t.final_delta) && t.final_delta < t.delta_tolerance)
+    drift_ok = t.drift_tolerance === nothing ||
+               (!isnan(t.final_drift) && t.final_drift < t.drift_tolerance)
+    return delta_ok && drift_ok
+end
+
+"""
     gemb_spinup(profile, cf, mp; max_iterations=100,
                 convergence_delta_density=nothing, convergence_drift_density=nothing,
+                convergence_delta_fac=nothing, convergence_drift_fac=nothing,
                 drift_window=$SPINUP_DRIFT_WINDOW, verbose=false)
 
 Run GEMB for multiple spinup cycles to reach quasi-steady state.
@@ -13,17 +90,29 @@ Run GEMB for multiple spinup cycles to reach quasi-steady state.
 Forces `output_frequency=:last` internally to minimize memory usage during spinup.
 Returns the spun-up profile DimStack.
 
-Convergence is judged on the **column-mean density** — averaged over the whole column,
-since the column depth is fixed for the run (chosen by [`initialize_profile`](@ref),
-held by [`trim_bottom!`](@ref)) and so the same domain is compared at every cycle.
+Convergence is judged on **column-mean density**, on whole-column **firn air content**, or on
+both — see the criteria below. Either quantity is averaged or integrated over the whole column,
+which is a fair comparison at every cycle because the column depth is fixed for the run (chosen
+by [`initialize_profile`](@ref), held by [`trim_bottom!`](@ref)).
+
+**Which quantity to converge is an application question, not a detail.** Column-mean density and
+firn air content are not interchangeable tolerances on the same thing. They are related by
+`FAC = Σ dz·(ρᵢ − ρ)/ρᵢ`, so at fixed total depth `Z`, `∂FAC/∂ρ̄ = −Z/ρᵢ`: **the FAC residual a
+given density tolerance admits is proportional to the depth of the column.** Measured across a
+21-site synthetic fleet, `convergence_delta_density = 1e-3` admits 0.02 mm of FAC drift in a
+14 m column and 0.23 mm in a 212 m one — a 12x spread, loosest exactly at the deep, cold sites.
+Work that reads FAC directly, such as altimetry requiring no residual trend in firn air, should
+therefore converge on FAC and not rely on a density tolerance to imply it.
 
 # Provenance
 The returned profile carries a metadata `NamedTuple` (accessible via
 `DimensionalData.metadata(profile)`) recording how the spinup ran and which
 climatology it used: `spinup_cycles`, `spinup_converged`,
-`spinup_final_delta_density`, `spinup_final_drift_density`, the convergence
+`spinup_final_delta_density`, `spinup_final_drift_density`,
+`spinup_final_delta_fac`, `spinup_final_drift_fac`, the convergence
 parameters (`spinup_max_iterations`, `spinup_convergence_delta_density`,
-`spinup_convergence_drift_density`, `spinup_drift_window`),
+`spinup_convergence_drift_density`, `spinup_convergence_delta_fac`,
+`spinup_convergence_drift_fac`, `spinup_drift_window`),
 `spinup_smb_rate` (mean surface mass balance over the final cycle [m of ice per
 year] from the surface fluxes, positive under accumulation — see
 [`_cycle_smb_rate`](@ref); `NaN` if undeterminable), and the climatology
@@ -34,28 +123,35 @@ profile is used to start a transient run.
 
 # Convergence criteria
 
-Two independent tests, either or both of which may be requested. When **both** are
-given, **both** must hold — a small per-cycle step and no systematic trend.
+Four independent tests, any subset of which may be requested. Every criterion given must
+hold — they are conjunctive, so adding one can only make convergence stricter, never looser.
+Two quantities (density, FAC) times two forms:
 
-- `convergence_delta_density`: exit when the absolute change in column-mean density
-  between consecutive cycles is below this value [kg/m³]. Cheap, but a *step* test: a
-  column creeping steadily at just under the tolerance passes it while still drifting.
-- `convergence_drift_density`: exit when the magnitude of the least-squares slope of
-  column-mean density against cycle number, over the trailing `drift_window` cycles,
-  is below this value [kg/m³ per cycle]. This is the trend test the step test cannot
-  make: it distinguishes a column oscillating about a settled mean (slope ≈ 0) from
-  one still densifying monotonically, and by using every point in the window it is
-  not fooled by a single anomalous cycle. Inactive until `drift_window` cycles have
-  run.
+- **Step** (`convergence_delta_*`): exit when the absolute change between consecutive cycles
+  is below this value. Cheap, but a column creeping steadily at just under the tolerance
+  passes it while still drifting.
+- **Drift** (`convergence_drift_*`): exit when the magnitude of the least-squares slope
+  against cycle number, over the trailing `drift_window` cycles, is below this value. This is
+  the trend test the step test cannot make: it distinguishes a column oscillating about a
+  settled mean (slope ≈ 0) from one still evolving monotonically, and by using every point in
+  the window it is not fooled by a single anomalous cycle. Inactive until `drift_window`
+  cycles have run.
 
-When neither is given the spinup always runs `max_iterations` cycles.
+Units follow the quantity: density criteria are [kg/m³] and [kg/m³ per cycle], FAC criteria are
+[m of air] and [m of air per cycle]. A useful FAC tolerance is therefore numerically much
+smaller than a density one — millimetres of air, not thousandths of a kg/m³ (see the depth
+scaling above).
+
+When none is given the spinup always runs `max_iterations` cycles.
 
 # Keyword arguments
 - `max_iterations`: maximum number of spinup cycles (default 100). The spinup always
   exits after this many cycles even if convergence has not been reached.
-- `convergence_delta_density`, `convergence_drift_density`: see above.
+- `convergence_delta_density`, `convergence_drift_density`: density criteria, see above.
+- `convergence_delta_fac`, `convergence_drift_fac`: whole-column firn-air-content criteria
+  ([`firn_air_content`](@ref)), see above.
 - `drift_window`: trailing cycles the drift slope is fitted over (default
-  $SPINUP_DRIFT_WINDOW). Must be ≥ 2.
+  $SPINUP_DRIFT_WINDOW). Must be ≥ 2. Shared by both drift criteria.
 - `verbose`: print a convergence message when early exit occurs.
 - `thermal_workspace`: reusable thermal-solve scratch, shared across every cycle of this
   spinup. One belongs to one column; give each concurrent thread its own
@@ -66,11 +162,14 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      max_iterations::Int=100,
                      convergence_delta_density=nothing,
                      convergence_drift_density=nothing,
+                     convergence_delta_fac=nothing,
+                     convergence_drift_fac=nothing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
                      verbose::Bool=false,
                      thermal_workspace::ThermalWorkspace=ThermalWorkspace())
 
-    if convergence_drift_density !== nothing && drift_window < 2
+    if (convergence_drift_density !== nothing || convergence_drift_fac !== nothing) &&
+       drift_window < 2
         error("drift_window must be at least 2 to fit a slope, got $drift_window")
     end
 
@@ -80,20 +179,20 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         output_frequency=:last
     )
 
-    prev_avg_density = nothing
-    current_profile  = profile
-    # Column-mean density per cycle, for the drift regression. Only the trailing
-    # `drift_window` entries are ever read, but a spinup is at most a few hundred
-    # cycles of one Float64 each, so there is nothing to gain by ringbuffering it.
-    history = Float64[]
+    current_profile = profile
+
+    # One tracker per convergence quantity, so density and FAC share the step/drift
+    # bookkeeping instead of duplicating it. Only the trailing `drift_window` entries of each
+    # history are ever read, but a spinup is at most a few hundred cycles of one Float64 each,
+    # so there is nothing to gain by ringbuffering them.
+    rho_track = _SpinupTracker(convergence_delta_density, convergence_drift_density)
+    fac_track = _SpinupTracker(convergence_delta_fac, convergence_drift_fac)
 
     # Convergence provenance, captured for the returned profile.
-    cycles_run          = 0
-    converged           = false
-    final_delta_density = NaN
-    final_drift_density = NaN
+    cycles_run = 0
+    converged  = false
 
-    checking = convergence_delta_density !== nothing || convergence_drift_density !== nothing
+    checking = _is_checking(rho_track) || _is_checking(fac_track)
 
     # Mean SMB of the most recent cycle, refreshed each pass so the equilibrated rate is to
     # hand after the loop. Recorded rather than holding the cycle's whole output stack: under
@@ -109,46 +208,42 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
 
         checking || continue
 
-        avg_rho = _column_mean_density(current_profile)
-        push!(history, avg_rho)
+        # Guarded at the call site, not inside `_update!`: Julia evaluates arguments eagerly, so
+        # an unguarded call would run the `firn_air_content` integral (and the density average) on
+        # every cycle of every spinup regardless of what was requested — including on the default
+        # path, which asks for neither FAC measure.
+        _is_checking(rho_track) &&
+            _update!(rho_track, _column_mean_density(current_profile), drift_window)
+        _is_checking(fac_track) &&
+            _update!(fac_track, _column_fac(current_profile, mp), drift_window)
 
-        # Each criterion reports `nothing` while it lacks the cycles to judge, which is
-        # distinct from reporting "not converged": an unmet criterion must not be able to
-        # pass by abstention, so a `nothing` blocks convergence.
-        if prev_avg_density !== nothing
-            final_delta_density = abs(avg_rho - prev_avg_density)
-        end
-        prev_avg_density = avg_rho
-
-        if convergence_drift_density !== nothing && length(history) >= drift_window
-            final_drift_density = abs(_density_drift(history, drift_window))
-        end
-
-        delta_ok = convergence_delta_density === nothing ||
-                   (!isnan(final_delta_density) &&
-                    final_delta_density < Float64(convergence_delta_density))
-        drift_ok = convergence_drift_density === nothing ||
-                   (!isnan(final_drift_density) &&
-                    final_drift_density < Float64(convergence_drift_density))
-
-        if delta_ok && drift_ok
+        # Conjunctive across every requested criterion. Each reports `nothing` while it lacks
+        # the cycles to judge, which is distinct from reporting "not converged": an unmet
+        # criterion must not be able to pass by abstention, so a `nothing` blocks convergence.
+        if _is_satisfied(rho_track) && _is_satisfied(fac_track)
             verbose && @info "gemb_spinup converged at cycle $cycle " *
-                             "(Δρ = $(round(final_delta_density, digits=4)) kg/m³, " *
-                             "drift = $(round(final_drift_density, digits=6)) kg/m³/cycle)"
+                             "(Δρ = $(round(rho_track.final_delta, digits=4)) kg/m³, " *
+                             "ρ drift = $(round(rho_track.final_drift, digits=6)) kg/m³/cycle, " *
+                             "ΔFAC = $(round(fac_track.final_delta, digits=8)) m, " *
+                             "FAC drift = $(round(fac_track.final_drift, digits=10)) m/cycle)"
             converged = true
             break
         end
     end
 
-    @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run converged=converged final_delta_density=final_delta_density final_drift_density=final_drift_density
+    @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run converged=converged final_delta_density=rho_track.final_delta final_drift_density=rho_track.final_drift final_delta_fac=fac_track.final_delta final_drift_fac=fac_track.final_drift
 
     return _attach_spinup_provenance(current_profile, cf;
         cycles=cycles_run, converged=converged,
-        final_delta_density=final_delta_density,
-        final_drift_density=final_drift_density,
+        final_delta_density=rho_track.final_delta,
+        final_drift_density=rho_track.final_drift,
+        final_delta_fac=fac_track.final_delta,
+        final_drift_fac=fac_track.final_drift,
         max_iterations=max_iterations,
         convergence_delta_density=convergence_delta_density,
         convergence_drift_density=convergence_drift_density,
+        convergence_delta_fac=convergence_delta_fac,
+        convergence_drift_fac=convergence_drift_fac,
         drift_window=drift_window,
         smb_rate=smb_rate)
 end
@@ -230,7 +325,9 @@ end
 function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         cycles, converged, final_delta_density, final_drift_density,
         max_iterations, convergence_delta_density, convergence_drift_density,
-        drift_window, smb_rate=NaN)
+        drift_window, smb_rate=NaN,
+        final_delta_fac=NaN, final_drift_fac=NaN,
+        convergence_delta_fac=nothing, convergence_drift_fac=nothing)
     cf_meta = DD.metadata(cf)
     _cf(key) = haskey(cf_meta, key) ? cf_meta[key] : nothing
     prov = (
@@ -238,9 +335,15 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         spinup_converged = converged,
         spinup_final_delta_density = final_delta_density,
         spinup_final_drift_density = final_drift_density,
+        # FAC measures [m of air] and [m of air per cycle]. `NaN` when the FAC criteria were
+        # not requested, which is distinct from a measured zero.
+        spinup_final_delta_fac = final_delta_fac,
+        spinup_final_drift_fac = final_drift_fac,
         spinup_max_iterations = max_iterations,
         spinup_convergence_delta_density = convergence_delta_density,
         spinup_convergence_drift_density = convergence_drift_density,
+        spinup_convergence_delta_fac = convergence_delta_fac,
+        spinup_convergence_drift_fac = convergence_drift_fac,
         spinup_drift_window = drift_window,
         # Equilibrated mean surface mass balance [m of ice per year], positive under accumulation.
         # Read by `plot_output`'s detrended height axis; `NaN` when undeterminable.
@@ -264,11 +367,23 @@ function _column_mean_density(profile::DimStack)
     return sum(rho[i] * dz[i] for i in eachindex(dz)) / sum(dz)
 end
 
-# Least-squares slope of the last `window` column-mean densities against cycle number
-# [kg/m³ per cycle]. Cycles are equally spaced, so the design matrix is known a priori and
-# the slope reduces to a closed form: with x centered on the window, x̄ = 0 and the slope is
-# Σxᵢyᵢ / Σxᵢ². No allocation, no least-squares solve.
-function _density_drift(history::Vector{Float64}, window::Int)
+# Whole-column firn air content [m of air], via the same `firn_air_content` the `gemb` output
+# reports, so the convergence criterion and the diagnostic cannot disagree about what FAC means.
+# No depth cutoff: the column depth is fixed for the run, so the whole column is already a
+# consistent domain across cycles, and a cutoff would answer a different question (see the
+# depth-scaling note in `gemb_spinup`).
+function _column_fac(profile::DimStack, mp::ModelParameters)
+    return firn_air_content(parent(profile[:dz]), parent(profile[:density]), mp.density_ice)
+end
+
+# Least-squares slope of the last `window` history entries against cycle number, in the
+# history's own units per cycle. Quantity-agnostic: density [kg/m³ per cycle] and firn air
+# content [m per cycle] use the same regression.
+#
+# Cycles are equally spaced, so the design matrix is known a priori and the slope reduces to a
+# closed form: with x centered on the window, x̄ = 0 and the slope is Σxᵢyᵢ / Σxᵢ². No
+# allocation, no least-squares solve.
+function _least_squares_slope(history::Vector{Float64}, window::Int)
     n = min(window, length(history))
     n < 2 && return NaN
     first_i = length(history) - n + 1

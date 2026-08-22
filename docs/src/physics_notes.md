@@ -444,3 +444,40 @@ What this changes for consumers of the output:
   `blowing_snow` and in the mass budget. MATLAB has neither; at the defaults (zero rate, no
   layer) the term is a no-op.
 
+- **Initialized deep temperature is now the mean *surface* temperature**, not the mean air
+  temperature, and refreezing's latent warming decays over the annual accumulation layer rather
+  than being applied at every depth. `ClimateSummary` gains `temperature_surface_mean`,
+  accumulated from the skin temperatures `_seb_annual_melt` already solves for (no extra pass
+  over the forcing). Affects the initial profile from `initialize_profile`, and therefore every
+  run that starts from one: the column is coupled to the atmosphere only through the surface
+  energy balance, so its deep mean tends to the surface mean, and the two differ by the whole
+  radiative and turbulent budget. This is not only an initialization detail — the deepest cell
+  is a Dirichlet reservoir, so the initialized value is a boundary condition no length of spinup
+  relaxes. Measured over a 21-site synthetic fleet
+  (`bench/calibrate_initial_guess.jl`), the old form was biased **+11.6 K warm on average and
+  never cold** (worst +24.5 K) against the self-consistent value, and the fix cuts the mean
+  temperature jump across that frozen cell from 0.79 K to 0.37 K. It **increases** spinup cycles
+  to convergence (309 to 455 on that fleet), which is a real cost accepted for the correctness:
+  a slower-densifying colder column starts further from its density attractor.
+- **Added `forcing_climatology(method=:representative)`** [default `:average`, unchanged], which
+  returns a block of `n_years` consecutive **real** years scored against the record instead of the
+  cross-year average. Opt-in, so every existing spinup is bit-identical. The averaged climatology
+  preserves each field's mean but shrinks its variance by ~`1/n_years`, and melt is *rectified* —
+  zero until the surface energy balance reaches the melt point — so averaging cancels the warm
+  excursions that carry it. Measured on real ERA5-Land forcing at 12 glacierized Greenland sites
+  (2000-2019, `bench/greenland_spinup_forcing.jl`), melt retained on the averaged cycle has a
+  **median of 12% of the record's, with 5 of 10 melting sites below 10%**, against a median 102%
+  for a 3-year representative block. The failure tracks elevation and absolute melt magnitude, not
+  the melt/accumulation ratio: 0% retention at Saddle (2456 m) and DYE-2 (2094 m), 86-115% at the
+  three lowest sites (271-577 m) — high sites melt from the tail of the distribution, which
+  averaging removes, and low sites melt from the mean, which it preserves. Averaging remains the
+  default because it is right where melt is negligible: it preserves accumulation to 0.1-0.5% at
+  the dry sites (against 15-22% for a melt-ranked block) and integrates less than half the
+  model-years. `rank_by` selects the scoring variable (`:model` melt, `:smb` surface mass balance,
+  `:estimate` the cheap SEB melt), and `fallback_accumulation_tolerance` (default 0.05) re-selects
+  on SMB when a melt-ranked block's accumulation is too far off the record — measured to cut the
+  worst accumulation error from 30.2% to 11.3% and the median from 6.9% to 2.5% across those sites.
+  Two limits are recorded rather than hidden: every figure is *forcing* fidelity, since the
+  equilibrated-column comparison could not be completed (6 of 12 sites do not converge in 800
+  cycles, and a multi-variant sweep ran 4000+ model-years without finishing), and
+  `:representative` costs about 2.2x the model-years of `:average`.

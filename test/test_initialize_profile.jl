@@ -209,7 +209,11 @@ end
     profile = GEMB.initialize_profile(mp, cf)
     T = collect(profile[:temperature])
     depth = -GEMB.dz2z(collect(profile[:dz]))
-    T_deep = cs.temperature_air_mean + cs.latent_warming
+    # The deep asymptote is the mean *surface* temperature, not the mean air temperature: the
+    # column is coupled to the atmosphere only through the surface energy balance. Latent
+    # warming does not appear because it decays over the annual accumulation layer, which is
+    # metres from the base of a column this deep. See `_steady_state_temperature`.
+    T_deep = cs.temperature_surface_mean
 
     # The wave decays with depth: the deviation from the deep mean shrinks, and the
     # deepest cell sits at the mean.
@@ -224,11 +228,28 @@ end
 end
 
 @testset "Irreducible water matches the runtime formula" begin
-    # Warm site: the surface reaches the melt point, so water is nonzero there.
-    cf = _dry_snow_forcing(T_mean=272.0, T_amp=3.0, precip=2.0,
-                           shortwave=150.0, longwave=280.0)
+    # A *temperate accumulating* site, which is the only regime that initializes with pore
+    # water — and a narrow target. Two conditions must hold at once:
+    #
+    #   * the surface energy balance must reach the melt point, since `_irreducible_water`
+    #     gates on the marched temperature (not the air temperature), and
+    #   * `balance` must stay positive, or `steady_state_profile` takes its ablation branch and
+    #     returns a dry block of ice.
+    #
+    # Radiation is what warms the surface, but it also drives the melt that pushes `balance`
+    # negative, so the two conditions pull against each other: at 2 kg m-2 d-1 of precipitation
+    # there is no radiation that satisfies both (150/280 leaves the surface 2.9 K short of
+    # melting; 200/310 melts 3466 kg m-2 yr-1 against 731 of snowfall and the site ablates).
+    # The heavy precipitation here is what buys the margin — 7300 kg m-2 yr-1 keeps `balance` at
+    # +3804 while the surface sits at the melt point, giving water in 64 of 248 cells.
+    cf = _dry_snow_forcing(T_mean=272.0, T_amp=3.0, precip=20.0,
+                           shortwave=200.0, longwave=310.0)
     mp = GEMB.ModelParameters()
     profile = GEMB.initialize_profile(mp, cf)
+
+    # Guard the premise: if a change ever makes this site ablate, the assertions below would
+    # pass vacuously on a dry ice column rather than testing the water formula.
+    @test GEMB.initialize_climate_summary(cf, mp).balance > 0.0
 
     dz = collect(profile[:dz])
     density = collect(profile[:density])

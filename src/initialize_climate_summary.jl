@@ -31,12 +31,23 @@ relative to any model integration.
 - `temperature_air_effective`: the forcing's Arrhenius-weighted mean, carried through
   from `cf.temperature_air_effective`. Used *only* where a rate factor is evaluated
   (`DensificationCoeffs`, under `mp.mean_temperature_method = :arrhenius`), never where
-  a temperature is a temperature — the marched thermal profile and the annual harmonic
-  are built about `temperature_air_mean`, which is the column's actual mean state.
+  a temperature is a temperature — the annual harmonic is fitted about
+  `temperature_air_mean`, and the marched thermal profile is built about
+  `temperature_surface_mean` (below), which is the column's actual mean state.
+- `temperature_surface_mean`: mean annual *surface* (skin) temperature, from the same
+  energy balance that gives `melt` — the mean of `min(T_skin, 273.15)` over the record.
+  This, not `temperature_air_mean`, is the temperature the firn column's deep mean tends
+  to: the column is coupled to the air only through the surface energy balance, and the
+  two differ by the whole radiative and turbulent budget (at the synthetic `test_1` site
+  the surface is 5.1 K *colder* than screen-level air). Capped at the melt point because
+  a surface cannot be warmer; the excess is `melt`, and the column carries no enthalpy
+  above `CtoK`.
 - `temperature_amplitude`, `temperature_phase`: amplitude [K] and phase [rad] of
   the fitted annual cycle, `T(t) = T̄ + A·cos(ωt − φ)`.
 - `latent_warming`: `LF·refreeze/(c_p·accumulation_effective)`, the mean
-  warming from refreezing latent heat.
+  warming from refreezing latent heat. It is the warming of **one annual accumulation
+  layer**, so it is applied over that layer's depth rather than to the whole column; see
+  [`_steady_state_temperature`](@ref).
 
 # Other means
 - `wind_speed_mean` [m s-1], `pressure_air_mean` [Pa], and the observation
@@ -51,6 +62,7 @@ struct ClimateSummary
     accumulation_effective::Float64
     temperature_air_mean::Float64
     temperature_air_effective::Float64
+    temperature_surface_mean::Float64
     temperature_amplitude::Float64
     temperature_phase::Float64
     latent_warming::Float64
@@ -172,12 +184,12 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     # needs. (Measured: 2 sweeps -> 1 at dry-cold and percolation sites; unchanged at
     # melting ones, which need the bracket anyway.)
     α1 = mp.albedo_snow
-    g1, melt, refreeze = albedo_residual(α1)
+    g1, melt, refreeze, T_surface_mean = albedo_residual(α1)
     albedo = α1
     converged = abs(g1) < ALBEDO_FIXED_POINT_TOLERANCE
     α0, g0 = mp.albedo_ice, 0.0
     if !converged
-        g0, _, _ = albedo_residual(α0)
+        g0, _, _, _ = albedo_residual(α0)
     end
     for _ in 1:max_albedo_passes
         converged && break
@@ -186,7 +198,7 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
         α2 = clamp(α1 - g1 * (α1 - α0) / denom, mp.albedo_ice, mp.albedo_snow)
         α0, g0 = α1, g1
         α1 = α2
-        g1, melt, refreeze = albedo_residual(α1)
+        g1, melt, refreeze, T_surface_mean = albedo_residual(α1)
         albedo = α1
         converged = abs(g1) < ALBEDO_FIXED_POINT_TOLERANCE
     end
@@ -216,19 +228,23 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     end
 
     return ClimateSummary(accumulation, rainfall, melt, refreeze, balance, A_eff,
-        T_mean, Float64(cf.temperature_air_effective), T_amplitude, T_phase, latent_warming,
+        T_mean, Float64(cf.temperature_air_effective), T_surface_mean,
+        T_amplitude, T_phase, latent_warming,
         wind_mean, pressure_mean, zT_obs, zW_obs)
 end
 
 """
-    _albedo_residual(α, ...) -> (g, melt, refreeze)
+    _albedo_residual(α, ...) -> (g, melt, refreeze, T_surface_mean)
 
 One evaluation of the albedo fixed point: the melt an albedo of `α` produces, the
 refreeze that implies, and the residual `g = α_target − α` whose root the secant
 iteration in [`initialize_climate_summary`](@ref) seeks.
 
-Returns the melt and refreeze alongside the residual so the caller keeps the pair
-consistent with the accepted albedo without re-running a forcing sweep.
+Returns the melt, refreeze and mean surface temperature alongside the residual so the caller
+keeps them consistent with the accepted albedo without re-running a forcing sweep. The surface
+temperature belongs in this tuple rather than being computed separately: it depends on `α`
+through the absorbed shortwave, so a value taken from any iterate but the accepted one would
+describe a different surface than the melt does.
 """
 function _albedo_residual(α::Float64, T_air::Vector{Float64}, wind::Vector{Float64},
     pressure::Vector{Float64}, sw::Vector{Float64}, lw::Vector{Float64},
@@ -236,11 +252,11 @@ function _albedo_residual(α::Float64, T_air::Vector{Float64}, wind::Vector{Floa
     zW_obs::Float64, accumulation::Float64, rainfall::Float64, T_mean::Float64,
     mp::ModelParameters)
 
-    melt = _seb_annual_melt(T_air, wind, pressure, sw, lw, vapor,
+    melt, T_surface_mean = _seb_annual_melt(T_air, wind, pressure, sw, lw, vapor,
         α, dt, per_year, zT_obs, zW_obs, mp)
     refreeze = _cold_content_refreeze(melt, rainfall, accumulation, T_mean, mp)
     g = _snow_cover_albedo(accumulation + refreeze, melt, mp) - α
-    return g, melt, refreeze
+    return g, melt, refreeze, T_surface_mean
 end
 
 """
@@ -327,9 +343,10 @@ end
 
 """
     _seb_annual_melt(T_air, wind, pressure, sw, lw, vapor, albedo, dt, per_year,
-                     zT_obs, zW_obs, mp) -> melt [kg m-2 yr-1]
+                     zT_obs, zW_obs, mp) -> (melt [kg m-2 yr-1], T_surface_mean [K])
 
-Annual melt from a zero-layer surface energy balance over the forcing series.
+Annual melt from a zero-layer surface energy balance over the forcing series, and the mean
+skin temperature of the same balance.
 
 For each step, [`_seb_skin_temperature`](@ref) finds the skin temperature closing
 the flux balance. If that exceeds the melt point the surface is pinned at
@@ -337,6 +354,12 @@ the flux balance. If that exceeds the melt point the surface is pinned at
 `Q·Δt/LF`. Sublimation/condensation is deliberately ignored — it is a small term
 for an initial guess, and including it would need the mass feedback the marcher
 resolves anyway.
+
+The mean skin temperature is returned because it is the temperature the initialized column's
+deep mean should tend to, and it is **free**: the per-step value is already solved here for
+the melt test and was previously discarded, so this adds an accumulator rather than a pass
+over the forcing. It is the mean of `min(T_skin, CtoK)`, capped for the same reason the melt
+branch pins the surface — energy above the melt point is melt, not sensible heat.
 """
 function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
     pressure::Vector{Float64}, sw::Vector{Float64}, lw::Vector{Float64},
@@ -357,6 +380,7 @@ function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
     ε, _ = _emissivity_initialize(RE_NEW_SNOW, mp)
 
     melt_total = 0.0
+    T_surface_total = 0.0
     @inbounds for i in eachindex(T_air)
         cfs = _seb_forcing_step(dt, T_air[i], pressure[i], wind[i], sw[i], lw[i],
             vapor[i], zT_obs, zW_obs)
@@ -364,6 +388,7 @@ function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
         sw_net = sw[i] * (1.0 - albedo)
 
         T_skin = _seb_skin_temperature(sw_net, lw[i], ε, density_air, z0, zT, zQ, cfs)
+        T_surface_total += min(T_skin, CtoK)
         T_skin <= CtoK && continue
 
         # Surface cannot exceed the melt point: the residual flux drives melt.
@@ -371,7 +396,7 @@ function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
         Q > 0.0 && (melt_total += Q * dt / LF)
     end
 
-    return melt_total * per_year
+    return melt_total * per_year, T_surface_total / length(T_air)
 end
 
 """
