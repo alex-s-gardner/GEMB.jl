@@ -1,0 +1,9 @@
+[deps]
+GEMB = "658e70de-abe2-4db6-8b40-f6dcda98d853"
+
+[sources]
+GEMB = {path = ".."}
+
+[compat]
+GEMB = "2"
+julia = "1.12"

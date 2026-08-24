@@ -189,3 +189,36 @@ end
     @test sum(shortwave_flux) ≈ 0.0 atol = 1e-10
 end
 
+
+@testset "Cumulative extinction profile" begin
+    # `_extinction_profile!` replaces `cumprod`, which cannot be statically compiled (see
+    # `capi/README.md`). The replacement is only correct if it agrees to the last bit — a
+    # tolerance here would let a real change in the absorption profile through.
+    for n in (2, 3, 7, 20, 61)
+        B = 200.0 .* rand(n)
+        dz = 0.05 .+ rand(n)
+
+        out = ones(n + 1)
+        GEMB._extinction_profile!(out, B, dz)
+
+        @test out == vcat([1.0], cumprod(exp.(-B .* dz)))
+        @test out[1] == 1.0
+        # Transmission decreases monotonically with depth and stays a fraction.
+        @test all(0.0 .<= out .<= 1.0)
+        @test issorted(out; rev=true)
+    end
+
+    # A uniform column has a closed form: transmission is exp(-B*dz) per cell.
+    n = 10
+    B = fill(3.0, n)
+    dz = fill(0.25, n)
+    out = ones(n + 1)
+    GEMB._extinction_profile!(out, B, dz)
+    for i in 1:n
+        @test out[i+1] ≈ exp(-3.0 * 0.25 * i) rtol = 1e-14
+    end
+
+    # Mismatched lengths are a caller error, not a silently truncated profile.
+    @test_throws DimensionMismatch GEMB._extinction_profile!(ones(5), rand(4), rand(3))
+    @test_throws DimensionMismatch GEMB._extinction_profile!(ones(3), rand(4), rand(4))
+end

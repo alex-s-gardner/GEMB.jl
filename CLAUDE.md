@@ -250,6 +250,30 @@ GEMB simulates:
 - **Dynamic Albedo**: Long-term memory albedo accounting for grain growth and specific surface area
 - **Grid Management**: Lagrangian-style vertical grid that merges/splits layers dynamically
 
+## Static compilation (C API)
+
+`gemb_core` and every physics function it calls are statically compiled into a C-callable
+shared library by JuliaC with `--trim=safe`, which admits only code whose call graph is
+provably resolvable. The entry points, the handle registry and the C header live in `capi/`,
+deliberately outside `src/` — a normal `using GEMB` loads none of it. `capi/README.md` is the
+reference; `docs/src/c_api.md` is the user-facing page.
+
+**The constraint on `src/`:** within `gemb_core`'s call tree, do not introduce reflection over
+types (`fieldnames`, and anything that makes a value infer as an abstract type), `findfirst`-style
+searches over heterogeneous tuples, or `Base` functions that route through `dims`/`CartesianIndices`
+machinery. `cumprod` on a vector was the one such obstacle in the whole physics tree;
+`_extinction_profile!` in `src/calculate_shortwave_radiation.jl` replaces it and must stay.
+
+Verified as *fine*, so do not refactor them defensively: `try`/`catch`, `error()` with string
+interpolation, `@warn` in the hot path, runtime `String`/`Dict` lookups
+(`densification_lookup_M01`), and the `Symbol` `if`/`elseif` option chains throughout the physics.
+New `Symbol` option values need no special handling.
+
+A new option field that a column step reads must be added to the spec tables in
+`capi/gemb_capi.jl` and to `capi/gemb.h`; `capi/test/runtests.jl` fails if it is not. Run
+`julia capi/build.jl --trim=safe && julia capi/run_tests.jl` after touching anything in the
+column-step tree. `.github/workflows/juliac.yml` runs both, currently non-blocking.
+
 ## Changing the physics
 
 When modifying a physics function, run its `test/test_*.jl` file and then the full suite.
