@@ -108,13 +108,12 @@ is a *Class 1* model — the energy balance is applied to the top control volume
 surface temperature is diagnosed from it (`T_surface = min(CtoK, temperature[1])`) rather
 than carried as its own degree of freedom. This is the same class as SNTHERM, Crocus, CLM,
 and CryoGrid, and it is *coupled*: the surface energy balance and the subsurface conduction
-are solved together, which is what Class 2 skin-layer models (COSIPY, EBFM, SnowModel) give
-up in exchange for an explicit surface. Their proposed scheme has both, and on their coarser
-meshes Class 1 diverges from the reference where the coupled-explicit-surface scheme does
-not. GEMB's `column_dztop = 0.05 m` sits in the regime where that divergence appears in their
-Figs. 9 and 11, so an explicit surface degree of freedom — a third
-[`AbstractThermalSolver`](@ref), which would leave existing runs bit-identical — remains a
-real option rather than a closed question. It is not implemented.
+are solved together, which is what Class 2 skin-layer models (COSIPY, EBFM, SnowModel) trade
+away in exchange for an explicit surface. Their proposed scheme has both, and on their coarser
+meshes Class 1 diverges from the reference where the coupled-explicit-surface scheme does not.
+GEMB's `column_dztop = 0.05 m` sits in the regime where that divergence appears in their
+Figs. 9 and 11, so an explicit surface degree of freedom — which would be a third
+[`AbstractThermalSolver`](@ref) — remains an open option. It is not implemented.
 
 Their Appendix D is the reason the integrated stability functions had to be continuous at
 neutral stability: they move their own branch point to `Ri_b = 0` so that the surface energy
@@ -130,18 +129,16 @@ at or above `impermeable_density` thicker than `impermeable_thickness`. There is
 preferential-flow (heterogeneous, "piping") domain and no Richards-equation matrix flow, and
 none is planned.
 
-That is a deliberate choice, not a missing feature. RetMIP (Vandecrux et al., 2020)
-intercompared nine firn models at four Greenland sites and found that the three models with
-explicit deep or preferential percolation (CFM-Cr, CFM-KM, UppsalaUniDeepPerc) performed
-worse than the bucket schemes at three of the four sites — they infiltrated water too deeply
-and carried a warm bias in firn temperature at the dry-snow site (Summit) and both
-percolation sites (Dye-2 mean error +3.6 to +6.2 °C, KAN\_U +1.8 to +4.7 °C). At Dye-2 in
-2016 the CFM models percolated to 10 m against 2.5 m observed by upward-looking radar, and
-built multi-metre near-surface ice slabs where none are observed. Their advantage was
-confined to the firn-aquifer site, where only the deep-percolation schemes recharged the
-aquifer at all. RetMIP's conclusion (their Sect. 5.2) is that until the physics of
-preferential flow in firn is better constrained by field and laboratory observation, the more
-complex schemes do not necessarily give better results than simple bucket schemes.
+That choice follows RetMIP (Vandecrux et al., 2020), which intercompared nine firn models at
+four Greenland sites. The models with explicit deep or preferential percolation infiltrated
+water more deeply than the bucket schemes and carried a warm firn-temperature bias at the
+dry-snow site (Summit) and both percolation sites (Dye-2 mean error +3.6 to +6.2 °C, KAN\_U
++1.8 to +4.7 °C); at Dye-2 in 2016 they percolated to 10 m against 2.5 m observed by
+upward-looking radar. At the firn-aquifer site the situation reverses: only the
+deep-percolation schemes recharged the aquifer at all. RetMIP's conclusion (their Sect. 5.2)
+is that until the physics of preferential flow in firn is better constrained by field and
+laboratory observation, the more complex schemes do not necessarily give better results than
+simple bucket schemes.
 
 The levers RetMIP does identify for bucket schemes are *when* water is blocked and *how fast*
 it then leaves, not how deep it goes. Both are exposed:
@@ -161,20 +158,17 @@ into the pore space above the barrier and drain laterally over a finite timescal
 | `:ZuoOerlemans` | `drain = excess · min(1, Δt/τ)`, `τ = c₁ + c₂·exp(−c₃·S)` | Zuo and Oerlemans (1996) eqs. 21–22, coefficients via Langen et al. (2017) |
 | `:Darcy` | `drain = min(excess, ρ_w·Δt·K_sat·K_rel·S)` | Calonne et al. (2012) eq. 6 with van Genuchten (1980) / Yamaguchi et al. (2012) relative permeability |
 
-This is where RetMIP's evidence actually points. The two models with the lowest
-firn-temperature error at the ice-slab site KAN\_U — DMIHH (−1.6 °C) and GEUS (+0.6 °C),
-against a spread reaching +4.7 °C — were both bucket schemes that *delay* runoff rather than
-models that percolate deeper; DMIHH uses the `:ZuoOerlemans` timescale and GEUS a Darcy flux
-to a virtual downslope neighbour. At the other end, DTU runs water off immediately and
-produced runoff unrealistic enough that RetMIP excluded it from their multi-model mean.
+This is where RetMIP's evidence points. The two models with the lowest firn-temperature error
+at the ice-slab site KAN\_U (−1.6 °C and +0.6 °C, against a spread reaching +4.7 °C) were both
+bucket schemes that *delay* runoff, one using the Zuo–Oerlemans timescale and the other a
+Darcy flux to a virtual downslope neighbour.
 
-Delayed runoff is also what makes saturated firn representable at all: with the hard
-irreducible clamp of `:instantaneous`, a saturated cell cannot exist, and RetMIP (their
-Sect. 5.4) note that models so constrained "are incapable of modeling actual aquifers" — the
-firn-aquifer site was dropped from their retention evaluation for exactly this reason.
-Aquifers form bottom-up under either delayed method, and the `aquifer_thickness` and
-`aquifer_depth` outputs report the resulting water table. Both are opt-in: they are inert at
-the `:instantaneous` default.
+Delayed runoff is also what makes saturated firn representable at all: under the hard
+irreducible clamp of `:instantaneous` a saturated cell cannot exist, and RetMIP (their
+Sect. 5.4) note that models so constrained are incapable of modeling actual aquifers — their
+firn-aquifer site was dropped from the retention evaluation for this reason. Aquifers form
+bottom-up under either delayed method, and the `aquifer_thickness` and `aquifer_depth`
+outputs report the resulting water table. Both are inert at the `:instantaneous` default.
 
 ## Validation
 

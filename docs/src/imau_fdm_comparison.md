@@ -1,376 +1,167 @@
 # GEMB and IMAU-FDM
 
-[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM) (Ligtenberg et al.,
-2011; Brils et al., 2022) is the Utrecht Institute for Marine and Atmospheric
-Research firn densification model — ~3,900 lines of Fortran in `source/`,
-configured per domain through TOML (`FGRN055` for Greenland, `ANT27` for
-Antarctica). It is the third open firn model with a physics surface comparable to
-GEMB's, after the [Community Firn Model comparison](cfm_comparison.md).
+[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM) (Ligtenberg et al., 2011;
+Brils et al., 2022) is the Utrecht Institute for Marine and Atmospheric Research firn
+densification model, configured per ice sheet domain. It takes surface temperature and
+drifting snow as prescribed boundary conditions from a regional climate model, where GEMB
+solves a surface energy balance and carries grain-size state.
 
-This page records a full read of IMAU-FDM's physics-bearing sources against
-GEMB's `src/`, in two directions:
+This page summarizes how the two treat the physics they share, and records what GEMB adopted
+while reading IMAU-FDM. Most of the capability surface follows from the difference in scope
+and is not tabulated; the interesting content is where both models implement the same law.
 
-1. **What GEMB could take from it** — three findings, all adopted.
-2. **Whether GEMB's existing physics agrees with an independent implementation** —
-   which produced more than the first direction did, including one place where
-   IMAU-FDM's own source comments flag its version as a bug GEMB never had.
+## Scope
 
-IMAU-FDM is the **narrower** model of the two. It takes surface temperature as a
-prescribed Dirichlet boundary rather than solving an energy balance, and has no
-albedo, no shortwave penetration, no turbulent fluxes, and no grain-size state.
-Most of the capability surface is therefore GEMB-has/FDM-lacks and is not
-tabulated below; the interesting content is in the places where both models
-implement the *same* physics and disagree about it.
-
-Citations point at IMAU-FDM as `firn_physics.f90:247` and at GEMB as
-`src/thermal_conductivity.jl`. Fortran line numbers are from the state of `main`
-read in August 2026.
-
-## Summary
-
-| Physics | Verdict | Notes |
+| | GEMB | IMAU-FDM |
 |---|---|---|
-| Calonne (2019) air-conductivity ratio | **gap, adopted** | Finding 1 — new `:Calonne2019Air` method |
-| Fausto (2018) fresh-snow density | **gap, adopted** | Finding 2 — new `:FaustoFit` method |
-| Coleou irreducible water content | **GEMB correct** | GEMB never had the bug IMAU-FDM's own comment documents |
-| Layer merging | **GEMB correct** | GEMB merges on enthalpy; IMAU-FDM mass-weights temperature |
-| Refreeze energy accounting | **GEMB correct** | IMAU-FDM mixes `cp(T)` and `cp(T_melt)` in one budget |
-| Densification reference temperature | **GEMB correct** | IMAU-FDM uses the *bottom* layer; the paper, CFM and GEMB use mean annual surface |
-| Spinup convergence criterion | **GEMB richer** | GEMB tests drift slope as well as per-cycle delta |
-| Heat capacity, physical constants | **agreement** | same `152.5 + 7.122·T`, `g`, `Ec`, `Eg`, `ρ_i`, `T_melt` |
-| Ligtenberg `M0`/`M1` calibration | **GEMB ahead** | 9 calibration sets vs IMAU-FDM's 2 |
-| Drifting snow as prescribed forcing | **gap, adopted** | Finding 3 — new `snow_drift` forcing layer and `drift_rate` parameter |
-| Implicit tridiagonal thermal solver | **implemented** (`ImplicitThermal`) | interior rows transferred; the surface row needed Newton — see below |
+| Surface boundary | Nonlinear surface energy balance solved for skin temperature | Prescribed surface temperature (Dirichlet) |
+| Albedo, shortwave penetration, turbulent fluxes | Solved | Not represented |
+| Grain size | Prognostic | Not carried |
+| Drifting snow | Prescribed forcing layer, or the Crocus scheme | Prescribed from RACMO |
+| Vertical grid | Fixed cell count and depth | Grows and shrinks in 100–200 layer blocks |
+| Thermal solve | Explicit finite volume (default) or backward Euler | θ-weighted implicit, Thomas algorithm |
+| Ligtenberg densification calibration | 9 sets, Antarctica and Greenland | 2 sets, one per domain |
+
+The two agree on the heat capacity `c_p = 152.5 + 7.122·T`, on gravity, on the activation
+energies for creep and grain growth, on ice density, and on the melting point. IMAU-FDM uses
+365.25 days per year against GEMB's 365.0 for densification, a ~0.07% standing offset
+recorded in the [Physics notes](@ref "Physics notes").
 
 ## What GEMB adopted
 
-Findings 1 and 2 land as **new `Symbol` option values** and finding 3 as a new optional
-forcing layer plus a parameter defaulting to zero, all leaving the defaults of the day
-bit-identical. The first two do not appear in the [Physics notes](@ref "Physics notes"),
-because neither changed a default when it was added. (`:Calonne2019` later *became* the
-default in v2.0.0, for the separate reasons recorded there.) Finding 3 is recorded there,
-because it added an output and a mass-budget term.
+Three findings, each selected by an option or an optional forcing layer.
 
-### Finding 1 — `:Calonne2019` omits the air-conductivity ratio of eq. 5
+**The air-conductivity ratio in Calonne et al. (2019) eq. 5.** The equation blends a snow and
+a firn conductivity fit and rescales each by its constituent conductivities relative to their
+values at 270.15 K. The two branches carry different scalings: the firn branch describes a
+connected ice skeleton and scales with ice alone, while the snow branch describes grains in
+air and scales with both. IMAU-FDM carries both factors, using Reid (1966) for air. GEMB's
+`:Calonne2019` applies only the ice ratio, following CFM. Because air conducts less well as
+it cools, omitting the air factor raises conductivity in cold low-density snow — by ~20% at
+220 K and 150–300 kg m⁻³, falling to zero at the reference temperature and above ~550 kg m⁻³
+where the blend hands over to the air-free branch.
 
-Calonne et al. (2019) eq. 5 blends a snow-regime and a firn-regime conductivity
-fit with a logistic weight in density, and rescales each by the constituent
-conductivities at the working temperature relative to their values at the
-temperature the fits were built at (270.15 K). The two regimes carry **different**
-scalings because they describe different microstructures: the firn fit describes a
-connected ice skeleton and scales with ice alone, while the snow fit describes
-grains suspended in air and scales with *both* constituents.
+`thermal_conductivity_method = :Calonne2019Air` selects the fuller form. Since the air term
+enters only as a ratio, Reid's absolute calibration cancels and only its temperature shape
+matters.
 
-IMAU-FDM implements both factors (`firn_physics.f90:247-268`, `Thermal_Cond`):
+**Fausto et al. (2018) as a temperature-dependent regression.** GEMB's `:Fausto` fresh-snow
+density returns a constant 315 kg m⁻³, which is the published regression
+`362.1 + 2.78·(T − 273.15)` evaluated at 256.2 K. IMAU-FDM implements the regression.
+`new_snow_method = :FaustoFit` does the same in GEMB, reading instantaneous air temperature
+where it is available and the climatological mean in the steady-state march. The regression
+is unbounded below, so the transient call site clamps the result.
 
-```fortran
-kair = (2.334E-3*Temp**(3./2.))/(164.54 + Temp)          ! Reid (1966)
-kair_ref = (2.334E-3*270.15**(3./2.))/(164.54 + 270.15)
-ki = (1.-theta)*kice/kice_ref*kair/kair_ref*kcal + theta*kice/kice_ref*kf
-```
+**Drifting snow as a prescribed surface flux.** IMAU-FDM reads a drift field alongside
+precipitation and applies it with a sign-dependent density: erosion removes mass at the
+surface layer's own density, and deposition adds it at the fresh-snow density. That asymmetry
+matters — taking the cell density in both directions would let an erode-and-redeposit cycle
+change surface density with no net mass exchange.
 
-GEMB's `_thermal_conductivity_calonne2019` applied only the ice ratio, to both
-branches. Its docstring was explicit about this, because the implementation had
-been cross-checked against the CFM — which hardcodes `K_air = kref_a` in
-`diffusion.py` with the standing comment *"at some point find equation for
-T-dependence of air"*. GEMB inherited the CFM's simplification; **IMAU-FDM is the
-only one of the three models that carries the term.**
+GEMB now has the same path: an optional `snow_drift` forcing layer (kg m⁻² yr⁻¹, positive
+for erosion), with `drift_rate` as a constant-rate shorthand. Deposited mass enters at age
+zero. Three differences from IMAU-FDM: the layer is a rate rather than a per-timestep mass,
+so it is independent of the forcing interval; it is read independently of
+`blowing_snow_method`, so a climate-model drift field can drive GEMB with no internal scheme;
+and it is zero by default.
 
-Because air conducts less well as it cools, omitting the factor makes GEMB
-**over-conduct cold snow**. Measured ratio of `:Calonne2019` to the fuller form:
+For an internally computed blowing-snow scheme the reference is Crocus rather than IMAU-FDM,
+whose drift physics is upstream in RACMO. That scheme is available as
+`blowing_snow_method = :Crocus`.
 
-| T [K] | `kair/kair_ref` | ρ=150 | ρ=300 | ρ=450 | ρ=550 | ρ=700 |
-|---|---|---|---|---|---|---|
-| 220.0 | 0.8307 | +20.4% | +20.4% | +9.9% | +0.28% | 0% |
-| 233.15 | 0.8764 | +14.1% | +14.1% | +7.0% | +0.20% | 0% |
-| 253.15 | 0.9440 | +5.9% | +5.9% | +3.1% | +0.09% | 0% |
-| 270.15 | 1.0000 | 0% | 0% | 0% | 0% | 0% |
+## Where the two implementations differ
 
-The bias vanishes at the reference temperature and above ρ ≈ 550, where the
-logistic weight hands over to the air-free firn branch. It is largest exactly in a
-cold, low-density polar winter surface layer — that is, exactly where the seasonal
-cold wave propagates — so it damps the winter surface signal.
+Neither model was changed on GEMB's side for these; they are recorded so the comparison does
+not have to be redone.
 
-`mp.thermal_conductivity_method = :Calonne2019Air` selects the fuller form.
-`:Calonne2019` remains the default and is unchanged. Since the air term enters only
-as a *ratio*, Reid's absolute calibration cancels and only its temperature shape
-matters; continuity into ice is preserved because the factor is weighted by
-`(1-θ)`, which is ~1e-8 at ρ = 917.
+**Irreducible water content.** IMAU-FDM offers two forms of Coleou and Lesaffre (1998), one
+of which divides by `(1 − W_m)`. GEMB's `irreducible_saturation` carries that factor.
 
-One convention difference is worth recording: IMAU-FDM normalizes by the
-*computed* Yen (1981) value at 270.15 K, where GEMB and the CFM both use the
-published literal `2.107`. That is a uniform 1.15e-4 relative offset, it predates
-this addition, and it applies equally to `:Calonne2019`. GEMB keeps the literal.
+**Layer merging.** IMAU-FDM merges two cells by mass-weighting temperature. With a
+temperature-dependent `c_p` that is not exactly energy-conserving; the merged enthalpy differs
+from the sum of the parts at second order in ΔT. GEMB merges through specific enthalpy, which
+is exact for any `c_p(T)`. The same distinction appears in IMAU-FDM's refreeze routines, which
+evaluate `c_p` at the layer temperature but apply the resulting increment with `c_p` at the
+melting point. GEMB carries enthalpy as the budget currency throughout.
 
-### Finding 2 — `:Fausto` is the published fit frozen at one temperature
+**Densification reference temperature.** IMAU-FDM evaluates the grain-growth Arrhenius term at
+the bottom layer's temperature. Arthern et al. (2010) specifies mean annual surface
+temperature, which is what CFM and GEMB use. The bottom-layer choice is an equilibrium
+identity — a deep column's base approaches the mean annual surface temperature — but it
+couples densification to the basal boundary condition during transients.
 
-GEMB's `fresh_snow_density` returned a bare `315.0` for `:Fausto`, with no
-temperature dependence — unlike every other temperature-dependent option in the
-same function (`:Kaspers`, `:KuipersMunneke`), which all carry theirs. IMAU-FDM
-implements Fausto et al. (2018) as the actual regression
-(`initialise_model.f90:96`, `112`, `116`):
+**Spinup convergence.** IMAU-FDM iterates on the change in surface elevation and firn air
+content between cycles. GEMB's `gemb_spinup` tests a per-cycle delta and, optionally, a
+least-squares drift slope over a trailing window, since a column creeping steadily at just
+under a delta tolerance passes a delta-only test.
 
-```fortran
-Rho0FM(step) = 362.1 + 2.78*(TempFM(step) - const%Tmelt)   ! Fausto et al. 2018
-```
+**Domain-specific densification recalibration.** IMAU-FDM recalibrates its densification
+multiplier per domain. GEMB's Ligtenberg `M0`/`M1` lookup does the same thing and carries nine
+calibration sets. The coefficients are not interchangeable between the two: different forcing
+products, and a different Arrhenius reference temperature per the point above.
 
-`362.1 + 2.78·(T − 273.15) = 315.0` at **T ≈ 256.2 K**. GEMB's constant is
-demonstrably this same fit evaluated at one plausible Greenland annual-mean
-temperature — not a different parameterization.
+**Column growth.** IMAU-FDM adds and deletes layers at the base in blocks. GEMB's column holds
+a fixed cell count and total depth, maintained by two merge/split controllers.
 
-`mp.new_snow_method = :FaustoFit` selects the regression;  `:Fausto` still returns
-315.0. Two implementation notes:
+**Ice-shelf buoyancy.** IMAU-FDM diagnoses floating-ice elevation. GEMB represents the
+ice-dynamic coupling through `apply_horizontal_strain!` only.
 
-- `fresh_snow_density` gained an **optional fifth argument**, the *instantaneous*
-  air temperature, which only `:FaustoFit` reads. The function is shared by
-  `calculate_accumulation` (which has `cfs.temperature_air`) and
-  `steady_state_profile` (which has only a climatological mean), so the argument
-  defaults to the mean: the transient site passes the instantaneous temperature
-  while the steady-state march still gets a well-defined climatological ρ₀, and the
-  four older methods are bit-identical either way.
-- The regression is **unbounded below** — it reaches zero at T ≈ 143 K — so the
-  transient call site now clamps to `[1, ρ_i]`, mirroring the clamp
-  `steady_state_profile` already applied. IMAU-FDM caps its *non*-Greenland fit at
-  470 but leaves the Fausto branch uncapped, so there is no upstream cap to copy.
-- `:FaustoFit` also takes the Crocus (Vionnet et al., 2012) wind-dependent
-  fresh-snow grain properties that `:Fausto` takes. That coupling is orthogonal to
-  the density fit, and omitting it would have silently changed fresh-snow
-  dendricity.
+**Window-averaged temperature for fresh-snow density.** IMAU-FDM can drive fresh-snow density
+from a temperature averaged over a recent-snowfall window. GEMB does not; the
+`fresh_snow_density` signature admits either input.
 
-### Finding 3 — drifting snow is a prescribed surface flux with a sign-dependent density
+## The thermal solve
 
-GEMB had no representation of wind-driven snow redistribution at all: wind entered
-only through the turbulent fluxes and the fresh-snow density. IMAU-FDM does not
-*compute* drift either — it reads `SnowDrif` from RACMO alongside precipitation
-and melt (`openNetCDF.f90:245`) and applies it in `Update_Surface`
-(`firn_physics.f90:81-88`) as a surface mass source or sink. The detail worth
-copying is that the density is **sign-dependent**:
+IMAU-FDM's implicit solver is compact — θ-weighted, Thomas algorithm, following Versteeg and
+Malalasekera — and its interior rows transfer directly to GEMB. Its surface row builds a
+prescribed Dirichlet surface temperature, which has no analogue in GEMB, where the surface row
+is a nonlinear energy balance and shortwave radiation is a distributed source. The bottom
+boundary does match: both models hold a fixed bottom cell.
 
-```fortran
-! erosion: mass leaves at the density of the surface layer it left
-! deposition: mass arrives at the fresh-snow density rho0
-```
+GEMB's `ImplicitThermal` linearizes the surface flux into the matrix diagonal and iterates
+with Newton. A lagged surface flux diverges for a centimetre-scale surface cell at any
+timestep of interest. Because the residual is built from the true nonlinear flux at each
+iterate, the linearized terms cancel at convergence, so the slope affects the convergence rate
+and not the answer. The nonlinearity being confined to row 1 also permits static condensation:
+the interior is eliminated once per sub-step and Newton iterates on a single scalar equation.
 
-which is the physically right asymmetry — wind removes the surface as it is, and
-what it drops has been fragmented in transport and lands as new snow. Taking the
-cell density in both directions would let an erode-then-deposit cycle change the
-surface density with no net mass exchange.
-
-GEMB now has the same path: the optional `snow_drift` forcing layer
-(kg m⁻² yr⁻¹, positive for erosion), with the scalar `drift_rate` as a
-constant-rate shorthand for forcing that carries none. Erosion removes mass at the
-surface cell's own density, deposition adds it at `fresh_snow_density` and at age
-zero — diluting the cell's `age` through the same `dilute_age` path condensation
-already uses, which IMAU-FDM has no analogue of because it carries no age. Both
-appear in the new `blowing_snow` output and in the mass budget.
-
-Three differences from IMAU-FDM, all deliberate:
-
-- **Independent of the computed scheme.** `drift_rate` and `snow_drift` are read
-  whatever `blowing_snow_method` is, so a RACMO `SnowDrif` field can drive GEMB
-  with no internal scheme at all — the configuration that makes GEMB directly
-  comparable with IMAU-FDM — or alongside `:Crocus`, which reworks the snow that
-  stays.
-- **A rate, not a per-step mass.** The layer is kg m⁻² yr⁻¹ so it is independent
-  of the forcing timestep, as `horizontal_strain_rate` already is; IMAU-FDM's
-  field is per-timestep because its timestep is fixed by the RACMO product.
-- **Optional, and zero by default.** Absent from a forcing `DimStack` it is a
-  `Fill`-backed zero layer, exactly as `black_carbon_snow` and the cloud
-  properties are, so every existing forcing stays valid and every existing run
-  stays bit-identical.
-
-IMAU-FDM's own drift physics is entirely upstream in RACMO (Lenaerts et al.,
-2012), so there is nothing further in its source to compare against. For a
-scheme GEMB can run on its own, the reference is Crocus — the only one of the
-three comparison models that computes blowing snow internally (the CFM has none)
-— ported as `blowing_snow_method = :Crocus`.
-
-## Consistency findings — where GEMB is correct or better
-
-These need no code changes. They are independent corroboration of GEMB's physics,
-recorded here so they are not re-litigated.
-
-### Coleou irreducible water — GEMB never had IMAU-FDM's bug
-
-`water_physics.f90:190-198` offers two variants of the Coleou & Lesaffre (1998)
-irreducible water content. The one named `Coleou1998_corr` divides by `(1 − Wm)`,
-with the source comment *"fixes known bug in FDM v1p2"*; the uncorrected
-`Coleou1998_1p2` "underestimates LWC". GEMB's `irreducible_saturation`
-(`src/calculate_melt.jl`) has always had the `wmi/(1-wmi)` correction. Two
-implementations arrived independently at the same wet-mass-versus-dry-mass
-subtlety, and GEMB was on the right side of it from the start.
-
-### Layer merging — GEMB conserves energy, IMAU-FDM does not
-
-`grid_routines.f90:54` merges two cells by mass-weighting *temperature*:
-
-```fortran
-T(k-1) = (T(k-1)*M(k-1) + T(k)*M(k))/(M(k-1)+M(k))
-```
-
-That is not energy-conserving given IMAU-FDM's own temperature-dependent
-`c_p = 152.5 + 7.122·T`: the merged cell's enthalpy differs from the sum of its
-parts at second order in ΔT. GEMB's `manage_layer_thickness` merges through
-`specific_enthalpy`, which is exact for any `c_p(T)`.
-
-The same defect appears in IMAU-FDM's refreeze routines
-(`water_physics.f90:34-45`, `151-158`), which compute the available energy with
-`cp` evaluated at the layer temperature but apply the resulting temperature
-increment with `cp0` evaluated at the melting point. GEMB carries enthalpy — never
-`T·c_p` — as the budget currency throughout, and its `verbose=true` per-timestep
-conservation checks would not survive the mixed-`c_p` form.
-
-### Densification reference temperature — IMAU-FDM is the outlier
-
-`Densific` evaluates the grain-growth Arrhenius term at `T(1)`, the **bottom**
-layer of the column (`firn_physics.f90:323`, `329`). Arthern et al. (2010)
-specifies mean annual *surface* temperature; the CFM uses `self.T_mean`
-(surface, `physics.py:334`); GEMB uses `tam` (`src/calculate_density.jl`). Two of
-three implementations agree with the paper.
-
-IMAU-FDM's choice is defensible as a steady-state identity — at deep-column
-equilibrium the bottom temperature approaches the mean annual surface temperature —
-but it is not the published form, and it couples densification to the basal
-boundary condition during transients.
-
-### Spinup convergence — GEMB's criterion is richer
-
-IMAU-FDM iterates on the squared change in surface elevation *and* in firn air
-content between cycles (`time_loop.f90:57`, `129-130`), with bounds 0.0001
-(FGRN055) / 0.004 (ANT27) and 3–70 or 3–200 cycles. GEMB's `gemb_spinup`
-(`src/spinup.jl`) tests **both** a per-cycle delta *and* a least-squares drift
-slope over a window — precisely because, as its own docstring says, "a column
-creeping steadily at just under the tolerance passes" a delta-only test. That is
-the exact weakness of IMAU-FDM's criterion.
-
-This also resolves an open question left by the CFM pass: the benchmark's
-`converged = false` after 75 cycles is because `bench/opt_bench.jl` passes **no**
-convergence criteria at all, so `checking = false` and the flag is never set. It
-was never a convergence failure.
-
-### Heat capacity and constants — agreement
-
-GEMB's `:CuffeyPaterson` heat capacity is the same `152.5 + 7.122·T` IMAU-FDM
-hardcodes throughout. `g = 9.81`, `Ec = 60000`, `Eg = 42400`, `ρ_i = 917`,
-`T_melt = 273.15` all match (`settings/*/constants.toml`). IMAU-FDM's
-`days_per_year = 365.25` against GEMB's deliberate
-`DAYS_PER_YEAR_DENSIFICATION = 365.0` is the ~0.07% standing offset already
-recorded in the [Physics notes](@ref "Physics notes") as deviation 4 — no new action.
-
-## Adopted later — numerics
-
-### Implicit tridiagonal thermal solver — implemented, with the surface row resolved
-
-This finding is now closed, and the prediction it made held up: the interior rows
-transferred directly, and the surface row was the entire difficulty.
-
-IMAU-FDM's `Solve_Temp_Imp` (`firn_physics.f90:169-241`) is attractively compact:
-~70 lines, θ-weighted, Thomas algorithm, following Versteeg & Malalasekera. It is
-**not** a drop-in, for the reason recorded here originally. Line 219 builds the
-surface boundary as `Su = 2·kip·Ts/DZ` — a *prescribed* Dirichlet surface
-temperature. GEMB solves a nonlinear surface energy balance (longwave, turbulent
-fluxes), plus shortwave penetrating to depth, so the surface row needs
-linearization and outer iteration, and the shortwave source has no analogue in
-IMAU-FDM's tridiagonal at all. The bottom boundary does match: both models hold a
-fixed bottom cell.
-
-GEMB's `ImplicitThermal` (`src/calculate_temperature.jl`) resolves the surface row
-with Newton rather than lagged Picard — a lagged surface flux *diverges*, since the
-fixed-point gain `|dQ/dT₁|·Δt/(M₁c)` exceeds 1 for a centimetre-scale surface cell
-at any Δt of interest. The flux is linearized into the diagonal as
-`Q(T₁) ≈ Q_k + Λ_k(T₁ − T_{1,k})` with `Λ ≤ 0`, which *strengthens* diagonal
-dominance. Because `Q_k` is the true nonlinear flux at the iterate, the two `Λ`
-terms cancel at convergence, so the slope's accuracy affects only the convergence
-rate and never the converged answer.
-
-Being confined to row 1, the nonlinearity also permits static condensation: the
-interior is eliminated bottom-up once per sub-step and Newton iterates on a single
-scalar equation, which measured 2.67× faster than re-sweeping the column per
-iteration.
-
-`ExplicitThermal` remains the default and is bit-identical to before. The implicit
-path is 2.4× *slower* on a well-conditioned column (5.75 s vs 2.44 s over a year of
-3-hourly forcing); its value is that its cost is independent of the stiffest cell.
-See [the CFM page](cfm_comparison.md) for the full measurements.
-
-Both of the choices this section turns on were independently arrived at by Fourteau et
-al. (2024), whose framework for coupling a melting-surface energy balance to a
-finite-volume heat equation was published while this comparison was open. Their
-Newton-with-Schur-complement (their eqs. 11–13, and Appendix B, which notes the
-reduction applies to models of GEMB's class) is the same construction as the Newton
-solve on a single scalar after static condensation described above, derived
-independently. Their Sect. 6.4 also quantifies what IMAU-FDM's prescribed Dirichlet
-surface temperature costs: a spurious energy flux of −14.5 W m⁻² for a melting glacier
-surface, changing ablation by 40%. That is the strongest available argument for the
-flux-based application GEMB uses on both paths. See
-[Surface energy balance numerics](index.md#Surface-energy-balance-numerics).
-
-## Deliberately not adopted
-
-### `numSnow` window-averaged temperature
-
-IMAU-FDM optionally drives fresh-snow density from a temperature averaged over a
-recent-snowfall window (`initialise_model.f90:104-134`). That is a smoothing
-choice, not new physics, and the `fresh_snow_density` signature change in Finding 2
-makes either input expressible if it is ever wanted.
-
-### Domain-specific `MO` recalibration
-
-`Densific` (`firn_physics.f90:288-315`) recalibrates its densification
-multiplier per domain, e.g. `MO_low = 0.7522 − 0.0178·log(acav)` for Greenland.
-This is the direct analogue of GEMB's Ligtenberg `M0`/`M1`
-(`src/densification_lookup.jl`), which already carries **nine** calibration sets
-across Antarctica and Greenland against IMAU-FDM's two. GEMB is ahead here, and
-the fits are not interchangeable — different forcing products, and a different
-Arrhenius reference temperature per the point above — so cross-importing
-coefficients would be unsound.
-
-### Bottom-of-column layer add/delete
-
-`Add_Layers` / `Delete_Layers` grow and shrink IMAU-FDM's column in 100- or
-200-layer blocks. GEMB's fixed-count, fixed-depth column with its two `grid_ops.jl`
-controllers is a deliberate and documented alternative, not a gap.
-
-### Ice-shelf buoyancy
-
-`vbouy` (`firn_physics.f90:106-113`) is a floating-ice elevation diagnostic,
-outside a column mass-balance model's remit. GEMB's `apply_horizontal_strain!`
-covers the ice-dynamic coupling it does model.
+`ExplicitThermal` remains the default. Fourteau et al. (2024) derive the same
+Newton-with-Schur-complement construction independently, and quantify what a prescribed
+Dirichlet surface temperature costs in their framework: a spurious flux of −14.5 W m⁻² for a
+melting glacier surface, changing ablation by 40%. See [Thermal solvers](@ref "Thermal solvers")
+and [Surface energy balance numerics](architecture.md#Surface-energy-balance-numerics).
 
 ## References
 
-- Brils, M., Kuipers Munneke, P., van de Berg, W. J., and van den Broeke, M.
-  (2022). Improved representation of the contemporary Greenland ice sheet firn
-  layer by IMAU-FDM v1.2G. *Geoscientific Model Development*, 15, 7121–7138.
-- Ligtenberg, S. R. M., Helsen, M. M., and van den Broeke, M. R. (2011). An
-  improved semi-empirical model for the densification of Antarctic firn.
-  *The Cryosphere*, 5, 809–819.
-- Calonne, N., Milliancourt, L., Burr, A., Philip, A., Martin, C. L., Flin, F.,
-  and Geindreau, C. (2019). Thermal conductivity of snow, firn, and porous ice
-  from 3-D image-based computations. *Geophysical Research Letters*, 46,
-  13079–13089.
-- Reid, R. C., Prausnitz, J. M., and Sherwood, T. K. (1966). *The Properties of
-  Gases and Liquids*. McGraw-Hill.
-- Yen, Y.-C. (1981). *Review of thermal properties of snow, ice and sea ice*.
-  CRREL Report 81-10.
-- Fausto, R. S., Box, J. E., Vandecrux, B., van As, D., Steffen, K., MacFerrin,
-  M. J., Machguth, H., and Colgan, W. (2018). A snow density dataset for improving
-  surface boundary conditions in Greenland ice sheet firn modeling. *Frontiers in
-  Earth Science*, 6, 51.
-- Coleou, C., and Lesaffre, B. (1998). Irreducible water saturation in snow:
-  experimental results in a cold laboratory. *Annals of Glaciology*, 26, 64–68.
-- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R.
-  (2010). In situ measurements of Antarctic snow compaction compared with
-  predictions of models. *Journal of Geophysical Research*, 115, F03011.
-- Vionnet, V., Brun, E., Morin, S., Boone, A., Faroux, S., Le Moigne, P., Martin,
-  E., and Willemet, J.-M. (2012). The detailed snowpack scheme Crocus and its
-  implementation in SURFEX v7.2. *Geoscientific Model Development*, 5, 773–791.
-- Lenaerts, J. T. M., van den Broeke, M. R., Déry, S. J., van Meijgaard, E., van de
-  Berg, W. J., Palm, S. P., and Sanz Rodrigo, J. (2012). Modeling drifting snow in
-  Antarctica with a regional climate model: 1. Methods and model evaluation.
-  *Journal of Geophysical Research*, 117, D05108.
-- Versteeg, H. K., and Malalasekera, W. (2007). *An Introduction to Computational
-  Fluid Dynamics: The Finite Volume Method*, 2nd ed. Pearson.
-- Fourteau, K., Brondex, J., Brun, F., and Dumont, M. (2024). A novel numerical
-  implementation for the surface energy budget of melting snowpacks and glaciers.
-  *Geoscientific Model Development*, 17, 1903–1929.
+- Brils, M., Kuipers Munneke, P., van de Berg, W. J., and van den Broeke, M. (2022). Improved
+  representation of the contemporary Greenland ice sheet firn layer by IMAU-FDM v1.2G.
+  *Geoscientific Model Development*, 15, 7121–7138.
+- Ligtenberg, S. R. M., Helsen, M. M., and van den Broeke, M. R. (2011). An improved
+  semi-empirical model for the densification of Antarctic firn. *The Cryosphere*, 5, 809–819.
+- Calonne, N., Milliancourt, L., Burr, A., Philip, A., Martin, C. L., Flin, F., and Geindreau,
+  C. (2019). Thermal conductivity of snow, firn, and porous ice from 3-D image-based
+  computations. *Geophysical Research Letters*, 46, 13079–13089.
+- Reid, R. C., Prausnitz, J. M., and Sherwood, T. K. (1966). *The Properties of Gases and
+  Liquids*. McGraw-Hill.
+- Yen, Y.-C. (1981). *Review of thermal properties of snow, ice and sea ice*. CRREL Report
+  81-10.
+- Fausto, R. S., Box, J. E., Vandecrux, B., van As, D., Steffen, K., MacFerrin, M. J.,
+  Machguth, H., and Colgan, W. (2018). A snow density dataset for improving surface boundary
+  conditions in Greenland ice sheet firn modeling. *Frontiers in Earth Science*, 6, 51.
+- Coleou, C., and Lesaffre, B. (1998). Irreducible water saturation in snow: experimental
+  results in a cold laboratory. *Annals of Glaciology*, 26, 64–68.
+- Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
+  In situ measurements of Antarctic snow compaction compared with predictions of models.
+  *Journal of Geophysical Research*, 115, F03011.
+- Vionnet, V., Brun, E., Morin, S., Boone, A., Faroux, S., Le Moigne, P., Martin, E., and
+  Willemet, J.-M. (2012). The detailed snowpack scheme Crocus and its implementation in
+  SURFEX v7.2. *Geoscientific Model Development*, 5, 773–791.
+- Lenaerts, J. T. M., van den Broeke, M. R., Déry, S. J., van Meijgaard, E., van de Berg,
+  W. J., Palm, S. P., and Sanz Rodrigo, J. (2012). Modeling drifting snow in Antarctica with a
+  regional climate model: 1. Methods and model evaluation. *Journal of Geophysical Research*,
+  117, D05108.
+- Versteeg, H. K., and Malalasekera, W. (2007). *An Introduction to Computational Fluid
+  Dynamics: The Finite Volume Method*, 2nd ed. Pearson.
+- Fourteau, K., Brondex, J., Brun, F., and Dumont, M. (2024). A novel numerical implementation
+  for the surface energy budget of melting snowpacks and glaciers. *Geoscientific Model
+  Development*, 17, 1903–1929.
