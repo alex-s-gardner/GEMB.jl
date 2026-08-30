@@ -55,8 +55,9 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_albedo(dz, density, water, grain_radius, melt_surface, cfs, mp)
 
     # 3. Determine distribution of absorbed SW radiation with depth
-    shortwave_flux = calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_broadband, albedo_diffuse, cfs, mp)
+    _resize_workspace!(column_workspace, length(dz))
+    shortwave_flux = calculate_shortwave_radiation!(column_workspace.shortwave, dz, density,
+        grain_radius, albedo_broadband, albedo_diffuse, cfs, mp)
 
     # 4. Calculate net shortwave [W m-2]
     shortwave_net = sum(shortwave_flux)

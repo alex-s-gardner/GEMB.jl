@@ -26,14 +26,30 @@ Returns `shortwave_flux` vector [W m-2] of absorbed shortwave radiation per grid
   Bassford et al. are the published mass-balance results of the same modelling and do not
   tabulate these coefficients.
 """
-function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Float64},
+calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Float64},
+    grain_radius::Vector{Float64}, albedo_broadband::Float64, albedo_diffuse::Float64,
+    cfs::ClimateForcingStep, mp::ModelParameters) =
+    calculate_shortwave_radiation!(zeros(length(density)), dz, density, grain_radius,
+        albedo_broadband, albedo_diffuse, cfs, mp)
+
+"""
+    calculate_shortwave_radiation!(shortwave_flux, dz, density, grain_radius,
+                                   albedo_broadband, albedo_diffuse, cfs, mp) -> shortwave_flux
+
+Write the absorbed-shortwave profile of [`calculate_shortwave_radiation`](@ref) into
+`shortwave_flux`, which must be at least the column length. It is zeroed in full on entry, because
+the surface-absorption branches set only the top cell and leave the rest at zero — which also means a
+buffer longer than the column contributes nothing to the caller's `sum`.
+"""
+function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vector{Float64},
+    density::Vector{Float64},
     grain_radius::Vector{Float64}, albedo_broadband::Float64,
     albedo_diffuse::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
     # Initialize variables
     m = length(density)
-    shortwave_flux = zeros(m)
+    fill!(shortwave_flux, 0.0)
 
     if (!mp.shortwave_subsurface_absorption) ||
        ((mp.density_ice - density[1]) < D_TOLERANCE)
@@ -81,7 +97,9 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
             Qs2 = swfS[2] .* B2_cum
 
             # net energy flux to each grid cell
-            shortwave_flux = (Qs1[1:m] .- Qs1[2:m+1]) .+ (Qs2[1:m] .- Qs2[2:m+1])
+            @inbounds for i in 1:m
+                shortwave_flux[i] = (Qs1[i] - Qs1[i+1]) + (Qs2[i] - Qs2[i+1])
+            end
 
             # add flux absorbed at surface
             shortwave_flux[1] = shortwave_flux[1] + swfS[3]
@@ -110,7 +128,9 @@ function calculate_shortwave_radiation(dz::Vector{Float64}, density::Vector{Floa
             Qs = swf_ss .* B_cum
 
             # net energy flux to each grid cell
-            shortwave_flux = Qs[1:m] .- Qs[2:m+1]
+            @inbounds for i in 1:m
+                shortwave_flux[i] = Qs[i] - Qs[i+1]
+            end
 
             # add flux absorbed at surface
             shortwave_flux[1] = shortwave_flux[1] + swf_s

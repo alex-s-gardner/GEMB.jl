@@ -198,9 +198,13 @@ Reusing one across *sequential* runs is fine and saves the first-timestep growth
 struct ThermalWorkspace
     explicit::_ExplicitWorkspace
     implicit::_ImplicitWorkspace
+    conductivity::Vector{Float64}  # thermal conductivity per cell [W m-1 K-1]
 end
 
-ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace())
+ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[])
+
+# Only the scheme-independent buffer: each scheme's own set is grown inside `_thermal_solve!`.
+_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity,)
 
 # Which buffer set a scheme draws from. One method per solver, so a new scheme adds its own
 # workspace type and one accessor rather than editing a branch.
@@ -210,9 +214,10 @@ _solver_workspace(::ImplicitThermal, ws::ThermalWorkspace) = ws.implicit
 """
     ColumnWorkspace()
 
-Per-run scratch space for the grid controllers, holding the per-cell buffers
-[`manage_layer_thickness`](@ref) and `enforce_column_length!` work in so that a timestep allocates
-nothing after the first.
+Per-run scratch space for the per-cell quantities a timestep builds and discards: the thickness
+bands and merge bookkeeping the grid controllers ([`manage_layer_thickness`](@ref),
+`enforce_column_length!`) work in, and the absorbed shortwave profile. Holding them here is what
+lets a timestep allocate nothing after the first.
 
 The counterpart of [`ThermalWorkspace`](@ref), under the same rule: `mp` describes what to compute
 and is shareable, a `ColumnWorkspace` is *where one run scratches* and must not be shared between
@@ -232,15 +237,17 @@ struct ColumnWorkspace
     dzmax::Vector{Float64}        # per-cell maximum thickness band [m]
     mass::Vector{Float64}         # cell mass, kept in sync across a merge chain [kg m-2]
     delete_cell::Vector{Bool}     # cells the merge pass folded into a neighbour
+    shortwave::Vector{Float64}    # absorbed shortwave radiation per cell [W m-2]
     # Index lists, emptied and refilled rather than sized, so they are outside the length contract
     # above and carry nothing between timesteps.
     to_delete::Vector{Int}
     to_split::Vector{Int}
 end
 
-ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[], Int[], Int[])
+ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[], Float64[], Int[], Int[])
 
-_workspace_buffers(ws::ColumnWorkspace) = (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell)
+_workspace_buffers(ws::ColumnWorkspace) =
+    (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell, ws.shortwave)
 
 """
     ModelParameters

@@ -50,8 +50,19 @@ Returns vector of thermal conductivities [W m-1 K-1].
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP). *The Cryosphere* 14, 3785-3810. Sects. 5.1 and 7.
 """
-function thermal_conductivity(temperature::AbstractVector, density::AbstractVector, mp::ModelParameters)
-    K = Vector{Float64}(undef, length(density))
+thermal_conductivity(temperature::AbstractVector, density::AbstractVector, mp::ModelParameters) =
+    thermal_conductivity!(Vector{Float64}(undef, length(density)), temperature, density, mp)
+
+"""
+    thermal_conductivity!(K, temperature, density, mp::ModelParameters) -> K
+
+Write the per-cell conductivity of [`thermal_conductivity`](@ref) into `K`, which must be indexable over
+`eachindex(density)` and may be longer than the column — the surplus tail is left untouched, and no
+caller sizes anything from `K`. Every entry the loop reaches is written, so `K` may arrive holding a
+previous timestep's values.
+"""
+function thermal_conductivity!(K::AbstractVector, temperature::AbstractVector,
+                               density::AbstractVector, mp::ModelParameters)
     method = _conductivity_code(mp.thermal_conductivity_method)
     @inbounds for i in eachindex(density)
         K[i] = _thermal_conductivity_scalar(temperature[i], density[i], mp.density_ice, method)
