@@ -122,12 +122,32 @@ longer than needed (a column that shrank) is still correct.
 
 `ws` is unannotated because the only thing the body requires is a `_workspace_buffers` method, which
 is also the extension point a new workspace type adds.
+
+[`_fit_buffer!`](@ref) is the exception to grow-only: a buffer standing in for an array the caller
+sums, or broadcasts against the column, must be *exactly* the cell count or the surplus tail enters
+the result. `resize!` keeps capacity, so it reallocates only when the column grows past the high-water
+mark.
 """
 function _resize_workspace!(ws, n::Int)
     for buffer in _workspace_buffers(ws)
         length(buffer) < n && resize!(buffer, n)
     end
     return ws
+end
+
+"""
+    _fit_buffer!(buffer, n) -> buffer
+
+Resize `buffer` to exactly `n`, growing or shrinking.
+
+The exception to [`_resize_workspace!`](@ref)'s grow-only rule, for a buffer standing in for an array
+its consumer sums, or broadcasts against the column: there a surplus tail would enter the result or
+raise a length mismatch, so "at least `n`" is not good enough. `resize!` keeps capacity, so this
+reallocates only when the column grows past its high-water mark.
+"""
+function _fit_buffer!(buffer::Vector, n::Int)
+    length(buffer) == n || resize!(buffer, n)
+    return buffer
 end
 
 # Split out so `_resize_workspace!` stays a single method over both workspace types. `fieldnames`
@@ -238,16 +258,28 @@ struct ColumnWorkspace
     mass::Vector{Float64}         # cell mass, kept in sync across a merge chain [kg m-2]
     delete_cell::Vector{Bool}     # cells the merge pass folded into a neighbour
     shortwave::Vector{Float64}    # absorbed shortwave radiation per cell [W m-2]
+    # `calculate_melt` scratch. Sized to the cell count exactly by `_fit_buffer!`, not grown, because
+    # several of these are summed or broadcast against the column.
+    water_delta::Vector{Float64}  # change in pore water [kg m-2]
+    t_excess::Vector{Float64}     # temperature above the melting point [K]
+    water_excess::Vector{Float64} # pore water above irreducible saturation [kg m-2]
+    freeze::Vector{Float64}       # refrozen mass [kg m-2]
+    t_surplus::Vector{Float64}    # temperature above whole-cell melt [K]
+    runoff::Vector{Float64}       # runoff per cell [kg m-2]
+    flux_dn::Vector{Float64}      # water flux across cell boundaries [kg m-2], m+1 entries
+    flux_age::Vector{Float64}     # mass-weighted age of `flux_dn` [d], m+1 entries
     # Index lists, emptied and refilled rather than sized, so they are outside the length contract
     # above and carry nothing between timesteps.
     to_delete::Vector{Int}
     to_split::Vector{Int}
 end
 
-ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[], Float64[], Int[], Int[])
+ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[],
+    (Float64[] for _ in 1:9)..., Int[], Int[])
 
 _workspace_buffers(ws::ColumnWorkspace) =
-    (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell, ws.shortwave)
+    (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell, ws.shortwave, ws.water_delta, ws.t_excess,
+     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age)
 
 """
     ModelParameters

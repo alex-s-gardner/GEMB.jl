@@ -220,7 +220,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64}, rain::Float64,
-    mp::ModelParameters, verbose::Bool)
+    mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace())
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
@@ -231,7 +231,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)
-    water_delta = zeros(m)
+    # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
+    # further down run over the same elements in the same order and the broadcasts against the column
+    # still match lengths.
+    water_delta = _fit_buffer!(workspace.water_delta, m)
+    fill!(water_delta, 0.0)
 
     # store initial mass [kg]
     M = dz .* density
@@ -252,7 +256,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     percolation_depth = 0.0
 
     # calculate temperature excess above 0 degC
-    T_excess = max.(0.0, temperature .- CtoK)
+    T_excess = _fit_buffer!(workspace.t_excess, m)
+    @inbounds for i in 1:m
+        T_excess[i] = max(0.0, temperature[i] - CtoK)
+    end
 
     # new grid point center temperature. Rebind to a fresh array (do not mutate
     # the caller's temperature vector) to preserve the previous behavior.
@@ -300,7 +307,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # squeeze water from snow pack (compute water_excess without materializing
     # the water_irreducible temporary)
-    water_excess = Vector{Float64}(undef, m)
+    water_excess = _fit_buffer!(workspace.water_excess, m)
     @inbounds for i in 1:m
         water_irreducible = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * (M[i] / density[i])
         water_excess[i] = max(0.0, water[i] - water_irreducible)
@@ -310,7 +317,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Seed freeze with the pore-water refreeze accumulated above, then reset
     # water_delta for reuse in the percolation loop.
-    freeze = copy(water_delta)
+    freeze = _fit_buffer!(workspace.freeze, m)
+    copyto!(freeze, water_delta)
     fill!(water_delta, 0.0)
 
     # run melt algorithm if there is melt water or excess pore water
@@ -321,7 +329,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # `T_TOLERANCE`, a kelvin tolerance, so moving them to joules would rescale those
         # thresholds by ~c_p. The surplus *energy* is computed from them per cell.
         T_full_melt = full_melt_excess_temperature(mp)
-        T_surplus = max.(0.0, T_excess .- T_full_melt)
+        T_surplus = _fit_buffer!(workspace.t_surplus, m)
+        @inbounds for i in 1:m
+            T_surplus[i] = max(0.0, T_excess[i] - T_full_melt)
+        end
 
         if sum(T_surplus) > T_TOLERANCE
             # calculate surplus energy. Built into a concretely-typed vector rather than a
@@ -380,11 +391,14 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         melt_total = max(0.0, melt_sum - rain)
 
         # initialize refreeze, runoff, flux_dn and water_delta vectors
-        runoff = zeros(m)
-        flux_dn = zeros(m + 1)
+        runoff = _fit_buffer!(workspace.runoff, m)
+        fill!(runoff, 0.0)
+        flux_dn = _fit_buffer!(workspace.flux_dn, m + 1)
+        fill!(flux_dn, 0.0)
         # Mass-weighted mean age [d] of the water in `flux_dn`, same indexing. Only entries
         # with `flux_dn > 0` are ever read, so the zero fill needs no sentinel.
-        flux_age = zeros(m + 1)
+        flux_age = _fit_buffer!(workspace.flux_age, m + 1)
+        fill!(flux_age, 0.0)
 
         Xi = 1
         m = length(temperature)

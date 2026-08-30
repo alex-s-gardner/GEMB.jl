@@ -107,7 +107,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_sphericity, age, melt, melt_surface, runoff, refreeze,
         percolation_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, rain, mp, verbose)
+            grain_dendricity, grain_sphericity, age, rain, mp, verbose;
+            workspace=column_workspace)
 
     densification_from_melt = densification_from_melt - sum(dz)
 
