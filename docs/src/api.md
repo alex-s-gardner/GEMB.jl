@@ -15,6 +15,7 @@ AbstractThermalSolver
 ExplicitThermal
 ImplicitThermal
 ThermalWorkspace
+ColumnWorkspace
 ```
 
 ## Initialization
