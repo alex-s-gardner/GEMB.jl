@@ -34,7 +34,8 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
-    mp::ModelParameters, verbose::Bool; n_target::Int=length(dz))
+    mp::ModelParameters, verbose::Bool; n_target::Int=length(dz),
+    workspace::ColumnWorkspace=ColumnWorkspace())
 
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
@@ -47,31 +48,48 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     m = length(temperature)
 
     # Per-cell thickness bands; dzmax is carried through the merge pass because merging
-    # shifts cells up and their band assignment must shift with them.
-    column_dzmin2 = Vector{Float64}(undef, m)
-    column_dzmax2 = Vector{Float64}(undef, m)
+    # shifts cells up and their band assignment must shift with them. Both come from the
+    # workspace, so they are usually longer than the column: `column_bands!` writes
+    # `eachindex(dz)` and every read below is bounded by the cell count, never by the
+    # buffer length.
+    _resize_workspace!(workspace, max(m, n_target) + 1)
+    column_dzmin2 = workspace.dzmin
+    column_dzmax2 = workspace.dzmax
     column_bands!(column_dzmin2, column_dzmax2, dz, mp)
 
     # Cell masses, kept in sync through the merge pass so a chain of merges into the same
-    # target weights correctly.
-    M = dz .* density
+    # target weights correctly. Filled cell by cell rather than broadcast, because the
+    # buffer is longer than `dz` and `.=` would be a length mismatch.
+    M = workspace.mass
+    @inbounds for i in 1:m
+        M[i] = dz[i] * density[i]
+    end
 
     ## MERGE CELLS BELOW THEIR MINIMUM THICKNESS
-    delete_cell = falses(m)
+    # A view over the live cells, so `findlast` cannot run off into the surplus tail — where an
+    # unwritten `false` would read as the last surviving cell and pick the wrong merge target.
+    delete_cell = view(workspace.delete_cell, 1:m)
+    fill!(delete_cell, false)
     for i in 1:m
         if dz[i] < (column_dzmin2[i] - D_TOLERANCE)
             delete_cell[i] = true
 
             # Merge downward, except for the bottom cell, which merges into the
             # deepest surviving cell above it.
-            i_target = i == m ? findlast(.!delete_cell) : i + 1
+            i_target = i == m ? findlast(!, delete_cell) : i + 1
             M[i_target] = merge_pair!(cols, i, i_target, M[i], M[i_target], mp)
         end
     end
 
-    to_delete = findall(delete_cell)
+    to_delete = workspace.to_delete
+    empty!(to_delete)
+    for i in 1:m
+        delete_cell[i] && push!(to_delete, i)
+    end
     if !isempty(to_delete)
         close_slot!(cols, to_delete)
+        # Every index is <= m, so deleting them from the longer buffer shifts the live prefix
+        # exactly as it would a buffer sized to the column; only the inert tail differs.
         deleteat!(column_dzmax2, to_delete)
     end
 
@@ -79,7 +97,8 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
 
     ## SPLIT CELLS ABOVE THEIR MAXIMUM THICKNESS
     # Collected first, then applied back-to-front so earlier indices stay valid.
-    f = Int[]
+    f = workspace.to_split
+    empty!(f)
     @inbounds for i in 1:m
         if dz[i] > column_dzmax2[i] + D_TOLERANCE
             push!(f, i)
@@ -91,7 +110,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     ## COUNT CONTROL — restore the fixed cell count (exactly conservative)
-    enforce_column_length!(cols, n_target, mp)
+    enforce_column_length!(cols, n_target, mp; workspace)
 
     # The count controller conserves mass and energy exactly, and depth is pinned by
     # `trim_bottom!` later in the timestep, so the only budget term arising here is the

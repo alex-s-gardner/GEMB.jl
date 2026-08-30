@@ -166,7 +166,8 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      convergence_drift_fac=nothing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
                      verbose::Bool=false,
-                     thermal_workspace::ThermalWorkspace=ThermalWorkspace())
+                     thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
+                     column_workspace::ColumnWorkspace=ColumnWorkspace())
 
     if (convergence_drift_density !== nothing || convergence_drift_fac !== nothing) &&
        drift_window < 2
@@ -202,7 +203,7 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
 
     for cycle in 1:max_iterations
         cycles_run = cycle
-        out = gemb(current_profile, cf, mp_spinup; thermal_workspace=thermal_workspace)
+        out = gemb(current_profile, cf, mp_spinup; thermal_workspace, column_workspace)
         current_profile = gemb_profile(out)
         smb_rate = _cycle_smb_rate(out, cf, mp)
 

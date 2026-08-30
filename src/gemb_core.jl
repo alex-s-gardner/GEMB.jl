@@ -1,7 +1,7 @@
 """
     gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
               n_target=length(state.dz), z_target=sum(state.dz),
-              thermal_workspace=ThermalWorkspace())
+              thermal_workspace=ThermalWorkspace(), column_workspace=ColumnWorkspace())
 
 Perform a single time-step of the GEMB model.
 
@@ -21,7 +21,8 @@ one column being stepped — give each concurrent thread its own.
 """
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
     n_target::Int=length(state.dz), z_target::Float64=sum(state.dz),
-    thermal_workspace::ThermalWorkspace=ThermalWorkspace())
+    thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
+    column_workspace::ColumnWorkspace=ColumnWorkspace())
 
     # Destructure state - arrays are mutated in-place by physics functions, and the names are
     # rebound to the new arrays the physics functions return. This is safe because gemb_driver
@@ -126,7 +127,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_sphericity, age, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, mp, verbose;
-            n_target=n_target)
+            n_target=n_target, workspace=column_workspace)
 
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)

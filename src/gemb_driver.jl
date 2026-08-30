@@ -1,6 +1,7 @@
 """
     gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
-         verbose=false, thermal_workspace=ThermalWorkspace())
+         verbose=false, thermal_workspace=ThermalWorkspace(),
+         column_workspace=ColumnWorkspace())
 
 Run the Glacier Energy and Mass Balance (GEMB) model.
 
@@ -33,7 +34,8 @@ layer's attributes. Conformance is at the attribute level: GEMB.jl ships no NetC
 writer, so the attributes are there for whichever writer or plotting code consumes them.
 """
 function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
-    verbose::Bool=false, thermal_workspace::ThermalWorkspace=ThermalWorkspace())
+    verbose::Bool=false, thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
+    column_workspace::ColumnWorkspace=ColumnWorkspace())
     _assert_restart_layers(profile)
 
     # Get time information
@@ -231,7 +233,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     # already infers to a concrete `DimVector`, and integer-indexing one is free
     # (measured indistinguishable from the bare `Vector`).
     _gemb_time_loop!(output, state, model_parameters, mp, verbose, thermal_workspace,
-        times, output_times, profile_size, z_target, Float64(dt_int),
+        column_workspace, times, output_times, profile_size, z_target, Float64(dt_int),
         climate_forcing.temperature_air,
         climate_forcing.pressure_air,
         climate_forcing.precipitation,
@@ -349,7 +351,7 @@ function _profile_provenance(profile::DimStack)
 end
 
 """
-    _gemb_time_loop!(output, state, model_parameters, mp, verbose, thermal_workspace,
+    _gemb_time_loop!(output, state, model_parameters, mp, verbose, thermal_workspace, column_workspace,
                      times, output_times, profile_size, z_target, dt_f,
                      <forcing arrays/scalars>)
 
@@ -362,7 +364,7 @@ re-dispatching every timestep. Mutates `output` in place.
 hold at every timestep boundary.
 """
 function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
-    thermal_workspace::ThermalWorkspace,
+    thermal_workspace::ThermalWorkspace, column_workspace::ColumnWorkspace,
     times::Vector{DateTime}, output_times, profile_size::Int, z_target::Float64,
     dt_f::Float64,
     f_temperature_air::AbstractVector, f_pressure_air::AbstractVector,
@@ -496,7 +498,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         # and fixed total depth.
         state, flux = gemb_core(state, forcing_step, model_parameters, verbose;
             n_target=profile_size, z_target=z_target,
-            thermal_workspace=thermal_workspace)
+            thermal_workspace=thermal_workspace, column_workspace=column_workspace)
 
         # Basal ice flux over this interval, in metres of ice. An interval *sum*, like every
         # other mass flux in the output, so `cumsum` recovers the cumulative flux exactly;

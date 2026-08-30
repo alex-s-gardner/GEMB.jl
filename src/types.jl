@@ -119,8 +119,11 @@ written before it is read — so the contents after a grow are deliberately unde
 
 Callers index by `m`/`n` computed from the column, never by `length(buffer)`, so a buffer that is
 longer than needed (a column that shrank) is still correct.
+
+`ws` is unannotated because the only thing the body requires is a `_workspace_buffers` method, which
+is also the extension point a new workspace type adds.
 """
-function _resize_workspace!(ws::Union{_ExplicitWorkspace,_ImplicitWorkspace}, n::Int)
+function _resize_workspace!(ws, n::Int)
     for buffer in _workspace_buffers(ws)
         length(buffer) < n && resize!(buffer, n)
     end
@@ -203,6 +206,41 @@ ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace()
 # workspace type and one accessor rather than editing a branch.
 _solver_workspace(::ExplicitThermal, ws::ThermalWorkspace) = ws.explicit
 _solver_workspace(::ImplicitThermal, ws::ThermalWorkspace) = ws.implicit
+
+"""
+    ColumnWorkspace()
+
+Per-run scratch space for the grid controllers, holding the per-cell buffers
+[`manage_layer_thickness`](@ref) and `enforce_column_length!` work in so that a timestep allocates
+nothing after the first.
+
+The counterpart of [`ThermalWorkspace`](@ref), under the same rule: `mp` describes what to compute
+and is shareable, a `ColumnWorkspace` is *where one run scratches* and must not be shared between
+concurrent runs. `gemb` creates one per call, so single-threaded use never mentions this type;
+callers stepping columns concurrently give each thread its own.
+
+Buffers are grown by the grow-only [`_resize_workspace!`](@ref) and are therefore usually longer
+than the column. Every consumer indexes by the cell count taken from the column, never by
+`length(buffer)`, and writes an entry before reading it — a buffer arrives holding a previous
+timestep's values, so the surplus tail is inert only because nothing looks at it.
+
+`dzmin`/`dzmax` serve both controllers rather than being duplicated: the band arrays the merge and
+split passes read are dead by the time the count controller runs.
+"""
+struct ColumnWorkspace
+    dzmin::Vector{Float64}        # per-cell minimum thickness band [m]
+    dzmax::Vector{Float64}        # per-cell maximum thickness band [m]
+    mass::Vector{Float64}         # cell mass, kept in sync across a merge chain [kg m-2]
+    delete_cell::Vector{Bool}     # cells the merge pass folded into a neighbour
+    # Index lists, emptied and refilled rather than sized, so they are outside the length contract
+    # above and carry nothing between timesteps.
+    to_delete::Vector{Int}
+    to_split::Vector{Int}
+end
+
+ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[], Int[], Int[])
+
+_workspace_buffers(ws::ColumnWorkspace) = (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell)
 
 """
     ModelParameters
