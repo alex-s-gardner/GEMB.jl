@@ -291,15 +291,19 @@ holds (max cell 22.3 → 30.2 m, cells over 5 m steady at 16) with no cell out o
 in-band first does let a merge land inside `column_ztop` when no deep pair is admissible: that
 is the safety valve preventing the deep column from being consumed.
 """
-function enforce_column_length!(cols::NamedTuple, n_target::Int, mp::ModelParameters)
+function enforce_column_length!(cols::NamedTuple, n_target::Int, mp::ModelParameters;
+                               workspace::ColumnWorkspace=ColumnWorkspace())
     dz = cols.dz
     n = length(dz)
     n == n_target && return 0
 
     # Bands are recomputed after each operation: merging and splitting change the
-    # cumulative depth of every cell below, and hence which band each falls in.
-    dzmin = Vector{Float64}(undef, max(n, n_target) + 1)
-    dzmax = Vector{Float64}(undef, max(n, n_target) + 1)
+    # cumulative depth of every cell below, and hence which band each falls in. The buffers may
+    # be longer than the column and hold a previous pass's values; `column_bands!` rewrites
+    # `eachindex(dz)` at the top of every iteration, before anything reads them.
+    _resize_workspace!(workspace, max(n, n_target) + 1)
+    dzmin = workspace.dzmin
+    dzmax = workspace.dzmax
 
     # Each iteration changes the length by exactly one, so the work is bounded by the initial
     # discrepancy. The cap is a guard against a primitive failing to make progress, not an

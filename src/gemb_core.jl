@@ -1,7 +1,7 @@
 """
     gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
               n_target=length(state.dz), z_target=sum(state.dz),
-              thermal_workspace=ThermalWorkspace())
+              thermal_workspace=ThermalWorkspace(), column_workspace=ColumnWorkspace())
 
 Perform a single time-step of the GEMB model.
 
@@ -21,7 +21,8 @@ one column being stepped — give each concurrent thread its own.
 """
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
     n_target::Int=length(state.dz), z_target::Float64=sum(state.dz),
-    thermal_workspace::ThermalWorkspace=ThermalWorkspace())
+    thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
+    column_workspace::ColumnWorkspace=ColumnWorkspace())
 
     # Destructure state - arrays are mutated in-place by physics functions, and the names are
     # rebound to the new arrays the physics functions return. This is safe because gemb_driver
@@ -54,8 +55,9 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_albedo(dz, density, water, grain_radius, melt_surface, cfs, mp)
 
     # 3. Determine distribution of absorbed SW radiation with depth
-    shortwave_flux = calculate_shortwave_radiation(dz, density, grain_radius,
-        albedo_broadband, albedo_diffuse, cfs, mp)
+    _resize_workspace!(column_workspace, length(dz))
+    shortwave_flux = calculate_shortwave_radiation!(column_workspace.shortwave, dz, density,
+        grain_radius, albedo_broadband, albedo_diffuse, cfs, mp)
 
     # 4. Calculate net shortwave [W m-2]
     shortwave_net = sum(shortwave_flux)
@@ -105,7 +107,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_sphericity, age, melt, melt_surface, runoff, refreeze,
         percolation_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, rain, mp, verbose)
+            grain_dendricity, grain_sphericity, age, rain, mp, verbose;
+            workspace=column_workspace)
 
     densification_from_melt = densification_from_melt - sum(dz)
 
@@ -126,7 +129,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_sphericity, age, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, mp, verbose;
-            n_target=n_target)
+            n_target=n_target, workspace=column_workspace)
 
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)

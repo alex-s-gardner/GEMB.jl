@@ -232,3 +232,45 @@ end
         @test_throws ErrorException GEMB.trim_bottom!(cols, 0.7, mp)
     end
 end
+
+# The `ColumnWorkspace` reuse contract, pinned the same way `test_calculate_temperature.jl` pins
+# the thermal one: a buffer arrives holding a previous call's values and is usually longer than the
+# column, so the result must not depend on either. A regression here is a wrong answer, not a slow
+# one — the surplus tail is only inert because every consumer bounds its reads by the cell count.
+@testset "ColumnWorkspace reuse" begin
+    mp = _layer_mp()
+
+    run_with(ws) = GEMB.manage_layer_thickness(_make_layer_inputs(n = 10)..., mp, true; workspace = ws)
+
+    @testset "a dirty, oversized workspace gives the fresh-workspace answer" begin
+        fresh = run_with(ColumnWorkspace())
+
+        dirty = ColumnWorkspace()
+        GEMB._resize_workspace!(dirty, 400)
+        fill!(dirty.dzmin, -99.0)
+        fill!(dirty.dzmax, -99.0)
+        fill!(dirty.mass, -99.0)
+        fill!(dirty.delete_cell, true)      # every cell marked deleted, from a previous column
+        append!(dirty.to_delete, 1:7)
+        append!(dirty.to_split, 3:9)
+
+        @test run_with(dirty) == fresh
+    end
+
+    @testset "one workspace across a long column then a short one" begin
+        ws = ColumnWorkspace()
+        long_fresh = GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true;
+                                           workspace = ColumnWorkspace())
+        @test GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true;
+                                     workspace = ws) == long_fresh
+        # The buffers are now 30-long; a 10-cell column must not read the stale tail.
+        @test run_with(ws) == run_with(ColumnWorkspace())
+    end
+
+    @testset "buffers grow and never shrink" begin
+        ws = ColumnWorkspace()
+        GEMB._resize_workspace!(ws, 40)
+        GEMB._resize_workspace!(ws, 10)
+        @test all(length(b) == 40 for b in GEMB._workspace_buffers(ws))
+    end
+end

@@ -119,12 +119,35 @@ written before it is read — so the contents after a grow are deliberately unde
 
 Callers index by `m`/`n` computed from the column, never by `length(buffer)`, so a buffer that is
 longer than needed (a column that shrank) is still correct.
+
+`ws` is unannotated because the only thing the body requires is a `_workspace_buffers` method, which
+is also the extension point a new workspace type adds.
+
+[`_fit_buffer!`](@ref) is the exception to grow-only: a buffer standing in for an array the caller
+sums, or broadcasts against the column, must be *exactly* the cell count or the surplus tail enters
+the result. `resize!` keeps capacity, so it reallocates only when the column grows past the high-water
+mark.
 """
-function _resize_workspace!(ws::Union{_ExplicitWorkspace,_ImplicitWorkspace}, n::Int)
+function _resize_workspace!(ws, n::Int)
     for buffer in _workspace_buffers(ws)
         length(buffer) < n && resize!(buffer, n)
     end
     return ws
+end
+
+"""
+    _fit_buffer!(buffer, n) -> buffer
+
+Resize `buffer` to exactly `n`, growing or shrinking.
+
+The exception to [`_resize_workspace!`](@ref)'s grow-only rule, for a buffer standing in for an array
+its consumer sums, or broadcasts against the column: there a surplus tail would enter the result or
+raise a length mismatch, so "at least `n`" is not good enough. `resize!` keeps capacity, so this
+reallocates only when the column grows past its high-water mark.
+"""
+function _fit_buffer!(buffer::Vector, n::Int)
+    length(buffer) == n || resize!(buffer, n)
+    return buffer
 end
 
 # Split out so `_resize_workspace!` stays a single method over both workspace types. `fieldnames`
@@ -195,14 +218,68 @@ Reusing one across *sequential* runs is fine and saves the first-timestep growth
 struct ThermalWorkspace
     explicit::_ExplicitWorkspace
     implicit::_ImplicitWorkspace
+    conductivity::Vector{Float64}  # thermal conductivity per cell [W m-1 K-1]
 end
 
-ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace())
+ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[])
+
+# Only the scheme-independent buffer: each scheme's own set is grown inside `_thermal_solve!`.
+_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity,)
 
 # Which buffer set a scheme draws from. One method per solver, so a new scheme adds its own
 # workspace type and one accessor rather than editing a branch.
 _solver_workspace(::ExplicitThermal, ws::ThermalWorkspace) = ws.explicit
 _solver_workspace(::ImplicitThermal, ws::ThermalWorkspace) = ws.implicit
+
+"""
+    ColumnWorkspace()
+
+Per-run scratch space for the per-cell quantities a timestep builds and discards: the thickness
+bands and merge bookkeeping the grid controllers ([`manage_layer_thickness`](@ref),
+`enforce_column_length!`) work in, and the absorbed shortwave profile. Holding them here is what
+lets a timestep allocate nothing after the first.
+
+The counterpart of [`ThermalWorkspace`](@ref), under the same rule: `mp` describes what to compute
+and is shareable, a `ColumnWorkspace` is *where one run scratches* and must not be shared between
+concurrent runs. `gemb` creates one per call, so single-threaded use never mentions this type;
+callers stepping columns concurrently give each thread its own.
+
+Buffers are grown by the grow-only [`_resize_workspace!`](@ref) and are therefore usually longer
+than the column. Every consumer indexes by the cell count taken from the column, never by
+`length(buffer)`, and writes an entry before reading it — a buffer arrives holding a previous
+timestep's values, so the surplus tail is inert only because nothing looks at it.
+
+`dzmin`/`dzmax` serve both controllers rather than being duplicated: the band arrays the merge and
+split passes read are dead by the time the count controller runs.
+"""
+struct ColumnWorkspace
+    dzmin::Vector{Float64}        # per-cell minimum thickness band [m]
+    dzmax::Vector{Float64}        # per-cell maximum thickness band [m]
+    mass::Vector{Float64}         # cell mass, kept in sync across a merge chain [kg m-2]
+    delete_cell::Vector{Bool}     # cells the merge pass folded into a neighbour
+    shortwave::Vector{Float64}    # absorbed shortwave radiation per cell [W m-2]
+    # `calculate_melt` scratch. Sized to the cell count exactly by `_fit_buffer!`, not grown, because
+    # several of these are summed or broadcast against the column.
+    water_delta::Vector{Float64}  # change in pore water [kg m-2]
+    t_excess::Vector{Float64}     # temperature above the melting point [K]
+    water_excess::Vector{Float64} # pore water above irreducible saturation [kg m-2]
+    freeze::Vector{Float64}       # refrozen mass [kg m-2]
+    t_surplus::Vector{Float64}    # temperature above whole-cell melt [K]
+    runoff::Vector{Float64}       # runoff per cell [kg m-2]
+    flux_dn::Vector{Float64}      # water flux across cell boundaries [kg m-2], m+1 entries
+    flux_age::Vector{Float64}     # mass-weighted age of `flux_dn` [d], m+1 entries
+    # Index lists, emptied and refilled rather than sized, so they are outside the length contract
+    # above and carry nothing between timesteps.
+    to_delete::Vector{Int}
+    to_split::Vector{Int}
+end
+
+ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[],
+    (Float64[] for _ in 1:9)..., Int[], Int[])
+
+_workspace_buffers(ws::ColumnWorkspace) =
+    (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell, ws.shortwave, ws.water_delta, ws.t_excess,
+     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age)
 
 """
     ModelParameters

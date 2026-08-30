@@ -79,7 +79,10 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     ## THERMAL CONDUCTIVITY (per `mp.thermal_conductivity_method`; see
     ## `thermal_conductivity` for the five fits and their sources)
-    K = thermal_conductivity(temperature, density, mp)
+    # The whole buffer, not a view of the column: nothing sizes itself from `K`, so the surplus
+    # tail is never reached, and a view would allocate once per timestep.
+    _resize_workspace!(workspace, length(density))
+    K = thermal_conductivity!(workspace.conductivity, temperature, density, mp)
 
     sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
         thf_wind_speed, thf_C, thf_pressure_factor, thf_logM, thf_logHT, thf_logHQ,
