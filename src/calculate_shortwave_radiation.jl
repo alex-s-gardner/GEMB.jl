@@ -89,8 +89,8 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             B2 = 0.1098 .* h                 # 0.8 - 1.5um
 
             # cumulative extinction factors
-            B1_cum[2:end] = cumprod(exp.(-B1 .* dz))
-            B2_cum[2:end] = cumprod(exp.(-B2 .* dz))
+            _extinction_profile!(B1_cum, B1, dz)
+            _extinction_profile!(B2_cum, B2, dz)
 
             # flux across grid cell boundaries
             Qs1 = swfS[1] .* B1_cum
@@ -122,7 +122,8 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             B = Bs .+ (300 .- density) .* ((Bs - Bi) / (mp.density_ice - 300))
 
             # cumulative extinction factor
-            B_cum = vcat([1.0], cumprod(exp.(-B .* dz)))
+            B_cum = ones(m + 1)
+            _extinction_profile!(B_cum, B, dz)
 
             # flux across grid cell boundaries
             Qs = swf_ss .* B_cum
@@ -138,4 +139,33 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
     end
 
     return shortwave_flux
+end
+
+"""
+    _extinction_profile!(out, B, dz) -> out
+
+Write the cumulative transmission down the column into `out[2:end]`, leaving `out[1]` as the
+caller set it (1.0 — no attenuation above the surface).
+
+`out[i+1] = prod(exp(-B[j] * dz[j]) for j in 1:i)`, accumulated as a running product in the
+same order, and so to the same last bit, as `cumprod`. `Base.cumprod` is avoided deliberately:
+it reaches `Base._accumulate!`'s `dims` machinery, whose `CartesianIndices` construction the
+`--trim` verifier cannot resolve, which would take the whole column-step call tree out of the
+statically compiled C API (see `capi/README.md`).
+"""
+function _extinction_profile!(out::AbstractVector{Float64}, B::AbstractVector{Float64},
+    dz::AbstractVector{Float64})
+    axes(B) == axes(dz) ||
+        throw(DimensionMismatch("B and dz must match: $(axes(B)) vs $(axes(dz))"))
+    length(out) == length(B) + 1 ||
+        throw(DimensionMismatch("out must be one longer than B: $(length(out)) vs $(length(B))"))
+
+    running = 1.0
+    o = firstindex(out)
+    for i in eachindex(B, dz)
+        running *= exp(-B[i] * dz[i])
+        out[o+1] = running
+        o += 1
+    end
+    return out
 end

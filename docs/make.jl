@@ -22,6 +22,7 @@ makedocs(;
         "Thermal Solvers" => "thermal_solvers.md",
         "Variable Reference" => "variables.md",
         "API Reference" => "api.md",
+        "C API" => "c_api.md",
         "Model Comparisons" => [
             "Community Firn Model" => "cfm_comparison.md",
             "IMAU-FDM" => "imau_fdm_comparison.md",

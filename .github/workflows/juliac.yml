@@ -1,0 +1,66 @@
+name: JuliaC
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+jobs:
+  compile:
+    name: trim=${{ matrix.trim }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Non-blocking while JuliaC is pre-1.0: its trim behavior tracks upstream Julia, so a hard
+    # gate here would fail pull requests over churn that is not this package's. The verifier log
+    # is uploaded either way. Remove this once `--trim=safe` has been green on both platforms for
+    # ten consecutive main-branch runs with no intervening fix (see capi/README.md).
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        trim:
+          # `no` is the shipping fallback and must stay green independently of whether `safe`
+          # does; `safe` is the ~150x smaller artifact and the property worth defending.
+          - safe
+          - 'no'
+    steps:
+      - uses: actions/checkout@v4
+      # JuliaC requires Julia >= 1.12. The package's own compat floor stays at 1.11 (CI.yml
+      # tests both), because the C API is an additional artifact, not a new requirement on
+      # callers using GEMB as a Julia library.
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v2
+      # JuliaC is installed into its own environment rather than added to capi/Project.toml: it
+      # drives the build and must not become a dependency of the code being compiled.
+      - name: Install JuliaC
+        run: |
+          julia --project=.juliac -e '
+            using Pkg
+            Pkg.add(name="JuliaC", version="0.3.9")'
+      - name: Instantiate the capi environment
+        run: julia --project=capi -e 'using Pkg; Pkg.instantiate()'
+      - name: Compile
+        env:
+          JULIAC_PROJECT: .juliac
+        run: julia --startup-file=no capi/build.jl --trim=${{ matrix.trim }}
+      - name: Check the compiled library against Julia
+        run: |
+          julia --startup-file=no capi/run_tests.jl \
+            --lib capi/build/libgemb_${{ matrix.trim }}
+      - name: Report the artifact size
+        if: always()
+        run: ls -l capi/build/ || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: juliac-log-${{ matrix.trim }}-${{ matrix.os }}
+          path: capi/build/*.log
+          retention-days: 30
