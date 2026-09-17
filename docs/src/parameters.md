@@ -25,12 +25,12 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 | `heat_capacity_method` | **`:constant`**, `:CuffeyPaterson` | `:constant` (2102 J kg⁻¹ K⁻¹) matches the CFM's melt-enabled path; `:CuffeyPaterson` is `152.5 + 7.122·T` |
 | `rain_heat_capacity` | **`:water`**, `:ice` | Heat capacity carrying rain's sensible heat above the melting point |
 | `mean_temperature_method` | **`:arithmetic`**, `:arrhenius` | How the mean annual temperature driving densification is averaged |
-| `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`; `:Marbouty` stops dead at 400 kg m⁻³ |
-| `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre; RetMIP §5.4 ties the flat 0.07 to under-retention in the percolation zone |
+| `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`. `:Marbouty` is temperature-gradient metamorphism, inactive above 400 kg m⁻³; `:hybrid` runs it below that and `:Arthern` above |
+| `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre. RetMIP §5.4 ties a flat saturation to under-retention in the percolation zone |
 | `melt_geometry` | **`:thickness`**, `:density` | What melting does to a cell: shrink `dz` at fixed density (Crocus) or lower density at fixed `dz` (SNOWPACK). Only `:density` makes a melt–refreeze cycle return the geometry as well as the mass |
-| `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models run instantaneous. The other two give a drainage timescale and permit firn aquifers |
+| `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models use instantaneous runoff. The other two give a drainage timescale and permit firn aquifers |
 | `new_snow_method` | **`:Constant350`**, `:Constant315`, `:Constant150`, `:Fausto`, `:FaustoFit`, `:Pahaut`, `:Kaspers`, `:KuipersMunneke` | Fresh-snow density. The CFM ships a constant 350. `:Constant*` are bare constants; `:Fausto`/`:FaustoFit`/`:Pahaut` also select the Crocus wind-dependent fresh-grain properties. `:Pahaut` is the only alpine-seasonal-snow fit — prefer it for temperate and mid-latitude glaciers, where the polar fits run too dense |
-| `blowing_snow_method` | **`:none`**, `:Crocus` | Wind rework of snow already on the ground. `:Crocus` is the SURFEX/Crocus `SNOWDRIFT` scheme (Vionnet et al., 2012; Lafaysse et al., 2026 eqs. 59–66) — the only one of the three reference implementations that computes blowing snow at all (the CFM has none; IMAU-FDM imports it from RACMO). Exactly mass-conserving on its own: it compacts and fragments, it does not erode. Set `blowing_snow_sublimation` for the one term that removes mass, or `drift_rate` for the prescribed path |
+| `blowing_snow_method` | **`:none`**, `:Crocus` | Wind rework of snow already on the ground. `:Crocus` is the SURFEX/Crocus `SNOWDRIFT` scheme (Vionnet et al., 2012; Lafaysse et al., 2026 eqs. 59–66). Exactly mass-conserving on its own: it compacts and fragments, it does not erode. Set `blowing_snow_sublimation` for the one term that removes mass, or `drift_rate` for the prescribed path |
 | `albedo_method` | **`:GardnerSharp`**, `:BrunLefebre`, `:GreuellKonzelmann`, `:None` | |
 | `emissivity_method` | **`:uniform`**, `:grain_radius_threshold`, `:grain_radius_w_threshold` | |
 | `initialize_age` | **`:steady_state`**, `:zero` | |
@@ -42,8 +42,8 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 |---|---|---|---|
 | `density_ice` | **917.0** | kg m⁻³ | Pure-ice density. Matches the CFM and IMAU-FDM, and the pure-ice density the Calonne (2019) conductivity and Barnola (1991) densification fits were built against |
 | `water_irreducible_saturation` | **0.07** | – | Read only under `water_irreducible_method = :constant` |
-| `impermeable_density` | **830.0** | kg m⁻³ | Flow-blocking criterion (CFM `RhoImp`). RetMIP models span 810–917 |
-| `impermeable_thickness` | **0.1** | m | Minimum blocking-lens thickness (CFM `ThickImp`) |
+| `impermeable_density` | **830.0** | kg m⁻³ | Flow-blocking criterion; the same value the CFM uses. RetMIP models span 810–917 |
+| `impermeable_thickness` | **0.1** | m | Minimum blocking-lens thickness; the same value the CFM uses |
 | `pore_saturation_max` | **1.0** | – | Cap on pore filling; only reachable when runoff is delayed |
 | `heat_capacity_ice` | **2102.0** | J kg⁻¹ K⁻¹ | Read only under `heat_capacity_method = :constant` |
 | `rain_temperature_threshold` | **273.15** | K | Rain/snow partition temperature |

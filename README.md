@@ -25,14 +25,14 @@ ice-core studies, surface mass balance inversion, and uncertainty quantification
 description of version 1.0 of the model is given in
 [*Gardner et al*., 2023](https://doi.org/10.5194/gmd-16-2277-2023).
 
-GEMB.jl is the reference implementation and is developed independently. It began as a
-translation of an earlier MATLAB version; since v2.0.0 its physics, defaults, and numerics
-are set on their own merits — against the published literature and against the
+GEMB.jl is the reference implementation. Its physics, defaults, and numerics are set against
+the published literature and cross-checked against the
 [Community Firn Model](https://github.com/UWGlaciology/CommunityFirnModel) and
-[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM). The
-[MATLAB version](https://github.com/alex-s-gardner/GEMB) is maintained separately and the two
-are no longer expected to agree numerically; departures are recorded under
-[Physics notes](https://alex-s-gardner.github.io/GEMB.jl/dev/physics_notes).
+[IMAU-FDM](https://github.com/IMAU-ice-and-climate/IMAU-FDM); where the implementation
+interprets or departs from a published law, that is recorded under
+[Physics notes](https://alex-s-gardner.github.io/GEMB.jl/dev/physics_notes). A
+[MATLAB implementation](https://github.com/alex-s-gardner/GEMB) is maintained separately and
+is not expected to agree numerically.
 
 ## Installation
 
@@ -205,7 +205,7 @@ Full documentation is at **[alex-s-gardner.github.io/GEMB.jl](https://alex-s-gar
 | [Home](https://alex-s-gardner.github.io/GEMB.jl/dev/) | Installation, quick start, output structure, spinup |
 | [Model Architecture](https://alex-s-gardner.github.io/GEMB.jl/dev/architecture) | Data flow, physics modules, the vertical grid, design principles, surface energy balance numerics, meltwater percolation |
 | [Model Parameters](https://alex-s-gardner.github.io/GEMB.jl/dev/parameters) | Every option, its default, and the intercomparison or model the default follows |
-| [Physics Notes](https://alex-s-gardner.github.io/GEMB.jl/dev/physics_notes) | Where GEMB.jl's physics departs from an earlier form or from a published law, and why |
+| [Physics Notes](https://alex-s-gardner.github.io/GEMB.jl/dev/physics_notes) | How each scheme is implemented, and where it interprets or departs from its published form |
 | [Variable Reference](https://alex-s-gardner.github.io/GEMB.jl/dev/variables) | Every input and output variable with units |
 | [API Reference](https://alex-s-gardner.github.io/GEMB.jl/dev/api) | Exported functions and types |
 

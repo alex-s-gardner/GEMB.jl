@@ -85,9 +85,9 @@ than doubled, hit `THERMAL_IMPLICIT_MAX_ITERATIONS`, and whole-model runtime *ro
 would be sound, and remains open.
 
 **The turbulent-flux calls are not the cost.** Direct timing puts `_surface_energy_balance` at
-65 ns and `_surface_energy_balance_slope` at 69 ns, so all flux evaluations together were 0.70 s of
-the pre-condensation 15.20 s. An earlier attribution of the cost to doubled flux calls was wrong;
-the cost was the O(n) sweep per iteration, which condensation removed.
+65 ns and `_surface_energy_balance_slope` at 69 ns, so all flux evaluations together account for
+0.70 s of the 15.20 s an uncondensed solve takes. The cost is the O(n) sweep per Newton
+iteration, which condensation removes.
 
 **Relaxing the convergence tolerance.** Taking `THERMAL_IMPLICIT_T_TOLERANCE` from 1e-10 to
 1e-3 — seven orders of magnitude, far looser than the model's other branch tolerances — cut the
