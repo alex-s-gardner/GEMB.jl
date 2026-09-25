@@ -246,10 +246,10 @@ temperature belongs in this tuple rather than being computed separately: it depe
 through the absorbed shortwave, so a value taken from any iterate but the accepted one would
 describe a different surface than the melt does.
 """
-function _albedo_residual(α::Float64, T_air::Vector{Float64}, wind::Vector{Float64},
-    pressure::Vector{Float64}, sw::Vector{Float64}, lw::Vector{Float64},
-    vapor::Vector{Float64}, dt::Float64, per_year::Float64, zT_obs::Float64,
-    zW_obs::Float64, accumulation::Float64, rainfall::Float64, T_mean::Float64,
+function _albedo_residual(α::Real, T_air::AbstractVector{<:Real}, wind::AbstractVector{<:Real},
+    pressure::AbstractVector{<:Real}, sw::AbstractVector{<:Real}, lw::AbstractVector{<:Real},
+    vapor::AbstractVector{<:Real}, dt::Real, per_year::Real, zT_obs::Real,
+    zW_obs::Real, accumulation::Real, rainfall::Real, T_mean::Real,
     mp::ModelParameters)
 
     melt, T_surface_mean = _seb_annual_melt(T_air, wind, pressure, sw, lw, vapor,
@@ -361,10 +361,10 @@ the melt test and was previously discarded, so this adds an accumulator rather t
 over the forcing. It is the mean of `min(T_skin, CtoK)`, capped for the same reason the melt
 branch pins the surface — energy above the melt point is melt, not sensible heat.
 """
-function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
-    pressure::Vector{Float64}, sw::Vector{Float64}, lw::Vector{Float64},
-    vapor::Vector{Float64}, albedo::Float64, dt::Float64, per_year::Float64,
-    zT_obs::Float64, zW_obs::Float64, mp::ModelParameters)
+function _seb_annual_melt(T_air::AbstractVector{<:Real}, wind::AbstractVector{<:Real},
+    pressure::AbstractVector{<:Real}, sw::AbstractVector{<:Real}, lw::AbstractVector{<:Real},
+    vapor::AbstractVector{<:Real}, albedo::Real, dt::Real, per_year::Real,
+    zT_obs::Real, zW_obs::Real, mp::ModelParameters)
 
     # Roughness interpolated between the snow and ice values `calculate_temperature`
     # uses, on the same snow-cover fraction the albedo blend implies — so a partly
@@ -381,7 +381,10 @@ function _seb_annual_melt(T_air::Vector{Float64}, wind::Vector{Float64},
 
     melt_total = 0.0
     T_surface_total = 0.0
-    @inbounds for i in eachindex(T_air)
+    # Over every series at once: this both validates that they share indices — the forcing fields of one
+    # record, so they must — and keeps the loop correct for any `AbstractVector`, which the signature
+    # admits so that a `DimArray` forcing column can be passed without being collected first.
+    @inbounds for i in eachindex(T_air, wind, pressure, sw, lw, vapor)
         cfs = _seb_forcing_step(dt, T_air[i], pressure[i], wind[i], sw[i], lw[i],
             vapor[i], zT_obs, zW_obs)
         density_air = air_density(pressure[i], T_air[i])
