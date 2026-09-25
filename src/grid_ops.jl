@@ -463,8 +463,17 @@ scales with the thickness change; grain properties are intensive and unchanged.
 consequence is that under sustained ablation the deepest cell's age is a lower bound on its
 true residence time rather than a measurement of it.
 
-Errors if the adjustment would consume the whole bottom cell — at realistic forcing it is
-~1e-3 of the cell, so that signals a bug upstream, not an extreme climate.
+The adjustment is usually a small fraction of the bottom cell, but it is not bounded by one:
+where a step's accumulation is thicker than the deepest cell — routine on high-accumulation
+tropical and maritime glaciers — the adjustment spans several. Whole cells are then consumed
+from the base in turn and the survivor is trimmed to close the remaining gap. Only an
+adjustment exceeding the entire column is an error.
+
+The deepest cell is the Dirichlet reservoir, and `calculate_temperature` leaves its temperature
+bit-unchanged, so the reservoir temperature is a boundary condition rather than a property of the
+parcel occupying it. When consumption promotes a new cell to the base it therefore inherits that
+temperature, and the enthalpy that costs is reported in `E_added` — this being the model's only
+basal energy flux. Cells above the base are unaffected.
 
 The column is an Eulerian window on the firn, not a prognostic ice-thickness model, so
 `ice_flux` measures basal flux in either regime — hence the name. It is not the
@@ -494,16 +503,13 @@ function trim_bottom!(cols::NamedTuple, z_target::Float64, mp::ModelParameters)
         return 0.0, 0.0
     end
 
-    @inbounds begin
+    # The adjustment fits within the bottom cell — every accretion, and all but the heaviest
+    # accumulation steps. Kept as a single expression in `delta` so this path stays bit-identical:
+    # the loop below reaches the same thickness through `z_target - z_above`, which rounds
+    # differently, and confining it to the case that used to error leaves existing columns
+    # unmoved.
+    @inbounds if dz[n] - delta > 0.0
         dz_old = dz[n]
-        dz_new = dz_old - delta
-        if dz_new <= 0.0
-            error("trim_bottom!: basal adjustment of $(delta) m would consume the " *
-                  "entire bottom cell ($(dz_old) m). Column depth is $(z_total) m " *
-                  "against a target of $(z_target) m.")
-        end
-
-        # Fraction of the bottom cell leaving (positive) or being accreted (negative).
         frac = delta / dz_old
         water_delta = frac * cols.water[n]
         mass_delta = delta * cols.density[n] + water_delta
@@ -512,8 +518,62 @@ function trim_bottom!(cols::NamedTuple, z_target::Float64, mp::ModelParameters)
         E_added = -(delta * cols.density[n] * specific_enthalpy(mp, cols.temperature[n]) +
                     water_delta * specific_enthalpy_water(mp))
 
-        dz[n] = dz_new
+        dz[n] = dz_old - delta
         cols.water[n] -= water_delta
+        return mass_added, E_added
+    end
+
+    # Export more than the deepest cell holds, consuming whole cells from the base in turn.
+    T_reservoir = cols.temperature[n]
+    mass_added = 0.0
+    E_added = 0.0
+    consumed = false
+
+    @inbounds while true
+        m = length(dz)
+        # Depth of everything above cell m. Comparing this against `z_target` rather than
+        # decrementing a running remainder keeps the final thickness exact instead of
+        # accumulating a rounding error per consumed cell.
+        z_above = 0.0
+        for i in 1:(m - 1)
+            z_above += dz[i]
+        end
+
+        if m > 1 && z_above >= z_target - D_TOLERANCE
+            # Cell m lies entirely below the target: it leaves whole.
+            mass_added -= dz[m] * cols.density[m] + cols.water[m]
+            E_added -= dz[m] * cols.density[m] * specific_enthalpy(mp, cols.temperature[m]) +
+                       cols.water[m] * specific_enthalpy_water(mp)
+            close_slot!(cols, m)
+            consumed = true
+            continue
+        end
+
+        dz_new = z_target - z_above
+        if dz_new <= 0.0
+            error("trim_bottom!: basal adjustment of $(delta) m exceeds the whole column " *
+                  "($(z_total) m over $(n) cells) against a target of $(z_target) m.")
+        end
+
+        removed = dz[m] - dz_new
+        frac = removed / dz[m]
+        water_delta = frac * cols.water[m]
+        mass_added -= removed * cols.density[m] + water_delta
+        E_added -= removed * cols.density[m] * specific_enthalpy(mp, cols.temperature[m]) +
+                   water_delta * specific_enthalpy_water(mp)
+        dz[m] = dz_new
+        cols.water[m] -= water_delta
+
+        # The base is a fixed-temperature boundary, so a promoted cell takes the reservoir
+        # temperature and the enthalpy that costs is a basal flux. Skipped when no cell was
+        # consumed, where this is a no-op that would still cost a `specific_enthalpy` pair.
+        if consumed
+            T_old = cols.temperature[m]
+            E_added += dz_new * cols.density[m] *
+                       (specific_enthalpy(mp, T_reservoir) - specific_enthalpy(mp, T_old))
+            cols.temperature[m] = T_reservoir
+        end
+        break
     end
 
     return mass_added, E_added
