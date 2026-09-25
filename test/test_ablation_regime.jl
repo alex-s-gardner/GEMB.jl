@@ -128,7 +128,7 @@
     # --- Spinup holds the same invariants -----------------------------------------
     # Spinup cycles the forcing repeatedly, so a controller interaction that drifts only
     # slowly per cycle shows up here and not in the single pass above.
-    spun = gemb_spinup(profile, cf, mp; max_iterations=4, verbose=true)
+    spun = gemb_spinup(profile, cf, mp; simulation_years_maximum=4 * GEMB._years_per_cycle(cf), verbose=true)
     @test length(spun[:dz]) == N
     @test sum(parent(spun[:dz])) ≈ Z_fixed atol = 1e-9
 end

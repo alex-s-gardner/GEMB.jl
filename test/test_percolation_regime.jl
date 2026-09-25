@@ -149,7 +149,7 @@
     # --- Spinup holds the same invariants -----------------------------------------
     # Cycling the forcing exposes a controller or storage interaction that drifts too slowly
     # per cycle to show up in the single pass above.
-    spun = gemb_spinup(profile, cf, mp; max_iterations=4, verbose=true)
+    spun = gemb_spinup(profile, cf, mp; simulation_years_maximum=4 * GEMB._years_per_cycle(cf), verbose=true)
     @test length(spun[:dz]) == N
     @test sum(parent(spun[:dz])) ≈ Z_fixed atol = 1e-9
     @test all(parent(spun[:water]) .>= 0.0)

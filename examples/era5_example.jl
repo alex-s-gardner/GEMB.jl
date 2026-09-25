@@ -58,7 +58,7 @@ profile = initialize_profile(mp, cf_spinup)
 
 # Spin up for 100 years to reach quasi-steady state. gemb_spinup internally forces
 # output_frequency=:last, so no separate :last params object is needed.
-profile_spunup = gemb_spinup(profile, cf_spinup, mp; max_iterations=100)
+profile_spunup = gemb_spinup(profile, cf_spinup, mp; simulation_years_maximum=100)
 
 # Run GEMB with transient forcing and the spun-up profile
 output = gemb(profile_spunup, cf, mp)

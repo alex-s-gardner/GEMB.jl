@@ -47,7 +47,7 @@ println("   Climatology length: $(length(cf_climatology.temperature_air)) steps"
 # output_frequency=:last, so no separate :last params object is needed.
 println("\n5. Running spinup (up to 400 years)...")
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=400, convergence_delta_density=0.01)
+                             simulation_years_maximum=400, convergence_delta_density=0.01)
 # Provenance recorded on the spun-up profile (see DimensionalData.metadata):
 prov = metadata(profile_spunup)
 println("   Spinup complete! $(prov[:spinup_cycles]) cycles, converged=$(prov[:spinup_converged])")

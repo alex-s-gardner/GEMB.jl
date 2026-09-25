@@ -85,7 +85,7 @@ const SPINUP_VARIANTS = [
                         convergence_delta_fac=1e-12, convergence_drift_fac=1e-12),
 ]
 
-spin(kw) = gemb_spinup(profile, avg_cycle, mp; max_iterations=SPINUP_CYCLES,
+spin(kw) = gemb_spinup(profile, avg_cycle, mp; simulation_years_maximum=SPINUP_CYCLES,
                        thermal_workspace=GEMB.ThermalWorkspace(), kw...)
 
 snap = Dict{Symbol,Float64}()

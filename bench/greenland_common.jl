@@ -117,16 +117,17 @@ Spin up on `cycle` and report the equilibrated column: `fac`, `density`, `temper
 
 `years` is the field to compare methods on, not `cycles`: `:average` integrates one year per
 cycle while `:representative` integrates `n_years`, so a longer cycle mechanically lowers the
-cycle count without lowering the work.
+cycle count without lowering the work. `simulation_years_maximum` bounds the comparison by
+simulated years, so both methods get the same budget rather than the same cycle count.
 """
 function equilibrate(profile, cycle, mp;
-                     max_iterations=800,
+                     simulation_years_maximum=800,
                      convergence_delta_density=1e-3,
                      convergence_drift_density=1e-3,
                      convergence_delta_fac=1e-4,
                      convergence_drift_fac=1e-4)
     g = gemb_spinup(profile, cycle, mp;
-        max_iterations=max_iterations,
+        simulation_years_maximum=simulation_years_maximum,
         convergence_delta_density=convergence_delta_density,
         convergence_drift_density=convergence_drift_density,
         convergence_delta_fac=convergence_delta_fac,

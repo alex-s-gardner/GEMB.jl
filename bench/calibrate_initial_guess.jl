@@ -41,7 +41,7 @@ using Dates
 const DD = GEMB.DimensionalData
 
 # Convergence criteria for every spinup here: both the step and the trend test, so a column
-# creeping steadily under the step tolerance does not pass. `max_iterations` is a backstop —
+# creeping steadily under the step tolerance does not pass. `simulation_years_maximum` is a backstop —
 # any site that reaches it is dropped rather than scored, since a capped run reports the cap
 # and not a cycle count.
 const CONV_DELTA = 1e-3
@@ -187,7 +187,7 @@ end
 mean_density(p) = sum(parent(p[:density]) .* parent(p[:dz])) / sum(parent(p[:dz]))
 
 spinup(p, cfc, mp; ws) = gemb_spinup(p, cfc, mp;
-    max_iterations = MAX_CYCLES,
+    simulation_years_maximum=MAX_CYCLES,
     convergence_delta_density = CONV_DELTA,
     convergence_drift_density = CONV_DRIFT,
     thermal_workspace = ws)

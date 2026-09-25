@@ -36,7 +36,7 @@ using Dates
         profile = initialize_profile(params, forcing)
 
         # Run spinup with 3 cycles (fast test)
-        output = gemb_spinup(profile, forcing, params; max_iterations=3, verbose=false)
+        output = gemb_spinup(profile, forcing, params; simulation_years_maximum=3 * GEMB._years_per_cycle(forcing), verbose=false)
 
         # Check output structure
         @test output isa DimStack
@@ -75,8 +75,8 @@ using Dates
 
         # Run with different numbers of cycles
         profile = initialize_profile(params, forcing)
-        output_3 = gemb_spinup(profile, forcing, params; max_iterations=3)
-        output_5 = gemb_spinup(profile, forcing, params; max_iterations=5)
+        output_3 = gemb_spinup(profile, forcing, params; simulation_years_maximum=3 * GEMB._years_per_cycle(forcing))
+        output_5 = gemb_spinup(profile, forcing, params; simulation_years_maximum=5 * GEMB._years_per_cycle(forcing))
 
         # Extract final profiles
         temp_3 = output_3[:temperature][Ti=1]
@@ -117,7 +117,7 @@ using Dates
         )
 
         profile = initialize_profile(params, forcing)
-        spunup_profile = gemb_spinup(profile, forcing, params; max_iterations=3)
+        spunup_profile = gemb_spinup(profile, forcing, params; simulation_years_maximum=3 * GEMB._years_per_cycle(forcing))
 
         # Check profile has required fields
         @test haskey(spunup_profile, :temperature)
@@ -389,8 +389,8 @@ using Dates
         params = initialize_parameters(output_frequency=:last)
         profile = initialize_profile(params, forcing)
 
-        # No convergence check → runs the full max_iterations, converged=false.
-        prof_max = gemb_spinup(profile, forcing, params; max_iterations=3)
+        # No convergence check → runs the whole year budget, converged=false.
+        prof_max = gemb_spinup(profile, forcing, params; simulation_years_maximum=3 * GEMB._years_per_cycle(forcing))
         pm = DimensionalData.metadata(prof_max)
         @test pm[:spinup_cycles] == 3
         @test pm[:spinup_converged] == false
@@ -398,9 +398,9 @@ using Dates
         @test isnan(pm[:spinup_final_delta_density])
         @test isnan(pm[:spinup_final_drift_density])
 
-        # Loose tolerance → converges early, before max_iterations.
+        # Loose tolerance → converges early, before the budget is spent.
         prof_conv = gemb_spinup(profile, forcing, params;
-                                max_iterations=50, convergence_delta_density=1e3)
+                                simulation_years_maximum=50 * GEMB._years_per_cycle(forcing), convergence_delta_density=1e3)
         pc = DimensionalData.metadata(prof_conv)
         @test pc[:spinup_converged] == true
         @test pc[:spinup_cycles] < 50
@@ -422,7 +422,7 @@ using Dates
 
         # Measured over the *final* cycle, so rerunning that cycle from the cycle-2 profile
         # must reproduce it exactly.
-        prof_2 = gemb_spinup(profile, forcing, params; max_iterations=2)
+        prof_2 = gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * GEMB._years_per_cycle(forcing))
         last_cycle = gemb(prof_2, forcing, params)
         # One year of daily forcing: 365 steps of 86400 s. The last step integrates a full
         # step of its own, so the length is n*dt, not the first-to-last time span.
@@ -440,7 +440,7 @@ using Dates
 
         # A rate must be reported even from a single-cycle spinup.
         @test isfinite(DimensionalData.metadata(
-            gemb_spinup(profile, forcing, params; max_iterations=1))[:spinup_smb_rate])
+            gemb_spinup(profile, forcing, params; simulation_years_maximum=1 * GEMB._years_per_cycle(forcing)))[:spinup_smb_rate])
 
         # Ice density is recorded on the run output so a consumer can convert the mass-flux
         # outputs to metres of ice with the value the run actually used.
@@ -502,7 +502,7 @@ using Dates
         # Drift alone, loose tolerance. It cannot fire before the window is full, so the
         # earliest possible exit is at cycle == drift_window.
         prof_d = gemb_spinup(profile, forcing, params;
-                             max_iterations=12, convergence_drift_density=1e3,
+                             simulation_years_maximum=12 * GEMB._years_per_cycle(forcing), convergence_drift_density=1e3,
                              drift_window=3)
         pd = DimensionalData.metadata(prof_d)
         @test pd[:spinup_converged] == true
@@ -514,7 +514,7 @@ using Dates
 
         # An unreachable drift tolerance cannot converge, however loose the delta is.
         prof_and = gemb_spinup(profile, forcing, params;
-                               max_iterations=4, convergence_delta_density=1e3,
+                               simulation_years_maximum=4 * GEMB._years_per_cycle(forcing), convergence_delta_density=1e3,
                                convergence_drift_density=0.0, drift_window=2)
         pa = DimensionalData.metadata(prof_and)
         @test pa[:spinup_converged] == false
@@ -524,19 +524,19 @@ using Dates
 
         # Symmetrically: a loose drift cannot rescue an unreachable delta.
         prof_and2 = gemb_spinup(profile, forcing, params;
-                                max_iterations=4, convergence_delta_density=0.0,
+                                simulation_years_maximum=4 * GEMB._years_per_cycle(forcing), convergence_delta_density=0.0,
                                 convergence_drift_density=1e3, drift_window=2)
         @test DimensionalData.metadata(prof_and2)[:spinup_converged] == false
 
         # Both loose → converges as soon as both are computable (cycle 2 here).
         prof_both = gemb_spinup(profile, forcing, params;
-                                max_iterations=12, convergence_delta_density=1e3,
+                                simulation_years_maximum=12 * GEMB._years_per_cycle(forcing), convergence_delta_density=1e3,
                                 convergence_drift_density=1e3, drift_window=2)
         @test DimensionalData.metadata(prof_both)[:spinup_cycles] == 2
 
         # A window too short to fit a slope is rejected up front, not silently ignored.
         @test_throws ErrorException gemb_spinup(profile, forcing, params;
-            max_iterations=1, convergence_drift_density=1.0, drift_window=1)
+            simulation_years_maximum=1 * GEMB._years_per_cycle(forcing), convergence_drift_density=1.0, drift_window=1)
     end
 
     @testset "FAC convergence criterion" begin
@@ -582,7 +582,7 @@ using Dates
         # untouched at NaN — an unrequested quantity must be distinguishable from a measured
         # zero.
         prof_f = gemb_spinup(profile, forcing, params;
-                             max_iterations=6, convergence_delta_fac=1e3)
+                             simulation_years_maximum=6 * GEMB._years_per_cycle(forcing), convergence_delta_fac=1e3)
         pf = DimensionalData.metadata(prof_f)
         @test pf[:spinup_converged] == true
         @test pf[:spinup_cycles] == 2                  # earliest a step test can fire
@@ -594,7 +594,7 @@ using Dates
 
         # FAC drift, like density drift, cannot fire before the window is full.
         prof_fd = gemb_spinup(profile, forcing, params;
-                              max_iterations=12, convergence_drift_fac=1e3,
+                              simulation_years_maximum=12 * GEMB._years_per_cycle(forcing), convergence_drift_fac=1e3,
                               drift_window=3)
         pfd = DimensionalData.metadata(prof_fd)
         @test pfd[:spinup_converged] == true
@@ -607,28 +607,28 @@ using Dates
         # unreachable FAC tolerance blocks convergence however loose the density one is, and
         # vice versa. This is the property that makes adding a criterion always a tightening.
         pb1 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
-            max_iterations=4, convergence_delta_density=1e3, convergence_delta_fac=0.0))
+            simulation_years_maximum=4 * GEMB._years_per_cycle(forcing), convergence_delta_density=1e3, convergence_delta_fac=0.0))
         @test pb1[:spinup_converged] == false
         @test pb1[:spinup_final_delta_density] < 1e3    # density alone would have passed
 
         pb2 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
-            max_iterations=4, convergence_delta_density=0.0, convergence_delta_fac=1e3))
+            simulation_years_maximum=4 * GEMB._years_per_cycle(forcing), convergence_delta_density=0.0, convergence_delta_fac=1e3))
         @test pb2[:spinup_converged] == false
         @test pb2[:spinup_final_delta_fac] < 1e3        # FAC alone would have passed
 
         # Both loose → converges as soon as both are computable.
         pb3 = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
-            max_iterations=12, convergence_delta_density=1e3, convergence_delta_fac=1e3))
+            simulation_years_maximum=12 * GEMB._years_per_cycle(forcing), convergence_delta_density=1e3, convergence_delta_fac=1e3))
         @test pb3[:spinup_cycles] == 2
         @test pb3[:spinup_converged] == true
 
         # `drift_window` is validated for the FAC drift criterion too, not only the density one.
         @test_throws ErrorException gemb_spinup(profile, forcing, params;
-            max_iterations=1, convergence_drift_fac=1.0, drift_window=1)
+            simulation_years_maximum=1 * GEMB._years_per_cycle(forcing), convergence_drift_fac=1.0, drift_window=1)
 
         # The default call requests nothing, so every measure is NaN/nothing and the spinup
         # runs its full iteration count — unchanged by this feature existing.
-        pn = DimensionalData.metadata(gemb_spinup(profile, forcing, params; max_iterations=2))
+        pn = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * GEMB._years_per_cycle(forcing)))
         @test pn[:spinup_converged] == false
         @test pn[:spinup_cycles] == 2
         @test isnan(pn[:spinup_final_delta_fac])
@@ -669,7 +669,7 @@ using Dates
 
         # Should still work, just won't grow
         profile = initialize_profile(params, forcing)
-        output = gemb_spinup(profile, forcing, params; max_iterations=2)
+        output = gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * GEMB._years_per_cycle(forcing))
 
         @test output isa DimStack
         @test haskey(output, :temperature)

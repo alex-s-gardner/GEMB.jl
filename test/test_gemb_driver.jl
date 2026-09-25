@@ -229,7 +229,7 @@ using Dates
 
         # With spinup: spinup_* / climatology_* provenance carries onto the output.
         ps = gemb_spinup(profile, forcing, params;
-                         max_iterations=3, convergence_delta_density=0.01)
+                         simulation_years_maximum=3 * GEMB._years_per_cycle(forcing), convergence_delta_density=0.01)
         out_spin = gemb(ps, forcing, params)
         md2 = DimensionalData.metadata(out_spin)
         @test md2["spinup_performed"] == true

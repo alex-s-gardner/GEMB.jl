@@ -80,7 +80,7 @@ function _is_satisfied(t::_SpinupTracker)
 end
 
 """
-    gemb_spinup(profile, cf, mp; max_iterations=100,
+    gemb_spinup(profile, cf, mp; simulation_years_maximum=100,
                 convergence_delta_density=nothing, convergence_drift_density=nothing,
                 convergence_delta_fac=nothing, convergence_drift_fac=nothing,
                 drift_window=$SPINUP_DRIFT_WINDOW, verbose=false)
@@ -109,7 +109,9 @@ The returned profile carries a metadata `NamedTuple` (accessible via
 `DimensionalData.metadata(profile)`) recording how the spinup ran and which
 climatology it used: `spinup_cycles`, `spinup_converged`,
 `spinup_final_delta_density`, `spinup_final_drift_density`,
-`spinup_final_delta_fac`, `spinup_final_drift_fac`, the convergence
+`spinup_final_delta_fac`, `spinup_final_drift_fac`, the spinup extent
+(`spinup_simulation_years_maximum` as requested, `spinup_years_per_cycle`,
+`spinup_years_simulated`), the convergence
 parameters (`spinup_max_iterations`, `spinup_convergence_delta_density`,
 `spinup_convergence_drift_density`, `spinup_convergence_delta_fac`,
 `spinup_convergence_drift_fac`, `spinup_drift_window`),
@@ -142,11 +144,24 @@ Units follow the quantity: density criteria are [kg/m³] and [kg/m³ per cycle],
 smaller than a density one — millimetres of air, not thousandths of a kg/m³ (see the depth
 scaling above).
 
-When none is given the spinup always runs `max_iterations` cycles.
+When none is given the spinup always runs to the `simulation_years_maximum` ceiling.
 
 # Keyword arguments
-- `max_iterations`: maximum number of spinup cycles (default 100). The spinup always
-  exits after this many cycles even if convergence has not been reached.
+- `simulation_years_maximum`: ceiling on the spinup, as a span of **simulated years** (default
+  100). The cycle ceiling follows from the cycle length,
+
+      max_iterations = max(1, ceil(Int, simulation_years_maximum / years_per_cycle))
+
+  with `years_per_cycle` measured from `cf` (see [`_years_per_cycle`](@ref)). The spinup exits
+  after that many cycles even if convergence has not been reached. Expressing the ceiling in
+  years rather than cycles keeps it meaning a fixed amount of spinup: the same cycle count on a
+  climatology of a different length is a different amount of simulated time.
+
+  `ceil` makes the budget a floor — a partial cycle cannot be run, so covering the request takes
+  the next whole cycle. A cycle of 365 days is slightly shorter than a year
+  ($(SECONDS_PER_YEAR / 86400) days), so an integer year budget on such a forcing rounds up: 3
+  years over a 365-day cycle runs 4 cycles, not 3. Ask for `n * years_per_cycle` to get exactly
+  `n` cycles.
 - `convergence_delta_density`, `convergence_drift_density`: density criteria, see above.
 - `convergence_delta_fac`, `convergence_drift_fac`: whole-column firn-air-content criteria
   ([`firn_air_content`](@ref)), see above.
@@ -159,7 +174,7 @@ When none is given the spinup always runs `max_iterations` cycles.
 
 """
 function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
-                     max_iterations::Int=100,
+                     simulation_years_maximum::Real=100,
                      convergence_delta_density=nothing,
                      convergence_drift_density=nothing,
                      convergence_delta_fac=nothing,
@@ -173,6 +188,16 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
        drift_window < 2
         error("drift_window must be at least 2 to fit a slope, got $drift_window")
     end
+
+    # The ceiling is a span of simulated time, so it means the same amount of spinup whatever the
+    # cycle length; a cycle count would not. `ceil` because the budget is a floor on simulated
+    # years: a partial cycle cannot be run, so covering the request takes the next whole one.
+    years_per_cycle = _years_per_cycle(cf)
+    simulation_years_maximum > 0 ||
+        error("simulation_years_maximum must be positive, got $simulation_years_maximum")
+    years_per_cycle > 0 ||
+        error("forcing has non-positive cycle length ($years_per_cycle yr); cannot size the spinup")
+    max_iterations = max(1, ceil(Int, simulation_years_maximum / years_per_cycle))
 
     # Force output_frequency to :last for spinup efficiency
     mp_spinup = ModelParameters(;
@@ -232,7 +257,7 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         end
     end
 
-    @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run converged=converged final_delta_density=rho_track.final_delta final_drift_density=rho_track.final_drift final_delta_fac=fac_track.final_delta final_drift_fac=fac_track.final_drift
+    @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run years_simulated=cycles_run*years_per_cycle converged=converged final_delta_density=rho_track.final_delta final_drift_density=rho_track.final_drift final_delta_fac=fac_track.final_delta final_drift_fac=fac_track.final_drift
 
     return _attach_spinup_provenance(current_profile, cf;
         cycles=cycles_run, converged=converged,
@@ -241,6 +266,8 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         final_delta_fac=fac_track.final_delta,
         final_drift_fac=fac_track.final_drift,
         max_iterations=max_iterations,
+        simulation_years_maximum=simulation_years_maximum,
+        years_per_cycle=years_per_cycle,
         convergence_delta_density=convergence_delta_density,
         convergence_drift_density=convergence_drift_density,
         convergence_delta_fac=convergence_delta_fac,
@@ -284,15 +311,23 @@ than as a rate of zero.
 """
 function _cycle_smb_rate(out, cf::ClimateForcing, mp::ModelParameters)
     isempty(dims(out, Ti)) && return NaN
-
-    # `output_frequency=:last` leaves a single output step whose value is the whole cycle's
-    # total, so the cycle length must come from the forcing rather than from the output times.
-    # It is the number of steps times the step length, not the span from the first forcing time
-    # to the last: the last step integrates a full `time_step` of its own, which a first-to-last
-    # span omits, and dropping it would leave the rate biased high by one step in `n`.
-    years = length(dims(cf, Ti)) * cf.time_step / SECONDS_PER_YEAR
-    return _smb_rate(out, years, mp.density_ice)
+    return _smb_rate(out, _years_per_cycle(cf), mp.density_ice)
 end
+
+"""
+    _years_per_cycle(cf) -> years
+
+Length of one spinup cycle, in years: the number of forcing steps times the step length.
+
+Not the span from the first forcing time to the last — the last step integrates a full
+`time_step` of its own, which a first-to-last span omits, and dropping it would bias the length
+low by one step in `n`.
+
+A climatology built by [`forcing_climatology`](@ref) is one year long, so this is normally
+within a fraction of a percent of 1. It is computed rather than assumed so that a forcing
+spanning several years yields a correct cycle length instead of a silently mis-scaled one.
+"""
+_years_per_cycle(cf::ClimateForcing) = length(dims(cf, Ti)) * cf.time_step / SECONDS_PER_YEAR
 
 """
     _smb_rate(out, years, density_ice) -> m of ice per year
@@ -327,6 +362,7 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         cycles, converged, final_delta_density, final_drift_density,
         max_iterations, convergence_delta_density, convergence_drift_density,
         drift_window, smb_rate=NaN,
+        simulation_years_maximum=NaN, years_per_cycle=NaN,
         final_delta_fac=NaN, final_drift_fac=NaN,
         convergence_delta_fac=nothing, convergence_drift_fac=nothing)
     cf_meta = DD.metadata(cf)
@@ -340,6 +376,12 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         # not requested, which is distinct from a measured zero.
         spinup_final_delta_fac = final_delta_fac,
         spinup_final_drift_fac = final_drift_fac,
+        # The requested budget and the cycle ceiling it resolved to, plus the cycle length that
+        # converted between them. All three are needed to reproduce the run: the same budget on a
+        # different climatology gives a different ceiling.
+        spinup_simulation_years_maximum = simulation_years_maximum,
+        spinup_years_per_cycle = years_per_cycle,
+        spinup_years_simulated = cycles * years_per_cycle,
         spinup_max_iterations = max_iterations,
         spinup_convergence_delta_density = convergence_delta_density,
         spinup_convergence_drift_density = convergence_drift_density,

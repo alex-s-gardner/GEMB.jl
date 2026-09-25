@@ -301,7 +301,7 @@ end
     cf = _age_forcing(n_days=365, temperature=250.0, precipitation=1.0)
     profile = initialize_profile(mp, cf)
 
-    spun = gemb_spinup(profile, cf, mp; max_iterations=3, verbose=false)
+    spun = gemb_spinup(profile, cf, mp; simulation_years_maximum=3 * GEMB._years_per_cycle(cf), verbose=false)
     age = collect(spun[:age])
 
     @test all(isfinite, age)
