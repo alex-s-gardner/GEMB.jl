@@ -168,6 +168,14 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     mass_added, trim_energy = trim_bottom!(cols, z_target, mp)
     E_added += trim_energy
 
+    # Restore the cell count, which `trim_bottom!` can lower: an accumulation step thicker than the
+    # deepest cell exports whole cells through the base, and how thick that step is only becomes
+    # known after `calculate_density` and the strain thinning, so step 9 cannot anticipate it.
+    # Splitting is exact in depth — `dz[i] /= 2` and duplicating the slot sums back to `dz[i]` in
+    # binary floating point — so the count is repaired without disturbing the depth pinned above.
+    # Free when nothing was consumed: the controller returns on its first comparison.
+    enforce_column_length!(cols, n_target, mp; workspace=column_workspace)
+
     # 13. Ice-slab diagnostics. Taken here, after every step that can change `dz` or
     # `density`, so they describe the same column the profile output records at this
     # timestamp — a user recomputing slab depth from the output `dz`/`density` gets this

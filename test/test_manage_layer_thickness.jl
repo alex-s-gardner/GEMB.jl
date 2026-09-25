@@ -224,12 +224,83 @@ end
         @test dz == 0.25 * ones(n)
     end
 
-    @testset "an adjustment larger than the bottom cell is an error" begin
+    # An adjustment thicker than the deepest cell is not an error: a step whose accumulation
+    # exceeds the bottom cell is routine at high accumulation, and the surplus comes from the cells
+    # above in turn. Conservation is asserted against `column_mass_energy` rather than a re-derived
+    # formula, so the bookkeeping — including the reservoir temperature a promoted cell inherits —
+    # is checked rather than restated.
+    @testset "adjustment spanning more than the bottom cell" begin
+        _spanning_cols(temperature) = GEMB.column_state(collect(Float64, temperature),
+            [0.4, 0.4, 0.2], 400.0 * ones(3), zeros(3),
+            0.5 * ones(3), 0.5 * ones(3), 0.5 * ones(3), zeros(3))
+
+        @testset "consumes the bottom cell and trims the next" begin
+            cols = _spanning_cols([260.0, 260.0, 260.0])
+            m0, e0 = GEMB.column_mass_energy(cols, mp)
+            # 1.0 m column, 0.2 m bottom cell, 0.3 m to remove.
+            mass_added, e_added = GEMB.trim_bottom!(cols, 0.7, mp)
+            m1, e1 = GEMB.column_mass_energy(cols, mp)
+
+            @test length(cols.dz) == 2
+            @test sum(cols.dz) ≈ 0.7 atol = 1e-12
+            @test cols.dz ≈ [0.4, 0.3] atol = 1e-12
+            @test mass_added ≈ -(0.3 * 400.0) atol = 1e-9
+            @test m1 - m0 ≈ mass_added atol = 1e-9
+            @test e1 - e0 ≈ e_added atol = 1e-3
+        end
+
+        @testset "a promoted cell inherits the reservoir temperature" begin
+            cols = _spanning_cols([250.0, 260.0, 270.0])
+            m0, e0 = GEMB.column_mass_energy(cols, mp)
+            mass_added, e_added = GEMB.trim_bottom!(cols, 0.7, mp)
+            m1, e1 = GEMB.column_mass_energy(cols, mp)
+
+            # Cell 3 was the Dirichlet reservoir; cell 2 takes its place and its temperature.
+            @test cols.temperature ≈ [250.0, 270.0] atol = 1e-12
+            @test mass_added ≈ -(0.3 * 400.0) atol = 1e-9
+            @test m1 - m0 ≈ mass_added atol = 1e-9
+            # Warming the promoted cell to the reservoir is part of `e_added`, so the column's own
+            # enthalpy change still matches it.
+            @test e1 - e0 ≈ e_added atol = 1e-3
+        end
+
+        @testset "consumes several cells" begin
+            n = 6
+            cols = GEMB.column_state(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
+                zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n))
+            m0, e0 = GEMB.column_mass_energy(cols, mp)
+            # 0.6 m column -> 0.25 m: three whole cells plus half of the fourth.
+            mass_added, e_added = GEMB.trim_bottom!(cols, 0.25, mp)
+            m1, e1 = GEMB.column_mass_energy(cols, mp)
+
+            @test length(cols.dz) == 3
+            @test sum(cols.dz) ≈ 0.25 atol = 1e-12
+            @test mass_added ≈ -(0.35 * 400.0) atol = 1e-9
+            @test m1 - m0 ≈ mass_added atol = 1e-9
+            @test e1 - e0 ≈ e_added atol = 1e-3
+        end
+
+        @testset "pore water of a consumed cell leaves with it" begin
+            n = 3
+            cols = GEMB.column_state(273.15 * ones(n), [0.4, 0.4, 0.2], 400.0 * ones(n),
+                [0.0, 8.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n))
+            m0, _ = GEMB.column_mass_energy(cols, mp)
+            mass_added, _ = GEMB.trim_bottom!(cols, 0.7, mp)
+            m1, _ = GEMB.column_mass_energy(cols, mp)
+
+            # All 10 of cell 3's water, plus a quarter of cell 2's as it goes 0.4 -> 0.3 m.
+            @test cols.water ≈ [0.0, 6.0] atol = 1e-12
+            @test mass_added ≈ -(0.3 * 400.0 + 10.0 + 2.0) atol = 1e-9
+            @test m1 - m0 ≈ mass_added atol = 1e-9
+        end
+    end
+
+    @testset "an adjustment exceeding the whole column is an error" begin
         n = 3
         cols = GEMB.column_state(260.0 * ones(n), [0.4, 0.4, 0.2], 400.0 * ones(n),
             zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n))
-        # Needs to remove 0.3 m from a 0.2 m bottom cell.
-        @test_throws ErrorException GEMB.trim_bottom!(cols, 0.7, mp)
+        # Needs to remove more than the 1.0 m the column holds.
+        @test_throws "exceeds the whole column" GEMB.trim_bottom!(cols, -0.2, mp)
     end
 end
 
