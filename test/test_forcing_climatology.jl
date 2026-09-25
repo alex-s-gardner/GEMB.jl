@@ -23,6 +23,32 @@
 # `test_synthetic_regression.jl` — `runtests.jl` does not import it into `Main`.
 using GEMB: DimensionalData, Statistics
 
+@testset "accepts forcing columns that are not plain Vectors" begin
+    # `:representative` integrates the record to rank candidate years, and that path is only reached
+    # by this method — so an argument annotation too narrow to admit a wrapped array is invisible until
+    # a real caller uses it. `elevation_interval_forcing` builds band forcing whose columns are
+    # `DimArray`s, and `initialize_climate_summary` passes them straight through, which is what made
+    # `_albedo_residual`/`_seb_annual_melt` throw a `MethodError` on the whole glacier sweep.
+    n = 365 * 5
+    time = DateTime(1990, 1, 1) .+ Day.(0:(n - 1))
+    td = DimensionalData.Ti(time)
+    wrap(v) = DimensionalData.DimArray(collect(Float64, v), (td,))
+    doy = [dayofyear(x) for x in time]
+
+    cf = initialize_forcing(time,
+        wrap(262.0 .+ 12.0 .* cos.(2π .* doy ./ 365 .- π)),
+        wrap(fill(80000.0, n)), wrap(fill(1.5, n)), wrap(fill(3.0, n)),
+        wrap(fill(120.0, n)), wrap(fill(220.0, n)), wrap(fill(150.0, n));
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    mp = initialize_parameters(output_frequency=:last)
+
+    @test cf[:temperature_air] isa DimensionalData.AbstractDimArray
+    cycle = forcing_climatology(cf; method=:representative, model_parameters=mp,
+                                n_years=3, verbose=false)
+    @test length(dims(cycle, Ti)) == 3 * 365
+    @test DimensionalData.metadata(cycle)[:climatology_n_years] == 3
+end
+
 # Forcing whose years differ, so averaging is distinguishable from selecting and the melt
 # ranking has something to rank. `warm_years` get a temperature offset (and the radiation to
 # make the surface actually melt), so melt is concentrated in them.
