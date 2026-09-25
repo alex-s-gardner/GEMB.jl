@@ -247,7 +247,7 @@ mp = initialize_parameters()                 # gemb_spinup forces output_frequen
 cf_clim = forcing_climatology(cf)            # ClimateForcing → one-year climatology
 
 profile = initialize_profile(mp, cf_clim)    # grid is sized to this climate
-spun_up = gemb_spinup(profile, cf_clim, mp; max_iterations=400,
+spun_up = gemb_spinup(profile, cf_clim, mp; simulation_years_maximum=400,
                       convergence_delta_density=0.01,
                       convergence_drift_density=0.005)
 
@@ -289,7 +289,7 @@ column-mean density against cycle over the trailing `drift_window` cycles. The t
 the stricter claim: a column creeping steadily at just under the delta tolerance passes the
 step test while still densifying.
 
-Set `max_iterations` high enough that the criteria, not the cap, end the spinup, and check
+Set `simulation_years_maximum` high enough that the criteria, not the cap, end the spinup, and check
 `metadata(spun_up)[:spinup_converged]` rather than assuming: a spinup that exhausts its
 iterations returns the profile it reached and reports `false`. The synthetic site converges at
 cycle 62 on the delta test alone; deeper or colder columns take longer.

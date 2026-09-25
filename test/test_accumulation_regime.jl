@@ -154,7 +154,7 @@
     @test final_density[end] - final_density[1] > 100.0
 
     # --- Spinup holds the same invariants -----------------------------------------
-    spun = gemb_spinup(profile, cf, mp; max_iterations=4, verbose=true)
+    spun = gemb_spinup(profile, cf, mp; simulation_years_maximum=4 * GEMB._years_per_cycle(cf), verbose=true)
     @test length(spun[:dz]) == N
     @test sum(parent(spun[:dz])) ≈ Z_fixed atol = 1e-9
     @test all(parent(spun[:water]) .== 0.0)

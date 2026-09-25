@@ -28,7 +28,7 @@ profile = initialize_profile(mp, cf_climatology)
 # converges at cycle 62; the cap is set well clear of that so the convergence test, not
 # the iteration limit, is what ends the spinup.
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=400, convergence_delta_density=0.01)
+                             simulation_years_maximum=400, convergence_delta_density=0.01)
 
 # The spun-up profile carries provenance: which climatology years were averaged
 # and how the spinup converged (`metadata` is re-exported from DimensionalData).

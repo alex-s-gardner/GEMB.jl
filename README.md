@@ -110,7 +110,7 @@ forcing from the column it converges to:
 cf_climatology = forcing_climatology(cf)
 profile = initialize_profile(mp, cf_climatology)   # grid is sized to this climate
 profile_spunup = gemb_spinup(profile, cf_climatology, mp;
-                             max_iterations=400, convergence_delta_density=0.01)
+                             simulation_years_maximum=400, convergence_delta_density=0.01)
 
 # 4. Run the transient forcing from the spun-up column
 output = gemb(profile_spunup, cf, mp)
