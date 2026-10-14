@@ -74,6 +74,38 @@ See [`ExplicitThermal`](@ref) and [`ImplicitThermal`](@ref).
 abstract type AbstractThermalSolver end
 
 """
+    StabilityTable
+
+Tabulated Monin-Obukhov transfer functions for one set of measurement heights (`z_w`, `z_T`)
+and roughness lengths (`z0` for momentum, `zT` for heat and moisture). Built by
+[`_stability_table`](@ref), evaluated by [`_stability_lookup`](@ref).
+
+For each sign of the bulk Richardson number `Ri` the table holds, on nodes uniform in
+`q = ln|Ri|`, the converged stability parameter as `s = ln|ζ|` and `G = ln(F_m·F_h)`, each with
+its exact derivative with respect to `q`, for cubic Hermite interpolation.
+"""
+struct StabilityTable
+    z_w::Float64
+    z_T::Float64
+    z0::Float64
+    zT::Float64
+    logM::Float64
+    logHT::Float64
+    G_neutral::Float64       # ln(logM·logHT), the value at Ri = 0
+    q_min::Float64           # ln of the smallest |Ri| tabulated
+    stable_h::Float64        # node spacing in q, Ri > 0
+    stable_s::Vector{Float64}
+    stable_ds::Vector{Float64}
+    stable_G::Vector{Float64}
+    stable_dG::Vector{Float64}
+    unstable_h::Float64      # node spacing in q, Ri < 0; the last node is ζ = ZETA_UNSTABLE_MIN
+    unstable_s::Vector{Float64}
+    unstable_ds::Vector{Float64}
+    unstable_G::Vector{Float64}
+    unstable_dG::Vector{Float64}
+end
+
+"""
     _ExplicitWorkspace()
 
 Scratch buffers for `_thermal_solve!(::ExplicitThermal, ...)`. Named for the quantities in that
@@ -224,9 +256,13 @@ struct ThermalWorkspace
     explicit::_ExplicitWorkspace
     implicit::_ImplicitWorkspace
     conductivity::Vector{Float64}  # thermal conductivity per cell [W m-1 K-1]
+    # One table per (wind height, temperature height, roughness lengths) met in this run,
+    # built on first use; see `_stability_table!`.
+    stability_tables::Vector{StabilityTable}
 end
 
-ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[])
+ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[],
+    StabilityTable[])
 
 # Only the scheme-independent buffer: each scheme's own set is grown inside `_thermal_solve!`.
 _workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity,)

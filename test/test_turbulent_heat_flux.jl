@@ -334,3 +334,72 @@ end
     end
 end
 
+
+@testset "Stability table against the converged Monin-Obukhov solution" begin
+    # Independent reference: bisection on z_w/L = Ri·F_m²/F_h with the published functions.
+    a, b, c, d = 1.0, 2.0 / 3.0, 5.0, 0.35
+    ψm(ζ) = ζ > 0 ? -(a * ζ + b * (ζ - c / d) * exp(-d * ζ) + b * c / d) :
+            (x = (1 - 19ζ)^0.25; 2log((1 + x) / 2) + log((1 + x^2) / 2) - 2atan(x) + π / 2)
+    ψh(ζ) = ζ > 0 ? -((1 + 2a * ζ / 3)^1.5 + b * (ζ - c / d) * exp(-d * ζ) + b * c / d - 1) :
+            2log((1 + sqrt(1 - 11.6ζ)) / 2)
+    function reference(Ri, z_w, z_T, z0, zT)
+        Fm(ζ) = log(z_w / z0) - ψm(ζ) + ψm(ζ * z0 / z_w)
+        Fh(ζ) = log(z_T / zT) - ψh(ζ * z_T / z_w) + ψh(ζ * zT / z_w)
+        g(ζ) = ζ * Fh(ζ) - Ri * Fm(ζ)^2
+        lo, hi = Ri >= 0 ? (0.0, 1.0) : (-1.0, 0.0)
+        Ri >= 0 ? (while g(hi) < 0; hi *= 2; end) : (while g(lo) > 0 && lo > -1e3; lo *= 2; end)
+        for _ in 1:300
+            m = 0.5 * (lo + hi)
+            g(m) > 0 ? (hi = m) : (lo = m)
+        end
+        ζ = max(0.5 * (lo + hi), GEMB.ZETA_UNSTABLE_MIN)
+        return ζ, Fm(ζ) * Fh(ζ)
+    end
+    worst_ζ = 0.0
+    worst_F = 0.0
+    worst_dG = 0.0
+    for (z_w, z_T) in ((10.0, 2.0), (2.0, 2.0)), z0 in (GEMB.Z0_SNOW_DRY, GEMB.Z0_ICE)
+        zT = 0.1 * z0
+        tab = GEMB._stability_table(z_w, z_T, z0, zT)
+        # A grid that falls between the table's nodes, spanning both signs and every regime.
+        for sgn in (1.0, -1.0), q in range(log(1e-12), log(1e6); length=1777)
+            Ri = sgn * exp(q)
+            ζ_ref, FF_ref = reference(Ri, z_w, z_T, z0, zT)
+            ζ = GEMB._stability_zeta(tab, Ri)
+            G, dG = GEMB._stability_lookup(tab, Ri)
+            worst_ζ = max(worst_ζ, abs(ζ / ζ_ref - 1))
+            worst_F = max(worst_F, abs(exp(-G) * FF_ref - 1))
+            # The tabulated derivative against a central difference of the reference.
+            if abs(Ri) > 1e-6 && ζ_ref > GEMB.ZETA_UNSTABLE_MIN + 1
+                δ = 1e-5 * abs(Ri)
+                Gp = log(reference(Ri + δ, z_w, z_T, z0, zT)[2])
+                Gm = log(reference(Ri - δ, z_w, z_T, z0, zT)[2])
+                ref = (Gp - Gm) / (2δ) * Ri          # dG/d ln|Ri|
+                worst_dG = max(worst_dG, abs(dG * Ri - ref) / max(1.0, abs(ref)))
+            end
+        end
+    end
+    @test worst_ζ < 1e-6
+    @test worst_F < 1e-6
+    @test worst_dG < 1e-6
+
+    # The tabulated fluxes agree with the exact path of `turbulent_heat_flux`, and their
+    # T_surface derivatives with a central difference.
+    tab = GEMB._stability_table(10.0, 2.0, GEMB.Z0_SNOW_WET, 0.1 * GEMB.Z0_SNOW_WET)
+    for (T_s, T_a, U) in ((260.0, 268.0, 3.0), (265.0, 255.0, 6.0), (GEMB.CtoK, 278.0, 0.5))
+        cfs = _thf_cfs(T_air=T_a, wind=U)
+        C = 0.16 * U
+        ri_scale = GEMB.GRAVITY * 10.0 / U^2
+        shf, lhf, L, dshf, dlhf = GEMB._table_turbulent_heat_flux(tab, T_s, 1.2, C, ri_scale, cfs)
+        shf_e, lhf_e, L_e = GEMB.turbulent_heat_flux(T_s, 1.2, GEMB.Z0_SNOW_WET,
+            0.1 * GEMB.Z0_SNOW_WET, 0.1 * GEMB.Z0_SNOW_WET, cfs)
+        @test L == L_e
+        @test shf ≈ shf_e rtol = 1e-6
+        @test lhf ≈ lhf_e rtol = 1e-6
+        T_d = min(T_s, GEMB.CtoK - 1e-3)
+        f(T) = GEMB._table_turbulent_heat_flux(tab, T, 1.2, C, ri_scale, cfs)
+        h = 1e-4
+        @test f(T_d)[4] ≈ (f(T_d + h)[1] - f(T_d - h)[1]) / 2h rtol = 1e-5
+        @test f(T_d)[5] ≈ (f(T_d + h)[2] - f(T_d - h)[2]) / 2h rtol = 1e-5
+    end
+end

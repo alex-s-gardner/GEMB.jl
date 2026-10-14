@@ -143,6 +143,15 @@ const ZETA_UNSTABLE_MIN = -100.0
 # 3e-2 respectively.
 const MO_NEWTON_STEPS = 4
 
+# Range and node spacing of `StabilityTable`, in `q = ln|Ri|`. Below `STABILITY_TABLE_RI_MIN` the
+# transfer functions are linear in `Ri` to better than 1e-9; above `STABILITY_TABLE_RI_MAX` (stable
+# only, reached at the wind-speed floor) the lookup solves exactly. The spacing holds the cubic
+# Hermite interpolation error below 1e-8 relative in `ζ` and in the transfer coefficient, and
+# below 5e-7 in `d ln(F_m F_h)/d ln|Ri|`, whose interpolation is one order less accurate.
+const STABILITY_TABLE_RI_MIN = 1e-9
+const STABILITY_TABLE_RI_MAX = 1e7
+const STABILITY_TABLE_DQ = 0.005
+
 # How close to `density_ice` counts as "firn has become ice" when sizing the initial
 # column. Densification laws approach ice *asymptotically*, so no finite depth ever
 # reaches it to within a float epsilon — testing against `D_TOLERANCE` would report
@@ -259,21 +268,9 @@ const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
 """
     THERMAL_BC_DERIVATIVE_STEP
 
-One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
-`dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
-Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the
-maintenance; one extra call per iteration is cheaper than the accuracy would be worth.
-
-Measured, not assumed: the two flux evaluations together are 0.70 s of a 15.2 s run, so this
-call is not the cost of the implicit path. An analytic replacement that froze the stability
-coefficients was tried and reverted — it overshoots the true derivative up to 10x and more than
-doubles the iteration count. See `GEMB._surface_energy_balance_slope`.
-
-1e-4 K rather than the usual `sqrt(eps)` ≈ 1.5e-8: the derivative only sets the convergence
-*rate*, never the answer (see `_thermal_solve!(::ImplicitThermal, ...)`), so a step large
-enough to stay well clear of cancellation in the flux difference beats a step chosen to
-minimize truncation error. It also matches `T_MELT_SWITCH_TOLERANCE`, so the difference does
-not straddle the melting-point latent-heat switch any more often than the melt switch does.
+Offset [K] below the melting point at which `_surface_safe_dt` evaluates the surface-balance
+slope for a cell just under 273.15 K, so that it reads the slope of the sub-freezing branch and
+not the `LS`/`LV` switch in the latent flux.
 """
 const THERMAL_BC_DERIVATIVE_STEP = 1e-4
 
