@@ -196,26 +196,26 @@ const DT_MIN_WARN = 1e-4
 """
     THERMAL_EXPLICIT_SAFETY_FACTOR
 
-Fraction of the stability limit the explicit sub-step may use. Default of
-`mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
+Fraction of the diffusive stability limit (`_max_safe_dt`) the explicit sub-step may use. Default
+of `mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
 
-The limit is the smaller of the diffusive positivity limit (`_max_safe_dt`) and the surface
-cell's limit with its energy-balance slope `Λ` included (`_surface_safe_dt`),
-
-    coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁) ≥ 0.
-
-Both are exact for the stencil linearized at the start of the forcing step. The factor covers
-what that linearization cannot see: `Λ` and the heat capacity change as the surface temperature
-moves within the step, and the surface flux is lagged one sub-step. 0.8 is inherited from the
-MATLAB model. Runs that want no stability limit at all should use `ImplicitThermal`, which is
-unconditionally stable and does not consult this.
+The limit is exact for the diffusion stencil at the start of the forcing step; the factor covers
+the change of the heat capacity and conductivity within the step. The surface energy balance
+needs no stability margin: it is linearized in the surface cell's new temperature, which makes
+its feedback stable at any sub-step. A separate bound, `THERMAL_SURFACE_STEP_FRACTION` of the
+surface relaxation time, keeps the surface flux accurate. 0.8 is inherited from the MATLAB model. Runs that want no
+stability limit at all should use `ImplicitThermal`, which is unconditionally stable and does not
+consult this.
 """
 const THERMAL_EXPLICIT_SAFETY_FACTOR = 0.8
 
-# Fraction of the surface cell's relaxation time, `ρ₁c₁dz₁/(G₁ + |Λ|)`, that bounds the explicit
-# sub-step (see `_surface_safe_dt`). Below the positivity limit (1) by a factor chosen for the
-# accuracy of the lagged surface flux.
-const THERMAL_SURFACE_STEP_FRACTION = 0.25
+# Fraction of the surface cell's relaxation time `C₁/(G₁ + |Λ|)` that bounds the explicit
+# sub-step (see `_surface_relaxation_dt`). The linearized surface flux is stable at any step, so
+# this bound is for accuracy: the flux over a sub-step is first order in the step relative to the
+# relaxation time. At 0.5 the hour-mean turbulent flux of a thin surface cell under 15 m s-1 of
+# cold wind is within 1.3% of its value at a 16x smaller step; at 1.0 it is 2.6%.
+const THERMAL_SURFACE_STEP_FRACTION = 0.5
+
 
 # --- ImplicitThermal solver ---
 #
@@ -265,14 +265,6 @@ const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
 # on the quadratic path, so `weight` never leaves 1.0 and the update is exactly the Newton step.
 const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
 
-"""
-    THERMAL_BC_DERIVATIVE_STEP
-
-Offset [K] below the melting point at which `_surface_safe_dt` evaluates the surface-balance
-slope for a cell just under 273.15 K, so that it reads the slope of the sub-freezing branch and
-not the `LS`/`LV` switch in the latent flux.
-"""
-const THERMAL_BC_DERIVATIVE_STEP = 1e-4
 
 """
     THERMAL_IMPLICIT_DT_TARGET
