@@ -93,7 +93,11 @@ end
 Add precipitation and deposition to the model column.
 
 Precipitation is classified as snow or rain based on `mp.rain_temperature_threshold`.
-Snow is added as a new layer (if depth > dzmin) or merged into the top cell.
+Snow is added as a new layer (if depth > dzmin) or merged into the top cell. A merged
+snowfall sets the top cell's dendricity, sphericity and grain radius to those of fresh snow
+whatever its amount, so even a trace snowfall resets the grain state, and hence the albedo, of
+the whole top cell. This is a known limitation: a mass-weighted or optical-depth rule would
+let a trace leave older surface grains showing.
 Rain is added to the pore water of the top cell, `water[1]`, at the melt-point water enthalpy,
 and its sensible heat above the melting point, `P·(h_w(T_air) − h_w(0 °C))`, is added to the
 cell's ice matrix. The cell's density and thickness are unchanged. In a cold cell the rain

@@ -620,3 +620,81 @@ end
     W1 = sum(parent(out[:water])[:, end])
     @test total(:melt) + total(:rain) - total(:refreeze) - total(:runoff) ≈ W1 - W0 atol = 1e-6
 end
+
+@testset "Melt from the excess enthalpy" begin
+    # A cell of mass M raised ΔT above 0 °C melts c·M·ΔT/LF. Raised by LF/c + δ, it melts out
+    # entirely and the cell below receives c·M·δ.
+    mp = _melt_mp()
+    c = mp.heat_capacity_ice
+    n = 6
+    T = fill(GEMB.CtoK, n)
+    dz = fill(0.1, n)
+    ρ = fill(400.0, n)
+    M = 0.1 * 400.0
+    ΔT = 2.5
+    T[1] = GEMB.CtoK + ΔT
+    out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
+        fill(0.5, n), zeros(n), mp, true)
+    @test out[9] ≈ c * M * ΔT / GEMB.LF rtol = 1e-12
+
+    δ = 3.0
+    T2 = copy(T); T2[1] = GEMB.CtoK + GEMB.LF / c + δ
+    out = GEMB.calculate_melt(T2, copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
+        fill(0.5, n), zeros(n), mp, true)
+    @test length(out[2]) == n - 1                     # cell 1 melted out and was removed
+    # Cell 2, at 0 °C, received c·M·δ and melted c·M·δ/LF of itself.
+    @test out[9] ≈ M + c * M * δ / GEMB.LF rtol = 1e-12
+end
+
+@testset "Percolation into cold firn" begin
+    # Cell 1 at 0 °C holds W above its irreducible content; cell 2 is cold. The excess
+    # percolates and refreezes in cell 2 up to the smallest of the water arriving, the cell's
+    # cold content, and its pore space. Nothing runs off.
+    mp = _melt_mp()
+    n = 8
+    dz = fill(0.1, n)
+    ρ = fill(400.0, n)
+    T = fill(GEMB.CtoK - 5.0, n)
+    T[1] = GEMB.CtoK
+    W = 4.0
+    water = zeros(n); water[1] = W
+    W_irr = (mp.density_ice - 400.0) * 0.07 * 0.1
+    cold2 = mp.heat_capacity_ice * 400.0 * 0.1 * 5.0 / GEMB.LF
+    out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), water, fill(0.5, n), zeros(n),
+        fill(0.5, n), zeros(n), mp, true)
+    @test out[12] ≈ min(W - W_irr, cold2, (mp.density_ice - 400.0) * 0.1) rtol = 1e-12
+    @test out[11] == 0.0
+    @test out[4][1] ≈ W_irr rtol = 1e-12
+end
+
+@testset "Melt on bare ice runs off" begin
+    mp = _melt_mp()
+    n = 6
+    T = fill(GEMB.CtoK, n); T[1] = GEMB.CtoK + 1.5
+    out = GEMB.calculate_melt(T, fill(0.1, n), fill(mp.density_ice, n), zeros(n),
+        fill(2.5, n), zeros(n), zeros(n), zeros(n), mp, true)
+    @test out[11] == out[9]
+    @test out[9] > 0.0
+end
+
+@testset "Refreeze of expelled pore water leaves the through-flow" begin
+    # A cold cell above its irreducible content refreezes all the water arriving (freeze1),
+    # expels pore water toward its irreducible content, and refreezes part of that with its
+    # remaining cold content (freeze2). Mass: what enters is refrozen, retained, or passed on.
+    mp = _melt_mp()
+    dz = 0.1
+    density = 500.0
+    M = density * dz
+    water = 5.0
+    melt_input = 1.0
+    freeze_max = 3.0
+    f1, f2, dW, out, M_new, ρ_new = GEMB._refreeze_cell(mp, melt_input, water, freeze_max, M,
+        density, dz)
+    @test f1 == melt_input
+    @test dW < 0.0
+    @test f2 > 0.0
+    @test out ≈ melt_input - f1 - dW - f2 rtol = 1e-12
+    @test melt_input ≈ f1 + f2 + dW + out rtol = 1e-12
+    @test M_new ≈ M + f1 + f2 rtol = 1e-12
+    @test ρ_new ≈ M_new / dz rtol = 1e-12
+end

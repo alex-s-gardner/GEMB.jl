@@ -519,3 +519,27 @@ end
         shortwave_downward_diffuse=10.0)
     @test_throws "timesteps" initialize_forcing(base...; kw..., solar_zenith_angle=sza[1:10])
 end
+
+@testset "Elevation identity: basal flux, SMB, water and firn air" begin
+    # At fixed column depth, −Σ ice_flux = (SMB − ΔW)/ρᵢ + ΔFAC exactly, with SMB the surface
+    # mass balance, ΔW the change in liquid water and ΔFAC the change in firn air content.
+    n = 365
+    time = DateTime(2003, 1, 1) .+ Day.(0:n-1)
+    seasonal = cos.(2π .* (1:n) ./ 365.0 .- π)
+    cf = initialize_forcing(time, 266.0 .+ 9.0 .* seasonal, fill(85000.0, n), fill(2.5, n),
+        fill(4.0, n), 120.0 .+ 160.0 .* max.(0.0, seasonal), fill(290.0, n), fill(300.0, n);
+        temperature_air_mean=266.0, wind_speed_mean=4.0, precipitation_mean=2.5 * 365.25,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    mp = initialize_parameters(output_frequency=:all)
+    profile = initialize_profile(mp, cf)
+    out = gemb(profile, cf, mp; verbose=true)
+    ρi = mp.density_ice
+    total(k) = sum(parent(out[k]))
+    smb = total(:precipitation) + total(:evaporation_condensation) - total(:runoff)
+    ΔW = sum(parent(out[:water])[:, end]) - sum(parent(profile[:water]))
+    fac(dz, ρ) = firn_air_content(dz, ρ, ρi)
+    ΔFAC = fac(parent(out[:dz])[:, end], parent(out[:density])[:, end]) -
+           fac(parent(profile[:dz]), parent(profile[:density]))
+    @test total(:melt) > 0.0
+    @test -total(:ice_flux) ≈ (smb - ΔW) / ρi + ΔFAC atol = 1e-9
+end

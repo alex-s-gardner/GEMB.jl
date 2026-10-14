@@ -540,3 +540,20 @@ end
     @test maximum(density) >= GEMB.DENSITY_PORE_CLOSEOFF   # this column does close off
     @test 0.0 < coa < age[end]
 end
+
+@testset "Initial-guess skin temperature at radiative equilibrium" begin
+    # Calm air (wind at the floor) at the radiative-equilibrium temperature, saturated over ice,
+    # no shortwave: the skin temperature closing ε·LW↓ − εσT⁴ + H + LE = 0 is (LW↓/σ)^(1/4)
+    # for any emissivity.
+    mp = GEMB.ModelParameters()
+    lw = 240.0
+    T_eq = (lw / GEMB.SB)^0.25
+    cfs = GEMB._seb_forcing_step(3600.0, T_eq, 80000.0, 0.0, 0.0, lw,
+        GEMB.saturation_vapor_pressure_ice(T_eq), 2.0, 10.0)
+    for ε in (0.97, 0.8)
+        z0 = GEMB.Z0_SNOW_DRY
+        T = GEMB._seb_skin_temperature(0.0, lw, ε, GEMB.air_density(80000.0, T_eq), z0,
+            0.1 * z0, 0.1 * z0, cfs)
+        @test T ≈ T_eq atol = 1e-3
+    end
+end
