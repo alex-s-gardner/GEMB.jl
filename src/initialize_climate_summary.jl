@@ -90,7 +90,7 @@ precipitation, so using it directly counts rain as accumulating mass.
 **Melt, from a surface energy balance.** At each step the skin temperature that
 closes
 
-    SW(1−α) + LW↓ − εσT⁴ + QH + QE = 0
+    SW(1−α) + ε·LW↓ − εσT⁴ + QH + QE = 0
 
 is found by Newton iteration, reusing [`turbulent_heat_flux`](@ref) for the
 turbulent terms. Where that temperature would exceed the melt point, the surface
@@ -407,7 +407,7 @@ end
 
 Net energy flux into the surface at skin temperature `T_surface`:
 
-    Q = SW_net + LW↓ − εσT⁴ + QH + QE
+    Q = SW_net + ε·LW↓ − εσT⁴ + QH + QE
 
 Turbulent terms come from [`turbulent_heat_flux`](@ref). Positive `Q` warms (or
 melts) the surface.
