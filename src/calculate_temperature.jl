@@ -71,15 +71,14 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     # Sub-timestep-invariant turbulent-flux quantities (only T_surface changes
     # across sub-steps). Hoisted here and passed to _turbulent_heat_flux so the
-    # bulk coefficient, Exner factor, and roughness logs are computed once per
+    # bulk coefficient, Richardson-number scale, and roughness logs are computed once per
     # timestep rather than once per sub-step.
     thf_wind_speed = max(cfs.wind_speed, min_wind_speed)
     thf_C = VON_KARMAN^2 * thf_wind_speed
-    thf_pressure_factor = (100000 / cfs.pressure_air)^0.286
     thf_logM = log(cfs.wind_observation_height / z0)
     thf_logHT = log(cfs.temperature_observation_height / zT)
     thf_logHQ = log(cfs.temperature_observation_height / zQ)
-    thf_wind_ratio_sq = (thf_wind_speed / cfs.wind_observation_height)^2
+    thf_ri_scale = GRAVITY * cfs.wind_observation_height / thf_wind_speed^2
 
     ## THERMAL CONDUCTIVITY (per `mp.thermal_conductivity_method`; see
     ## `thermal_conductivity` for the five fits and their sources)
@@ -89,8 +88,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     K = thermal_conductivity!(workspace.conductivity, temperature, density, mp)
 
     sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
-        thf_wind_speed, thf_C, thf_pressure_factor, thf_logM, thf_logHT, thf_logHQ,
-        thf_wind_ratio_sq)
+        thf_wind_speed, thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
 
     # Scheme selected by dispatch on `mp.thermal_solver`'s type, so the call is resolved at
     # compile time. See `AbstractThermalSolver`.
@@ -120,11 +118,10 @@ struct _ThermalSurface
     emissivity_melt_switch::Bool
     wind_speed::Float64
     C::Float64
-    pressure_factor::Float64
     logM::Float64
     logHT::Float64
     logHQ::Float64
-    wind_ratio_sq::Float64
+    ri_scale::Float64
 end
 
 """
@@ -165,11 +162,10 @@ function _thermal_solve!(solver::ExplicitThermal,
     emissivity_melt_switch = sfc.emissivity_melt_switch
     thf_wind_speed = sfc.wind_speed
     thf_C = sfc.C
-    thf_pressure_factor = sfc.pressure_factor
     thf_logM = sfc.logM
     thf_logHT = sfc.logHT
     thf_logHQ = sfc.logHQ
-    thf_wind_ratio_sq = sfc.wind_ratio_sq
+    thf_ri_scale = sfc.ri_scale
 
     # initialize cumulative quantities
     longwave_upward_cumulative = 0.0
@@ -272,8 +268,7 @@ function _thermal_solve!(solver::ExplicitThermal,
         # TURBULENT HEAT FLUX (invariant quantities hoisted above the loop)
         heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
             T_surface, density_air, z0, zT, zQ, cfs,
-            thf_wind_speed, thf_C, thf_pressure_factor, thf_logM, thf_logHT, thf_logHQ,
-            thf_wind_ratio_sq)
+            thf_wind_speed, thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
 
         lhf_cumulative += heat_flux_latent * dt
         shf_cumulative += heat_flux_sensible * dt
@@ -409,8 +404,7 @@ implicit solver's Newton iteration and its final applied-flux evaluation so the 
     T_surface = min(CtoK, T1)
     heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
         T_surface, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.wind_speed, sfc.C, sfc.pressure_factor, sfc.logM, sfc.logHT, sfc.logHQ,
-        sfc.wind_ratio_sq)
+        sfc.wind_speed, sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
     T2 = T_surface * T_surface
     longwave_upward = -(SB * T2 * T2 * emissivity +
                         (1.0 - emissivity) * cfs.longwave_downward)
@@ -464,8 +458,7 @@ Three deliberate crudenesses, each licensed by that:
            -THERMAL_BC_DERIVATIVE_STEP
     shf_p, lhf_p, _ = _turbulent_heat_flux(
         T1 + step, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.wind_speed, sfc.C, sfc.pressure_factor, sfc.logM, sfc.logHT, sfc.logHQ,
-        sfc.wind_ratio_sq)
+        sfc.wind_speed, sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
     slope_turbulent = ((shf_p - heat_flux_sensible) + (lhf_p - heat_flux_latent)) / step
 
     return min(0.0, slope_longwave) + min(0.0, slope_turbulent)

@@ -654,9 +654,9 @@ end
 
     # The slope is exactly zero once clamped — the flux no longer sees T1 at all.
     sfc = GEMB._ThermalSurface(1.3, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 5.0, 0.16 * 5.0, 1.0,
+        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 5.0, 0.16 * 5.0,
         log(2.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
-        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), (5.0 / 2.0)^2)
+        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 2.0 / 5.0^2)
     @test GEMB._surface_energy_balance_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs,
         -300.0, 10.0, 5.0) === 0.0
     # Below the clamp it is strictly negative — the property that strengthens the diagonal.
