@@ -2,7 +2,7 @@
     apply_vapor_exchange!(temperature, dz, density, water, evaporation_condensation,
                           evaporation_condensation_liquid, mp) -> E [J m-2]
 
-Add or remove the vapour mass of one timestep at the surface cell, in the phase whose latent
+Add or remove the vapor mass of one timestep at the surface cell, in the phase whose latent
 heat the surface flux charged, and return the enthalpy the mass carried into the column.
 Positive masses are deposition or condensation, negative sublimation or evaporation.
 
@@ -123,7 +123,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose, thermal_workspace; water)
 
-    # 6. Exchange the vapour mass with the surface cell, in the phase its latent heat implied.
+    # 6. Exchange the vapor mass with the surface cell, in the phase its latent heat implied.
     #    Deposition and condensation (positive) are new mass at age 0, so they dilute the
     #    surface cell's age; removal takes a fraction of the cell and is age-neutral, which
     #    `dilute_age` handles by returning the age unchanged for a non-positive input.

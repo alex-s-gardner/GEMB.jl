@@ -315,7 +315,7 @@ end
     @test n_checked > 100
 end
 
-@testset "Saturation vapour pressure over ice" begin
+@testset "Saturation vapor pressure over ice" begin
     @test GEMB.saturation_vapor_pressure_ice(273.16) ≈ 610.78 rtol = 1e-14
     # Murphy & Koop (2005) eq. 7. Murray's (1967) form is within 0.5% of it from 255 K up and
     # falls 1.9% low by 233 K, as its docstring states.

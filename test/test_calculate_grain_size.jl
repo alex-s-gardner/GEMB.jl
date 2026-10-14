@@ -195,7 +195,7 @@ end
 end
 
 @testset "Marbouty density limit" begin
-    # `:Marbouty` explicitly — this ceiling is that method's behaviour; the `:hybrid` default
+    # `:Marbouty` explicitly — this ceiling is that method's behavior; the `:hybrid` default
     # hands over to Arthern growth above it.
     mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:Marbouty)
     cfs = _make_grain_cfs(dt=86400.0)
@@ -381,7 +381,7 @@ end
 end
 
 @testset "Temperature gradient on a non-uniform grid" begin
-    # Linear T(z) through the cell centres: the stencil returns the gradient exactly at every
+    # Linear T(z) through the cell centers: the stencil returns the gradient exactly at every
     # cell, the two edge cells included.
     dz = [0.02, 0.05, 0.11, 0.07, 0.3, 0.2]
     zc = cumsum(dz) .- dz ./ 2
