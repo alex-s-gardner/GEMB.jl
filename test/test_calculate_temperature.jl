@@ -448,18 +448,20 @@ end
 end
 
 @testset "Energy budget against fluxes recomputed outside the solver" begin
-    # One sub-step, so the surface fluxes are those of a single surface temperature that the
-    # test can recompute itself: the initial T₁ on the explicit path (fluxes lagged), the new
-    # T₁ on the implicit path (backward Euler). The expected enthalpy change is the textbook
-    # surface balance (1 − α)SW + ε·LW↓ − εσT_s⁴ + H + LE plus the basal conduction, with H and
-    # LE from `turbulent_heat_flux` and the basal flux from the harmonic-mean face conductance.
+    # One sub-step, so the surface fluxes are those of a single surface state that the test can
+    # recompute itself: on the implicit path (backward Euler) the balance at the new T₁; on the
+    # explicit path the balance at the initial T₁ linearized in the change of T₁,
+    # Q(T₁⁰) + Q'(T₁⁰)·ΔT₁. The expected enthalpy change is the textbook surface balance
+    # (1 − α)SW + ε·LW↓ − εσT_s⁴ + H + LE plus the basal conduction, with H and LE from
+    # `turbulent_heat_flux`, Q' by central difference, and the basal flux from the
+    # harmonic-mean face conductance.
     n = N_CELLS
     dz = fill(DZ_UNIFORM, n)
     density = fill(DENSITY_UNIFORM, n)
     t_in = [255.0 + (i - 1) for i in 1:n]
     shortwave_flux = [150.0 * exp(-2.0 * (i - 1)) for i in 1:n]
     ε = 0.9
-    for (solver, dt) in ((GEMB.ExplicitThermal(), 60.0), (GEMB.ImplicitThermal(), 900.0))
+    for (solver, dt) in ((GEMB.ExplicitThermal(), 10.0), (GEMB.ImplicitThermal(), 900.0))
         mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
             surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
             thermal_solver=solver, dt_divisors=[dt])
@@ -473,12 +475,16 @@ end
         T_s = solver isa GEMB.ExplicitThermal ? t_in[1] : t_out[1]
         T_prof = solver isa GEMB.ExplicitThermal ? t_in : t_out
         z0 = GEMB.surface_roughness(mp, density[1], 0.0)
-        H, LE, _ = GEMB.turbulent_heat_flux(T_s, GEMB.air_density(cfs.pressure_air,
-                cfs.temperature_air), z0, 0.1 * z0, 0.1 * z0, cfs)
+        ρa = GEMB.air_density(cfs.pressure_air, cfs.temperature_air)
+        Q(T) = ε * cfs.longwave_downward - ε * GEMB.SB * T^4 +
+               sum(GEMB.turbulent_heat_flux(T, ρa, z0, 0.1 * z0, 0.1 * z0, cfs)[1:2])
+        Q_applied = Q(T_s)
+        if solver isa GEMB.ExplicitThermal
+            Q_applied += (Q(T_s + 1e-3) - Q(T_s - 1e-3)) / 2e-3 * (t_out[1] - t_in[1])
+        end
         K = GEMB.thermal_conductivity(t_in, density, mp)
         G = (T_prof[n] - T_prof[n-1]) / (dz[n] / (2 * K[n]) + dz[n-1] / (2 * K[n-1]))
-        expected = (sum(shortwave_flux) + ε * cfs.longwave_downward - ε * GEMB.SB * T_s^4 +
-                    H + LE + G) * dt
+        expected = (sum(shortwave_flux) + Q_applied + G) * dt
         M = density .* dz
         ΔH = sum(M[i] * (GEMB.specific_enthalpy(mp, t_out[i]) -
                          GEMB.specific_enthalpy(mp, t_in[i])) for i in 1:n)
@@ -1007,37 +1013,24 @@ end
     end
     @test flux[1] ≈ flux[2] rtol = 0.02
 
-    # The surface bound is the cell's relaxation time with diffusion, scaled by the fraction.
+    # The linearized surface flux uses the analytic slope of the surface balance.
     mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
-    K = GEMB.thermal_conductivity(T0, density, mp)
     sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), mp.emissivity, false,
         0.16 * 15.0, GEMB.GRAVITY * 10.0 / 15.0^2,
         GEMB._stability_table(10.0, 2.0, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY))
     Q(T) = sum(GEMB._surface_energy_balance(T, mp.emissivity, sfc, cfs)[1:3])
-    h = GEMB.THERMAL_BC_DERIVATIVE_STEP
     Λ = GEMB._surface_energy_balance_and_slope(T0[1], mp.emissivity, sfc, cfs)[6]
     @test Λ ≈ (Q(T0[1] + 1e-3) - Q(T0[1] - 1e-3)) / 2e-3 rtol = 1e-5
     @test Λ < 0.0
-    G1 = 1 / (dz[2] / (2K[2]) + dz[1] / (2K[1]))
-    bound(T, w) = GEMB._surface_safe_dt(T, dz, density, K, mp, sfc, cfs, w)
-    @test bound(T0, 0.0) ≈ GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 *
-                           GEMB.heat_capacity(mp, T0[1]) * dz[1] / (G1 + abs(Λ)) rtol = 1e-12
-
-    # Just below the melting point the slope stays on the ice branch: the LS/LV switch in the
-    # latent flux is not read as a slope, so the bound stays near its value a few mK lower.
-    T_near = copy(T0); T_near[1] = GEMB.CtoK - 0.5 * h
-    T_away = copy(T0); T_away[1] = GEMB.CtoK - 0.01
-    @test bound(T_near, 0.0) > 0.5 * bound(T_away, 0.0)
-    # A wet surface cell, or one at the melting point, has no surface-slope constraint.
-    diffusive = GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 * GEMB.heat_capacity(mp, T0[1]) *
-                dz[1] / G1
-    @test bound(T0, 0.5) ≈ diffusive rtol = 1e-12
+    parts = GEMB._surface_fluxes_and_slopes(T0[1], mp.emissivity, sfc, cfs)
+    @test parts[6] + parts[7] + parts[8] == Λ
+    @test all(iszero, GEMB._surface_fluxes_and_slopes(GEMB.CtoK, mp.emissivity, sfc, cfs)[6:8])
 end
 
 @testset "An all-low-density column stays stable under strong cooling" begin
     # At 100 kg m-3 the conductivity is so small that the diffusive limit exceeds the forcing
-    # step, and only the surface bound keeps the explicit scheme from oscillating. The result
+    # step, and only the linearized surface flux keeps the explicit scheme from oscillating. The result
     # stays physical and close to the implicit solution.
     n = 20
     dz = fill(0.1, n)

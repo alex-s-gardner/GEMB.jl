@@ -195,12 +195,13 @@ function _thermal_solve!(solver::ExplicitThermal,
     end
 
     ## FIND STABLE dt (allocation-free)
-    # The positivity limit of every cell: diffusion (`_max_safe_dt`) and, for the surface cell,
-    # diffusion plus the surface energy balance's own feedback (`_surface_safe_dt`). Both use the
-    # pointwise heat capacity; under `:CuffeyPaterson` that is conservative, since c_p < 2102
-    # everywhere below the melting point. See `THERMAL_EXPLICIT_SAFETY_FACTOR`.
+    # The diffusive positivity limit (`_max_safe_dt`), with the pointwise heat capacity; under
+    # `:CuffeyPaterson` that is conservative, since c_p < 2102 everywhere below the melting
+    # point. The surface flux is linearized in the surface cell's new temperature (see the
+    # sub-step loop), so it is stable at any step; `_surface_relaxation_dt` bounds the step for
+    # its accuracy. See `THERMAL_EXPLICIT_SAFETY_FACTOR`.
     max_safe_dt = min(_max_safe_dt(temperature, dz, density, K, mp),
-        _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs, water[1]))
+        _surface_relaxation_dt(temperature, dz, density, K, mp, sfc, cfs, water[1]))
     dt = _find_dt_divisor(max_safe_dt * mp.thermal_explicit_safety_factor, mp.dt_divisors)
 
     ## THERMAL DIFFUSION IN ENTHALPY FORM (Patankar 1980, Ch. 3&4)
@@ -285,11 +286,32 @@ function _thermal_solve!(solver::ExplicitThermal,
             end
         end
 
-        # Surface fluxes at the surface temperature `min(CtoK, T₁)`, lagged one sub-step.
-        # `emissivity` is the value in force this sub-step (the melt switch below can change it
-        # between sub-steps).
-        longwave_upward_flux, heat_flux_sensible, heat_flux_latent, latent_heat, _ =
-            _surface_energy_balance(temperature[1], emissivity, sfc, cfs)
+        # Surface fluxes, semi-implicit: each flux is its value at the start-of-sub-step surface
+        # temperature `min(CtoK, T₁)` plus its slope times the surface cell's temperature change
+        # over the sub-step, F(T₁⁰) + (∂F/∂T)·ΔT₁. With the start-of-sub-step diffusive flux
+        # into cell 1, that change is
+        #     ΔT₁ = (Q_sw + Q⁰ + F₁)/(C₁ − Λ·dt),    Λ = ∂(LW + H + LE)/∂T ≤ 0,
+        # with C₁ the cell's heat capacity [J m-2 K-1] (matrix and water together for a wet
+        # cell below 0 °C, whose water is then frozen). `Λ ≤ 0` makes the surface feedback
+        # stable at any sub-step. The fluxes applied, and returned, are the linearized ones,
+        # so the energy budget is exact.
+        # `emissivity` is the value in force this sub-step (the melt switch below can change
+        # it between sub-steps).
+        T1_0 = temperature[1]
+        longwave_upward_flux, heat_flux_sensible, heat_flux_latent, latent_heat, _,
+            dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1_0, emissivity, sfc, cfs)
+        Λ = dlw + dshf + dlhf
+        if Λ < 0.0
+            C1 = (density[1] * dz[1] + water[1]) * heat_capacity(mp, T1_0)
+            F1 = A_face[1] * (_cell_temperature(mp, H[2], M_inv[2], density[2] * dz[2],
+                water[2]) - T1_0)
+            Q0 = longwave_downward + (longwave_upward_flux + heat_flux_sensible +
+                                      heat_flux_latent) * dt
+            ΔT1 = (Q_sw[1] + Q0 + F1) / (C1 - Λ * dt)
+            longwave_upward_flux += dlw * ΔT1
+            heat_flux_sensible += dshf * ΔT1
+            heat_flux_latent += dlhf * ΔT1
+        end
 
         lhf_cumulative += heat_flux_latent * dt
         shf_cumulative += heat_flux_sensible * dt
@@ -444,12 +466,31 @@ coefficients with stability.
 Two rules shape it, and since the slope sets only the implicit solver's Newton convergence rate
 (see [`_thermal_solve!`](@ref)) neither changes an answer:
 
-- **At or above the melting point the slope is zero.** The `min(CtoK, T1)` clamp makes `Q`
-  independent of `T1` there.
+- **At the melting point the slope is zero.** The `min(CtoK, T1)` clamp makes `Q` independent of
+  `T1` above it, and within `T_TOLERANCE` below it the latent flux is already on its `LV` branch,
+  whose surface exchanges vapor with liquid water.
 - **The longwave and turbulent parts are each clamped at `≤ 0`.** A positive slope would weaken
   the Newton diagonal instead of strengthening it.
 """
 @inline function _surface_energy_balance_and_slope(T1::Float64, emissivity::Float64,
+    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+    longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface,
+        dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1, emissivity, sfc, cfs)
+    return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, dlw + dshf + dlhf
+end
+
+"""
+    _surface_fluxes_and_slopes(T1, emissivity, sfc, cfs)
+        -> (longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface,
+            dlw, dshf, dlhf)
+
+The fluxes of [`_surface_energy_balance`](@ref) and their slopes with respect to `T1`
+[W m-2 K-1], under the two rules of [`_surface_energy_balance_and_slope`](@ref): all three are
+zero at the melting point (from `CtoK − T_TOLERANCE`, where the latent flux takes `LV`), and the
+turbulent pair is set to zero together when its sum would be positive, so
+`dlw + dshf + dlhf ≤ 0`.
+"""
+@inline function _surface_fluxes_and_slopes(T1::Float64, emissivity::Float64,
     sfc::_ThermalSurface, cfs::ClimateForcingStep)
 
     T_surface = min(CtoK, T1)
@@ -459,9 +500,14 @@ Two rules shape it, and since the slope sets only the implicit solver's Newton c
     T2 = T_surface * T_surface
     longwave_upward = -(SB * T2 * T2 * emissivity +
                         (1.0 - emissivity) * cfs.longwave_downward)
-    slope = T1 >= CtoK ? 0.0 :
-            min(0.0, -4 * SB * emissivity * T2 * T_surface) + min(0.0, dshf + dlhf)
-    return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, slope
+    dlw = -4 * SB * emissivity * T2 * T_surface
+    if T1 >= CtoK - T_TOLERANCE
+        dlw = dshf = dlhf = 0.0
+    elseif dshf + dlhf > 0.0
+        dshf = dlhf = 0.0
+    end
+    return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface,
+        dlw, dshf, dlhf
 end
 
 """
@@ -948,6 +994,13 @@ function _update_wet_modes!(mode::Vector{Float64}, M_eff::Vector{Float64},
         if water[i] > 0.0
             H_new = H[i] + Q_sw[i] + F - F_prev + (i == 1 ? Q_surface : 0.0)
             new_mode = _wet_cell_mode(mp, H_new, M[i], water[i])
+            # A pinned cell whose enthalpy leaves the plateau by no more than `E_TOLERANCE`
+            # stays pinned: the pinned row lands its enthalpy on the plateau edge to round-off,
+            # and re-classifying that would cycle between the two neighboring states.
+            if mode[i] == WET_CELL_PINNED && new_mode != WET_CELL_PINNED
+                H_lo, H_hi = _wet_cell_plateau(mp, M[i], water[i])
+                max(H_lo - H_new, H_new - H_hi) <= E_TOLERANCE && (new_mode = WET_CELL_PINNED)
+            end
             if new_mode != mode[i]
                 mode[i] = new_mode
                 M_eff[i], T_old[i] = _wet_cell_row(mp, H[i], M[i], water[i], new_mode)
@@ -1060,8 +1113,9 @@ Cell `m` is excluded: it is the Dirichlet reservoir, its enthalpy is never updat
 (`Q_sw[m] = 0`, no flux is drawn from it), so it imposes no stability constraint. The old
 form included it.
 
-Diffusion only: cell 1 also carries the explicitly-evaluated surface energy balance, whose
-limit is [`_surface_safe_dt`](@ref). The explicit solver takes the smaller of the two.
+Diffusion only: the surface energy balance on cell 1 is linearized in the cell's new
+temperature, which keeps its feedback stable at any sub-step (see [`_thermal_solve!`](@ref));
+[`_surface_relaxation_dt`](@ref) bounds the step for the accuracy of that flux.
 
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
@@ -1086,39 +1140,21 @@ function _max_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
 end
 
 """
-    _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs, water_surface) -> dt [s]
+    _surface_relaxation_dt(temperature, dz, density, K, mp, sfc, cfs, water_surface) -> dt [s]
 
-Explicit sub-step bound from the surface cell, `THERMAL_SURFACE_STEP_FRACTION` of its
-relaxation time with diffusion included. The surface energy balance's slope
-`Λ = dQ_sfc/dT₁ ≤ 0` (`−4εσT³` plus the turbulent derivative) enters cell 1's
-own-temperature coefficient as a face conductance does,
-`coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`, so `ρ₁c₁dz₁/(G₁ + |Λ|)` is the step at which that
-coefficient reaches zero.
-
-`Λ` is the analytic slope of [`_surface_energy_balance_and_slope`](@ref) at the start-of-step
-surface temperature, taken at most `2·THERMAL_BC_DERIVATIVE_STEP` below the melting point so it is
-the slope of the sub-freezing branch rather than of the `LS`/`LV` switch. A wet surface cell on
-its freezing plateau, or a cell at or above the melting point, has `Λ = 0`: its temperature does
-not respond to the surface flux.
-
-The fraction is for accuracy, not stability: the surface flux is lagged one sub-step, so its
-error grows with `dt` relative to the relaxation time. At 0.25 the forcing-step mean turbulent
-flux of a thin surface cell under 15 m s⁻¹ of cold wind is within 2% of its value at a 16x
-smaller step.
+`THERMAL_SURFACE_STEP_FRACTION` of the surface cell's relaxation time with diffusion included,
+`C₁/(G₁ + |Λ|)`, with `C₁` the cell's heat capacity [J m-2 K-1] (matrix and water together),
+`G₁` its face conductance and `Λ ≤ 0` the analytic slope of the surface balance at the
+start-of-step temperature (zero at or above the melting point).
 """
-function _surface_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
+function _surface_relaxation_dt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, K::Vector{Float64}, mp::ModelParameters,
     sfc::_ThermalSurface, cfs::ClimateForcingStep, water_surface::Float64)
-
     G1 = 1.0 / (dz[2] / (2 * K[2]) + dz[1] / (2 * K[1]))
     T1 = temperature[1]
-    Λ = 0.0
-    if T1 < CtoK && water_surface <= 0.0
-        T_eval = min(T1, CtoK - 2 * THERMAL_BC_DERIVATIVE_STEP)
-        Λ = _surface_energy_balance_and_slope(T_eval, sfc.emissivity, sfc, cfs)[6]
-    end
-    return THERMAL_SURFACE_STEP_FRACTION * density[1] * heat_capacity(mp, T1) * dz[1] /
-           (G1 + abs(Λ))
+    Λ = _surface_energy_balance_and_slope(T1, sfc.emissivity, sfc, cfs)[6]
+    C1 = (density[1] * dz[1] + water_surface) * heat_capacity(mp, T1)
+    return THERMAL_SURFACE_STEP_FRACTION * C1 / (G1 + abs(Λ))
 end
 
 """
