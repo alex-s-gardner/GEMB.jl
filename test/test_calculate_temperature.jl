@@ -993,3 +993,59 @@ end
     @test GEMB._wet_cell_temperature(mp, H_hi + M * 2102.0, M, W) ≈ GEMB.CtoK + 1.0 rtol = 1e-12
     @test GEMB._wet_cell_temperature(mp, H_lo - (M + W) * 2102.0, M, W) ≈ GEMB.CtoK - 1.0 rtol = 1e-12
 end
+
+@testset "Explicit surface flux converges in the sub-step" begin
+    # A thin 300 kg m-3 surface cell under 15 m s-1 of air 15 K colder than it. The mean
+    # turbulent flux over the hour at the default safety factor agrees within 2% with the
+    # flux at a 16x smaller factor.
+    n = 40
+    dz = [0.02 * 1.08^(i - 1) for i in 1:n]
+    density = fill(300.0, n)
+    T0 = [255.0 + 10.0 * (i - 1) / (n - 1) for i in 1:n]
+    cfs = GEMB.ClimateForcingStep(3600.0, 240.0, 80000.0, 0.0, 15.0, 0.0, 180.0, 30.0,
+        250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    flux = map((GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR, 0.05)) do sf
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
+            thermal_explicit_safety_factor=sf,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        _, _, shf, lhf, = GEMB.calculate_temperature(copy(T0), dz, density, 0.0,
+            fill(0.3, n), zeros(n), cfs, mp, true)
+        shf + lhf
+    end
+    @test flux[1] ≈ flux[2] rtol = 0.02
+
+    # The surface bound is the cell's relaxation time with diffusion, scaled by the fraction.
+    mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
+        dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+    K = GEMB.thermal_conductivity(T0, density, mp)
+    sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), GEMB.Z0_SNOW_DRY,
+        0.1 * GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY, mp.emissivity, false, 15.0,
+        0.16 * 15.0, log(10.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
+        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 10.0 / 15.0^2)
+    lw, shf, lhf, _, _ = GEMB._surface_energy_balance(T0[1], mp.emissivity, sfc, cfs)
+    Λ = GEMB._surface_energy_balance_slope(T0[1], mp.emissivity, sfc, cfs, lw, shf, lhf)
+    G1 = 1 / (dz[2] / (2K[2]) + dz[1] / (2K[1]))
+    @test GEMB._surface_safe_dt(T0, dz, density, K, mp, sfc, cfs) ≈
+          GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 * GEMB.heat_capacity(mp, T0[1]) * dz[1] /
+          (G1 + abs(Λ)) rtol = 1e-12
+end
+
+@testset "An all-low-density column stays stable under strong cooling" begin
+    # At 100 kg m-3 the conductivity is so small that the diffusive limit exceeds the forcing
+    # step, and only the surface bound keeps the explicit scheme from oscillating. The result
+    # stays physical and close to the implicit solution.
+    n = 20
+    dz = fill(0.1, n)
+    density = fill(100.0, n)
+    cfs = GEMB.ClimateForcingStep(3600.0, 230.0, 80000.0, 0.0, 12.0, 0.0, 150.0, 10.0,
+        250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    T1 = map((GEMB.ExplicitThermal(), GEMB.ImplicitThermal())) do solver
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        t, = GEMB.calculate_temperature(fill(260.0, n), dz, density, 0.0, fill(0.3, n),
+            zeros(n), cfs, mp, true)
+        @test all(220.0 .< t .<= 260.0)
+        t[1]
+    end
+    @test T1[1] ≈ T1[2] atol = 2.0
+end

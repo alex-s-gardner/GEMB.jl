@@ -187,46 +187,26 @@ const DT_MIN_WARN = 1e-4
 """
     THERMAL_EXPLICIT_SAFETY_FACTOR
 
-Fraction of `_max_safe_dt` the explicit sub-step may use. Default of
+Fraction of the stability limit the explicit sub-step may use. Default of
 `mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
 
-This is a genuine margin, not a hedge against the diffusive limit being imprecise. That limit
-is exact for the stencil it is derived from (see `_max_safe_dt`), but it accounts for
-*diffusion only*. The surface cell also carries the explicitly-evaluated surface energy
-balance, whose linearization `Λ = dQ_sfc/dT₁ ≤ 0` (see `_surface_energy_balance_slope`) enters
-cell 1's own-temperature coefficient exactly as a face conductance does:
+The limit is the smaller of the diffusive positivity limit (`_max_safe_dt`) and the surface
+cell's limit with its energy-balance slope `Λ` included (`_surface_safe_dt`),
 
-    coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁)
+    coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁) ≥ 0.
 
-`_max_safe_dt` omits `|Λ|`, so the true surface constraint is always stricter than the limit
-returned, by a factor that the model does not bound: `|Λ|` grows with wind speed (turbulent
-transfer) and with `T₁³` (longwave), while `ρ₁c₁dz₁` falls as the surface cell thins toward
-`column_dzmin`. Unlike the graded-grid error the face-based form fixed, this one is
-one-directional and unbounded, which is why a fixed fraction is the right instrument.
-
-0.8 was inherited from the MATLAB model without a stated derivation. Measured over a year of
-3-hourly synthetic forcing at `test_1` (2920 steps, spun-up column, `mp` defaults), the
-surface amplification factor `dt(G₁+|Λ|)/(ρ₁c₁dz₁)` actually realized was:
-
-    factor   median   p99     max     frac > 1   frac > 2   mean n_sub
-    0.8      0.196    0.609   0.955   0.0000     0.0        24.20
-    0.95     0.235    0.731   1.146   0.0065     0.0        20.20
-    1.0      0.235    0.731   1.146   0.0065     0.0        20.17
-
-At 0.8 the surface coefficient stays non-negative on every step of that year; at 0.95 it goes
-negative on 0.65% of them. Negative-but-above-`−1` is damped ringing rather than divergence —
-outright blow-up needs a factor above 2, which this column never reaches — so 0.8 is not the
-difference between a run that works and one that does not *here*. It is the margin that keeps
-the scheme monotone, and the cost of holding it is ~17% more sub-steps on this column
-(the divisor grid is coarse, so the two often land on the same `dt` regardless).
-
-Raising it toward 1.0 is therefore a defensible speed/monotonicity trade on a column resembling
-the one measured, not a free one, and 1.0 exactly is not safe in general: nothing in the model
-bounds `|Λ|/G₁`, so a thin, warm, windy surface cell can put the factor past 2. Runs that want
-the limit removed rather than tightened should use `ImplicitThermal`, which is unconditionally
-stable and does not consult this at all.
+Both are exact for the stencil linearized at the start of the forcing step. The factor covers
+what that linearization cannot see: `Λ` and the heat capacity change as the surface temperature
+moves within the step, and the surface flux is lagged one sub-step. 0.8 is inherited from the
+MATLAB model. Runs that want no stability limit at all should use `ImplicitThermal`, which is
+unconditionally stable and does not consult this.
 """
 const THERMAL_EXPLICIT_SAFETY_FACTOR = 0.8
+
+# Fraction of the surface cell's relaxation time, `ρ₁c₁dz₁/(G₁ + |Λ|)`, that bounds the explicit
+# sub-step (see `_surface_safe_dt`). Below the positivity limit (1) by a factor chosen for the
+# accuracy of the lagged surface flux.
+const THERMAL_SURFACE_STEP_FRACTION = 0.25
 
 # --- ImplicitThermal solver ---
 #
