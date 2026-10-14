@@ -1022,12 +1022,24 @@ end
         0.1 * GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY, mp.emissivity, false, 15.0,
         0.16 * 15.0, log(10.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
         log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 10.0 / 15.0^2)
-    lw, shf, lhf, _, _ = GEMB._surface_energy_balance(T0[1], mp.emissivity, sfc, cfs)
-    Λ = GEMB._surface_energy_balance_slope(T0[1], mp.emissivity, sfc, cfs, lw, shf, lhf)
+    Q(T) = sum(GEMB._surface_energy_balance(T, mp.emissivity, sfc, cfs)[1:3])
+    h = GEMB.THERMAL_BC_DERIVATIVE_STEP
+    Λ = (Q(T0[1]) - Q(T0[1] - h)) / h
+    @test Λ < 0.0
     G1 = 1 / (dz[2] / (2K[2]) + dz[1] / (2K[1]))
-    @test GEMB._surface_safe_dt(T0, dz, density, K, mp, sfc, cfs) ≈
-          GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 * GEMB.heat_capacity(mp, T0[1]) * dz[1] /
-          (G1 + abs(Λ)) rtol = 1e-12
+    bound(T, w) = GEMB._surface_safe_dt(T, dz, density, K, mp, sfc, cfs, w)
+    @test bound(T0, 0.0) ≈ GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 *
+                           GEMB.heat_capacity(mp, T0[1]) * dz[1] / (G1 + abs(Λ)) rtol = 1e-12
+
+    # Just below the melting point the slope stays on the ice branch: the LS/LV switch in the
+    # latent flux is not read as a slope, so the bound stays near its value a few mK lower.
+    T_near = copy(T0); T_near[1] = GEMB.CtoK - 0.5 * h
+    T_away = copy(T0); T_away[1] = GEMB.CtoK - 0.01
+    @test bound(T_near, 0.0) > 0.5 * bound(T_away, 0.0)
+    # A wet surface cell, or one at the melting point, has no surface-slope constraint.
+    diffusive = GEMB.THERMAL_SURFACE_STEP_FRACTION * 300.0 * GEMB.heat_capacity(mp, T0[1]) *
+                dz[1] / G1
+    @test bound(T0, 0.5) ≈ diffusive rtol = 1e-12
 end
 
 @testset "An all-low-density column stays stable under strong cooling" begin

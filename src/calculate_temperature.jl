@@ -221,7 +221,7 @@ function _thermal_solve!(solver::ExplicitThermal,
     # pointwise heat capacity; under `:CuffeyPaterson` that is conservative, since c_p < 2102
     # everywhere below the melting point. See `THERMAL_EXPLICIT_SAFETY_FACTOR`.
     max_safe_dt = min(_max_safe_dt(temperature, dz, density, K, mp),
-        _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs))
+        _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs, water[1]))
     dt = _find_dt_divisor(max_safe_dt * mp.thermal_explicit_safety_factor, mp.dt_divisors)
 
     ## THERMAL DIFFUSION IN ENTHALPY FORM (Patankar 1980, Ch. 3&4)
@@ -1136,15 +1136,20 @@ function _max_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
 end
 
 """
-    _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs) -> dt [s]
+    _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs, water_surface) -> dt [s]
 
 Explicit sub-step bound from the surface cell, `THERMAL_SURFACE_STEP_FRACTION` of its
 relaxation time with diffusion included. The surface energy balance's slope
-`Λ = dQ_sfc/dT₁ ≤ 0` ([`_surface_energy_balance_slope`](@ref): `−4εσT³` plus the turbulent
-derivative) enters cell 1's own-temperature coefficient as a face conductance does,
+`Λ = dQ_sfc/dT₁ ≤ 0` (`−4εσT³` plus the turbulent derivative) enters cell 1's
+own-temperature coefficient as a face conductance does,
 `coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`, so `ρ₁c₁dz₁/(G₁ + |Λ|)` is the step at which that
-coefficient reaches zero. `Λ` is evaluated at the start-of-step surface temperature; at or
-above the melting point `Λ = 0`.
+coefficient reaches zero.
+
+`Λ` is evaluated at the start-of-step surface temperature, by a backward difference on the
+sub-freezing branch: at most `2·THERMAL_BC_DERIVATIVE_STEP` below the melting point, so the
+difference never spans the `LS`/`LV` switch in the latent flux, whose jump would otherwise be
+read as an enormous slope. A wet surface cell on its freezing plateau, or a cell at or above the
+melting point, has `Λ = 0`: its temperature does not respond to the surface flux.
 
 The fraction is for accuracy, not stability: the surface flux is lagged one sub-step, so its
 error grows with `dt` relative to the relaxation time. At 0.25 the forcing-step mean turbulent
@@ -1153,14 +1158,18 @@ smaller step.
 """
 function _surface_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, K::Vector{Float64}, mp::ModelParameters,
-    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, water_surface::Float64)
 
-    T1 = temperature[1]
-    longwave_upward, heat_flux_sensible, heat_flux_latent, _, _ =
-        _surface_energy_balance(T1, sfc.emissivity, sfc, cfs)
-    Λ = _surface_energy_balance_slope(T1, sfc.emissivity, sfc, cfs, longwave_upward,
-        heat_flux_sensible, heat_flux_latent)
     G1 = 1.0 / (dz[2] / (2 * K[2]) + dz[1] / (2 * K[1]))
+    T1 = temperature[1]
+    Λ = 0.0
+    if T1 < CtoK && water_surface <= 0.0
+        T_eval = min(T1, CtoK - 2 * THERMAL_BC_DERIVATIVE_STEP)
+        h = THERMAL_BC_DERIVATIVE_STEP
+        lw, shf, lhf, _, _ = _surface_energy_balance(T_eval, sfc.emissivity, sfc, cfs)
+        lw_m, shf_m, lhf_m, _, _ = _surface_energy_balance(T_eval - h, sfc.emissivity, sfc, cfs)
+        Λ = min(0.0, ((lw + shf + lhf) - (lw_m + shf_m + lhf_m)) / h)
+    end
     return THERMAL_SURFACE_STEP_FRACTION * density[1] * heat_capacity(mp, T1) * dz[1] /
            (G1 + abs(Λ))
 end
