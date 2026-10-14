@@ -242,13 +242,10 @@ Temperature after mixing `M_liquid` [kg] of liquid water at `T_liquid` [K] into 
 [kg] of ice matrix at `T_solid` [K], conserving enthalpy. The liquid carries the latent heat
 of fusion, so its specific enthalpy is [`specific_enthalpy_water`](@ref)`(mp, T_liquid)`.
 
-Two callers, and they sit on opposite sides of the melting point:
-
-- **Rain on snow** (`calculate_accumulation`), with `T_liquid = T_air > CtoK`. The rain's
-  sensible heat above the melting point is carried at `mp.rain_heat_capacity` — see
-  [`specific_enthalpy_water`](@ref).
-- **Refreezing** ([`refreeze_temperature`](@ref)), with `T_liquid = CtoK` exactly. The
-  sensible term vanishes and this reduces to the melting-point form.
+Its caller is refreezing ([`refreeze_temperature`](@ref)), with `T_liquid = CtoK` exactly, where
+the sensible term vanishes and this reduces to the melting-point form. Above the melting point
+the liquid's sensible heat is carried at `mp.rain_heat_capacity` — see
+[`specific_enthalpy_water`](@ref).
 
 Under `:constant` the `c` cancels out of the enthalpy balance, so both are evaluated as a
 weighted mean of temperatures with the liquid at an effective temperature `h_liquid/c` —

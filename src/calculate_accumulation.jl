@@ -94,8 +94,11 @@ Add precipitation and deposition to the model column.
 
 Precipitation is classified as snow or rain based on `mp.rain_temperature_threshold`.
 Snow is added as a new layer (if depth > dzmin) or merged into the top cell.
-Rain is added by increasing the mass and temperature of the top grid cell,
-with temperature adjusted to account for latent heat of fusion.
+Rain is added to the pore water of the top cell, `water[1]`, at the melt-point water enthalpy,
+and its sensible heat above the melting point, `P·(h_w(T_air) − h_w(0 °C))`, is added to the
+cell's ice matrix. The cell's density and thickness are unchanged. In a cold cell the rain
+refreezes in [`calculate_melt`](@ref), where it is counted as refreeze; in a cell at the
+melting point its sensible heat melts ice there.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
 age, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the
@@ -103,8 +106,8 @@ extra cell is reclaimed later in the timestep by [`manage_layer_thickness`](@ref
 controller.
 
 This is the model's principal age source. All three paths add mass at age 0: a fresh cell is
-set to 0 outright, and the two merge-into-cell-1 paths dilute `age[1]` by the arriving mass
-via [`dilute_age`](@ref).
+set to 0 outright, and the two merge-into-cell-1 paths dilute `age[1]` (the mean age of the
+cell's matrix and pore water together) by the arriving mass via [`dilute_age`](@ref).
 
 Albedo is absent: it is diagnosed from the column at the top of the *next* timestep (see
 [`calculate_albedo`](@ref)), which reads the fresh-snow grain size and density this
@@ -128,7 +131,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
     if verbose
         M = dz .* density
-        M_total_initial = sum(M)
+        M_total_initial = sum(M) + sum(water)
         E_total_initial = column_enthalpy(mp, M, temperature, water)
     end
 
@@ -199,34 +202,23 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             end
 
         else
-            # rain
-            # grid cell adjusted mass
-            M_surface_new = M_surface + cfs.precipitation
-
-            # adjust temperature (liquid: must account for latent heat of fusion)
-            temperature[1] = mix_temperature_liquid(mp, cfs.temperature_air, cfs.precipitation,
-                temperature[1], M_surface)
-
-            # Rain mass joins the ice/firn matrix here (not `water`), so it is new age-zero
-            # mass in the cell on the same footing as snowfall.
-            age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
-
-            # adjust grid cell density
-            density[1] = M_surface_new / dz[1]
-
-            # if density > the density of ice
-            if density[1] > mp.density_ice - D_TOLERANCE
-                density[1] = mp.density_ice
-                dz[1] = M_surface_new / density[1]
-            end
-
+            # Rain joins the pore water at the melt-point enthalpy; its sensible heat above
+            # the melting point warms the matrix, so the total enthalpy added is exactly
+            # P·h_w(T_air). Density and thickness are untouched.
             rain = cfs.precipitation
+            water[1] += rain
+            Q_sensible = rain * (specific_enthalpy_water(mp, cfs.temperature_air) -
+                                 specific_enthalpy_water(mp))
+            temperature[1] = add_energy_temperature(mp, temperature[1], M_surface, Q_sensible)
+
+            # New age-zero mass in the cell on the same footing as snowfall.
+            age[1] = dilute_age(age[1], S_surface, rain)
         end
 
         if verbose
             # Check for conservation of mass
             M = dz .* density
-            M_total_final = sum(M)
+            M_total_final = sum(M) + sum(water)
             M_delta = M_total_final - M_total_initial - cfs.precipitation
 
             E_total_final = column_enthalpy(mp, M, temperature, water)

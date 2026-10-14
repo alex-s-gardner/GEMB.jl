@@ -303,15 +303,15 @@ end
 
     # No local may infer as Any.
     ir = code_typed(GEMB.calculate_melt,
-        (typeof.(args)..., Float64, GEMB.ModelParameters, Bool); optimize=false)[1][1]
+        (typeof.(args)..., GEMB.ModelParameters, Bool); optimize=false)[1][1]
     slot_types = ir.slottypes
     @test !any(t -> t === Any, slot_types)
 
     # And the allocation count must stay near the array-count floor rather than scaling with
     # the cell count, which is what boxed arithmetic does.
-    GEMB.calculate_melt(copy.(args)..., 0.0, mp, false)
+    GEMB.calculate_melt(copy.(args)..., mp, false)
     inputs = copy.(args)
-    allocated = @allocated GEMB.calculate_melt(inputs..., 0.0, mp, false)
+    allocated = @allocated GEMB.calculate_melt(inputs..., mp, false)
     @test allocated < 60_000
 end
 

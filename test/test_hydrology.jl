@@ -264,8 +264,8 @@ end
     mp_pond = GEMB.ModelParameters(density_ice=917.0, water_irreducible_saturation=0.07,
         runoff_method=:ZuoOerlemans, surface_slope=0.001)
 
-    out_inst = GEMB.calculate_melt(_blocked_column(mp_inst)..., 0.0, mp_inst, true)
-    out_pond = GEMB.calculate_melt(_blocked_column(mp_pond)..., 0.0, mp_pond, true)
+    out_inst = GEMB.calculate_melt(_blocked_column(mp_inst)..., mp_inst, true)
+    out_pond = GEMB.calculate_melt(_blocked_column(mp_pond)..., mp_pond, true)
 
     w_inst, r_inst = out_inst[4], out_inst[11]
     w_pond, r_pond = out_pond[4], out_pond[11]
