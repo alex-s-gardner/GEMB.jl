@@ -514,3 +514,17 @@ end
 
     @test GEMB.validate_parameters(mp_pahaut) === nothing
 end
+
+@testset "Trace snowfall resets the surface grain state" begin
+    # The documented rule: snowfall too thin for its own cell merges into cell 1 and gives the
+    # whole cell fresh-snow grains, whatever the amount. 0.01 kg on 17.5 kg of 1 mm grains.
+    n = 5
+    mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05)
+    cfs = _make_accum_cfs(precipitation=0.01, temperature_air=260.0, wind_speed=0.0)
+    out = GEMB.calculate_accumulation(fill(260.0, n), fill(0.05, n), fill(350.0, n), zeros(n),
+        fill(1.0, n), zeros(n), fill(0.5, n), zeros(n), cfs, mp, true)
+    @test out[6][1] == GEMB.GDN_NEW_SNOW
+    @test out[7][1] == GEMB.GSP_NEW_SNOW
+    @test out[5][1] ≈ GEMB.dendritic_grain_radius(GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW) rtol = 1e-12
+    @test out[5][2] == 1.0
+end
