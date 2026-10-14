@@ -49,8 +49,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
             grain_dendricity, grain_sphericity, cfs, mp)
 
     # 2. Calculate snow, firn, and ice albedo. Both are scalars diagnosed from the current
-    #    column, not carried state: `albedo_broadband` is returned in `flux` for output and
-    #    is not read again.
+    #    column, not carried state. The direct and diffuse albedos combine into the
+    #    shortwave-weighted `effective_albedo` returned in `flux` for output.
     albedo_broadband, albedo_diffuse =
         calculate_albedo(dz, density, grain_radius, cfs, mp)
 
@@ -258,7 +258,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     )
 
     flux = (
-        albedo_broadband=albedo_broadband,
+        albedo_broadband=effective_albedo(albedo_broadband, albedo_diffuse, cfs),
         shortwave_net=shortwave_net,
         heat_flux_sensible=heat_flux_sensible,
         heat_flux_latent=heat_flux_latent,
