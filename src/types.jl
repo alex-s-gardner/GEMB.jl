@@ -50,12 +50,14 @@ central branch to extend.
 The interface a subtype must implement is
 
     _thermal_solve!(solver, temperature, dz, density, K, shortwave_flux,
-                    water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
+                    water_surface, grain_radius, sfc, cfs, mp, verbose, workspace, water)
         -> (longwave_upward, heat_flux_sensible, heat_flux_latent,
             heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)
 
 updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
-the last two in kg m-2 accumulated over the step; the last is the part exchanged at `LV`). Three invariants bind every implementation: the
+the last two in kg m-2 accumulated over the step; the last is the part exchanged at `LV`).
+`water` is the per-cell pore water (`Zeros` for a dry column); a wet cell is held at the
+melting point while its water freezes (see [`calculate_temperature`](@ref)). Three invariants bind every implementation: the
 bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged; the
 returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
 energy and mass budgets against them; and every buffer entry drawn from `workspace` must be
@@ -91,7 +93,7 @@ _ExplicitWorkspace() = _ExplicitWorkspace(Float64[], Float64[], Float64[], Float
 """
     _ImplicitWorkspace()
 
-Scratch buffers for `_thermal_solve!(::ImplicitThermal, ...)`. All seven are sized to the `m-1`
+Scratch buffers for `_thermal_solve!(::ImplicitThermal, ...)`. All ten are sized to the `m-1`
 unknowns (the bottom cell is a Dirichlet reservoir, outside the solve).
 
 Empty on construction and grown to the column by [`_resize_workspace!`](@ref) on first use.
@@ -104,9 +106,12 @@ struct _ImplicitWorkspace
     rhs::Vector{Float64}     # right-hand side, then the Thomas solution
     sup::Vector{Float64}     # eliminated superdiagonal
     T_it::Vector{Float64}    # current Newton iterate
+    M_eff::Vector{Float64}   # mass whose heat capacity each row carries
+    T_old::Vector{Float64}   # start-of-sub-step temperature each row is written against
+    mode::Vector{Float64}    # wet-cell state code (`WET_CELL_DRY`, `_PINNED`, `_FROZEN`)
 end
 
-_ImplicitWorkspace() = _ImplicitWorkspace(ntuple(_ -> Float64[], 7)...)
+_ImplicitWorkspace() = _ImplicitWorkspace(ntuple(_ -> Float64[], 10)...)
 
 """
     _resize_workspace!(ws, n) -> ws
@@ -154,7 +159,7 @@ end
 # would need a generated function to stay type-stable; an explicit tuple is clearer and inlines.
 _workspace_buffers(ws::_ExplicitWorkspace) = (ws.M_inv, ws.H, ws.Q_sw, ws.A_face)
 _workspace_buffers(ws::_ImplicitWorkspace) =
-    (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it)
+    (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it, ws.M_eff, ws.T_old, ws.mode)
 
 """
     ExplicitThermal()

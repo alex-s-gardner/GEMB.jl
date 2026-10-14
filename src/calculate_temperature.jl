@@ -1,5 +1,5 @@
 """
-    calculate_temperature(temperature, dz, density, water_surface, grain_radius, shortwave_flux, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool, workspace=ThermalWorkspace())
+    calculate_temperature(temperature, dz, density, water_surface, grain_radius, shortwave_flux, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool, workspace=ThermalWorkspace(); water=nothing)
 
 Compute new temperature profile accounting for energy absorption and thermal diffusion.
 
@@ -23,6 +23,21 @@ water; the rest, at `LS`, is exchanged with ice. See [`apply_vapor_exchange!`](@
 `εσT_s⁴ + (1 − ε)·LW↓`, with ε the emissivity in force at each sub-step. The surface therefore
 absorbs `ε·LW↓`, and `LW↓ − longwave_upward` is the net longwave the column received.
 
+# Liquid water as a latent buffer
+
+`water` [kg m-2 per cell], when given, is the column's pore water, with `water[1] ==
+water_surface`. A cell holding water cannot cool below the melting point inside the solve: its
+enthalpy counts the water as liquid, and cooling first freezes that water at 273.15 K
+([`_wet_cell_temperature`](@ref)) before the cell's temperature falls. The surface fluxes and
+the diffusion see that temperature.
+
+The water mass itself is not changed here. The returned temperature of a wet cell is its *ice
+matrix* temperature with all of its water still counted as liquid, so a cell whose water has
+partly frozen inside the solve is returned below 273.15 K with exactly the cold content that
+freezing released. [`calculate_melt`](@ref) refreezes that water at the start of its pass and
+counts it as refreeze, which returns the cell to the state the solve ended in. `water =
+nothing` treats the column as dry.
+
 `workspace` supplies the solver's scratch buffers (see [`ThermalWorkspace`](@ref)). The default
 allocates a fresh one per call, which is convenient for a one-off call but allocates every time;
 `gemb` passes a single workspace down for the whole run.
@@ -43,7 +58,8 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     density::Vector{Float64}, water_surface::Float64,
     grain_radius::Vector{Float64}, shortwave_flux::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
-    workspace::ThermalWorkspace=ThermalWorkspace())
+    workspace::ThermalWorkspace=ThermalWorkspace();
+    water::Union{Nothing,Vector{Float64}}=nothing)
 
     # Note: temperature is modified in-place by the thermal solver.
 
@@ -95,12 +111,23 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
         thf_wind_speed, thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
 
+    if water === nothing
+        water_cells = Zeros(m)
+    else
+        length(water) == m || throw(DimensionMismatch(
+            "water has $(length(water)) cells but the column has $(m)"))
+        water[1] == water_surface || throw(ArgumentError(
+            "water[1] = $(water[1]) must equal water_surface = $(water_surface)"))
+        all(>=(0.0), water) || throw(ArgumentError("water must be non-negative"))
+        water_cells = water
+    end
+
     # Scheme selected by dispatch on `mp.thermal_solver`'s type, so the call is resolved at
     # compile time. See `AbstractThermalSolver`.
     longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
         heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out =
         _thermal_solve!(mp.thermal_solver, temperature, dz, density, K, shortwave_flux,
-            water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
+            water_surface, grain_radius, sfc, cfs, mp, verbose, workspace, water_cells)
 
     return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
         heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out
@@ -141,7 +168,9 @@ scheme, sub-stepped to the Von Neumann stability limit (see [`_max_safe_dt`](@re
 evaporation_condensation, evaporation_condensation_liquid)`; the first four are W m-2, the last
 two kg m-2 accumulated over the step.
 
-`water_surface` and `grain_radius` are carried for the verbose diagnostic only.
+`water_surface` and `grain_radius` are carried for the verbose diagnostic only. `water` holds
+each cell's pore water; a wet cell's temperature during the sub-steps comes from
+[`_wet_cell_temperature`](@ref), which holds it at the melting point while its water freezes.
 
 This is one implementation of the [`AbstractThermalSolver`](@ref) interface; see there for the
 invariants every scheme must honour.
@@ -155,7 +184,7 @@ function _thermal_solve!(solver::ExplicitThermal,
     density::Vector{Float64}, K::Vector{Float64}, shortwave_flux::Vector{Float64},
     water_surface::Float64, grain_radius::Vector{Float64},
     sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
-    workspace::ThermalWorkspace)
+    workspace::ThermalWorkspace, water::AbstractVector{Float64})
 
     m = length(density)
 
@@ -226,11 +255,18 @@ function _thermal_solve!(solver::ExplicitThermal,
     A_face = ws.A_face    # face conductance * dt [J m-2 K-1]
 
     h_scale = enthalpy_temperature_scale(mp)
+    h_water = specific_enthalpy_water(mp)
     @inbounds for i in 1:m
         M_cell_i = density[i] * dz[i]
         M_inv[i] = 1.0 / (M_cell_i * h_scale)
-        H[i] = M_cell_i * specific_enthalpy(mp, temperature[i])
+        # A wet cell's enthalpy counts its water as liquid; see `_wet_cell_temperature`.
+        H[i] = M_cell_i * specific_enthalpy(mp, temperature[i]) + water[i] * h_water
         Q_sw[i] = shortwave_flux[i] * dt
+    end
+    # The surface flux of the first sub-step reads `temperature[1]`; a wet surface cell is
+    # held at its solve temperature, the melting point while it has water left to freeze.
+    if water[1] > 0.0
+        temperature[1] = _wet_cell_temperature(mp, H[1], density[1] * dz[1], water[1])
     end
     @inbounds for i in 1:m-1
         # `dt` is fixed across sub-steps, so it is folded in here rather than multiplied per
@@ -316,11 +352,12 @@ function _thermal_solve!(solver::ExplicitThermal,
         # `M_inv` reads and one `A_face` read per cell, one pass, no second sweep.
         @inbounds begin
             H[1] += Q_sw[1] + Q_surface
-            T_pre_prev = temperature_from_scaled_enthalpy(mp, H[1] * M_inv[1])
+            T_pre_prev = _cell_temperature(mp, H[1], M_inv[1], density[1] * dz[1], water[1])
             F_prev = 0.0
             for i in 1:m-2
                 H[i+1] += Q_sw[i+1]
-                T_pre_i = temperature_from_scaled_enthalpy(mp, H[i+1] * M_inv[i+1])
+                T_pre_i = _cell_temperature(mp, H[i+1], M_inv[i+1], density[i+1] * dz[i+1],
+                    water[i+1])
                 F = A_face[i] * (T_pre_i - T_pre_prev)
                 H[i] += F - F_prev
                 F_prev = F
@@ -336,7 +373,7 @@ function _thermal_solve!(solver::ExplicitThermal,
             # fluxes, the emissivity switch, and the verbose diagnostic), so it is the only one
             # reconstructed here. The interior is recovered once after the sub-step loop
             # instead of being rewritten `n_steps` times and read by nobody.
-            temperature[1] = temperature_from_scaled_enthalpy(mp, H[1] * M_inv[1])
+            temperature[1] = _cell_temperature(mp, H[1], M_inv[1], density[1] * dz[1], water[1])
         end
 
         # calculate cumulative deposition or condensation (+) / sublimation or evaporation (-)
@@ -378,10 +415,14 @@ function _thermal_solve!(solver::ExplicitThermal,
         end
     end
 
-    # Recover the interior temperatures from the prognostic enthalpy. Cell 1 is already current
-    # (the sub-step loop needs it) and cell m is the untouched Dirichlet reservoir.
-    @inbounds for i in 2:m-1
-        temperature[i] = temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
+    # Recover cells 1 … m-1 from the prognostic enthalpy as matrix temperatures with their
+    # water counted liquid (see `calculate_temperature`). Cell m is the untouched Dirichlet
+    # reservoir.
+    @inbounds for i in 1:m-1
+        temperature[i] = water[i] > 0.0 ?
+            temperature_from_specific_enthalpy(mp, (H[i] - water[i] * h_water) /
+                                                   (density[i] * dz[i])) :
+            temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
     end
 
     heat_flux_latent_out = lhf_cumulative / cfs.dt    # J -> W/m2
@@ -548,6 +589,18 @@ The flux applied at the surface in that pass is the *true* nonlinear flux at the
 not its linearization, and the returned averages are those same applied values — so `gemb_core`'s
 energy budget and the `evaporation_condensation` mass budget close by construction.
 
+## Wet cells
+
+A cell holding water is on the freezing plateau of [`_wet_cell_temperature`](@ref) while its
+water is partly frozen, so its temperature is not a function of its enthalpy there. Each wet
+cell's row is therefore written for one of three states (`_wet_cell_mode`): all water liquid
+(the matrix's heat capacity, temperature free to rise above the melting point), on the plateau
+(the row is `T_i = CtoK` and the energy it receives goes to freezing or melting its water), or
+all water frozen (the heat capacity of matrix and water together). After each solve the
+enthalpy every wet cell would receive is classified again; where the state differs, the row is
+rewritten and the sub-step solved again, at most twice per wet cell, and a state that has not
+settled by then throws. A dry column takes none of these passes and is unchanged by them.
+
 ## Sub-stepping
 
 Sub-steps here buy **accuracy, not stability**: backward Euler is first-order and strongly damping,
@@ -596,7 +649,7 @@ function _thermal_solve!(solver::ImplicitThermal,
     density::Vector{Float64}, K::Vector{Float64}, shortwave_flux::Vector{Float64},
     water_surface::Float64, grain_radius::Vector{Float64},
     sfc::_ThermalSurface, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
-    workspace::ThermalWorkspace)
+    workspace::ThermalWorkspace, water::AbstractVector{Float64})
 
     m = length(density)
     n = m - 1                     # unknowns: cells 1 … m-1; cell m is the Dirichlet reservoir
@@ -620,13 +673,19 @@ function _thermal_solve!(solver::ImplicitThermal,
     rhs = ws.rhs          # right-hand side, then the Thomas solution
     sup = ws.sup          # eliminated superdiagonal
     T_it = ws.T_it        # current Newton iterate
+    M_eff = ws.M_eff      # mass whose heat capacity a row carries [kg m-2]
+    T_old = ws.T_old      # start-of-sub-step temperature that row is written against [K]
+    mode = ws.mode        # wet-cell state; see `_wet_cell_mode`
 
+    h_water = specific_enthalpy_water(mp)
+    n_wet = 0
     @inbounds for i in 1:n
         M[i] = density[i] * dz[i]
-        H[i] = M[i] * specific_enthalpy(mp, temperature[i])
+        H[i] = M[i] * specific_enthalpy(mp, temperature[i]) + water[i] * h_water
         Q_sw[i] = shortwave_flux[i] * dt
         # `dt` is fixed across sub-steps, so it is folded into the conductance once here.
         A_face[i] = dt / (dz[i+1] / (2 * K[i+1]) + dz[i] / (2 * K[i]))
+        water[i] > 0.0 && (n_wet += 1)
     end
     # The bottom cell absorbs no shortwave; its share warms the cell above it, which keeps the
     # Dirichlet reservoir's enthalpy out of the solve entirely.
@@ -652,6 +711,12 @@ function _thermal_solve!(solver::ImplicitThermal,
     EC_cumulative = 0.0
     EC_liquid_cumulative = 0.0
 
+    # Outer passes: under `:constant` a dry column needs one (the interior rows are exactly
+    # linear); `:CuffeyPaterson` repeats until the chord capacities settle; each wet cell may
+    # add passes while its state settles (see the docstring).
+    n_outer = ((mp.heat_capacity_method === :constant) ? 1 : THERMAL_IMPLICIT_MAX_ITERATIONS) +
+              2 * n_wet
+
     for _ in 1:n_sub
         if verbose
             E_initial = 0.0
@@ -660,103 +725,118 @@ function _thermal_solve!(solver::ImplicitThermal,
             end
         end
 
-        # Start the iteration from the old profile.
+        # Rows from the start-of-sub-step state: a dry cell is written against its own
+        # temperature; a wet cell according to where its enthalpy sits on the freezing plateau.
         @inbounds for i in 1:n
-            T_it[i] = temperature[i]
+            M_eff[i] = M[i]
+            T_old[i] = temperature[i]
+            mode[i] = WET_CELL_DRY
+            if water[i] > 0.0
+                mode[i] = _wet_cell_mode(mp, H[i], M[i], water[i])
+                M_eff[i], T_old[i] = _wet_cell_row(mp, H[i], M[i], water[i], mode[i])
+            end
+            T_it[i] = mode[i] == WET_CELL_PINNED ? CtoK : T_old[i]
         end
 
-        # Under a constant heat capacity the interior rows are exactly linear, so a single
-        # elimination is exact and this outer pass never repeats. `:CuffeyPaterson` makes the
-        # chord capacities functions of the iterate, so the elimination is re-run until they
-        # settle.
-        n_outer = (mp.heat_capacity_method === :constant) ? 1 :
-                  THERMAL_IMPLICIT_MAX_ITERATIONS
-
-        for _ in 1:n_outer
+        for pass in 1:n_outer
             # Eliminate the interior rows bottom-up, expressing each as an affine function of
             # the cell above it: `T_i = rhs[i] + sup[i]*T_{i-1}`. Row 1 is the only nonlinear
-            # row, and it is the only one Newton then has to touch.
+            # row, and it is the only one Newton then has to touch. A pinned row is `T_i = CtoK`.
             @inbounds if n > 1
-                MC = M[n] * chord_heat_capacity(mp, temperature[n], T_it[n])
-                d = MC + A_face[n-1] + A_face[n]
-                sup[n] = A_face[n-1] / d
-                rhs[n] = (MC * temperature[n] + Q_sw[n] + A_face[n] * T_bottom) / d
+                if mode[n] == WET_CELL_PINNED
+                    sup[n] = 0.0
+                    rhs[n] = CtoK
+                else
+                    MC = M_eff[n] * chord_heat_capacity(mp, T_old[n], T_it[n])
+                    d = MC + A_face[n-1] + A_face[n]
+                    sup[n] = A_face[n-1] / d
+                    rhs[n] = (MC * T_old[n] + Q_sw[n] + A_face[n] * T_bottom) / d
+                end
 
                 for i in n-1:-1:2
-                    MC = M[i] * chord_heat_capacity(mp, temperature[i], T_it[i])
+                    if mode[i] == WET_CELL_PINNED
+                        sup[i] = 0.0
+                        rhs[i] = CtoK
+                        continue
+                    end
+                    MC = M_eff[i] * chord_heat_capacity(mp, T_old[i], T_it[i])
                     d = MC + A_face[i-1] + A_face[i] - A_face[i] * sup[i+1]
                     sup[i] = A_face[i-1] / d
-                    rhs[i] = (MC * temperature[i] + Q_sw[i] + A_face[i] * rhs[i+1]) / d
+                    rhs[i] = (MC * T_old[i] + Q_sw[i] + A_face[i] * rhs[i+1]) / d
                 end
             end
 
             # Newton on the scalar surface row. Each iteration is O(1): the interior is already
             # condensed into `rhs[2]`/`sup[2]`, so no sweep of the column is repeated here.
             T1 = @inbounds T_it[1]
-            # Damping state. `weight` is halved whenever the step stops shrinking, which turns a
-            # limit cycle into a contraction; `T1_best` retains the least-residual iterate so a
-            # cycle that is still running at the iteration cap is left at its best point rather
-            # than at whichever phase it happened to stop on. See
-            # `THERMAL_IMPLICIT_DAMPING_FLOOR`.
-            residual_previous = Inf
-            weight = 1.0
-            T1_best = T1
-            residual_best = Inf
-            for _ in 1:THERMAL_IMPLICIT_MAX_ITERATIONS
-                longwave_upward, heat_flux_sensible, heat_flux_latent, _ =
-                    _surface_energy_balance(T1, emissivity, sfc, cfs)
-                slope = _surface_energy_balance_slope(T1, emissivity, sfc, cfs,
-                    longwave_upward, heat_flux_sensible, heat_flux_latent)
+            if @inbounds mode[1] == WET_CELL_PINNED
+                T1 = CtoK
+            else
+                # Damping state. `weight` is halved whenever the step stops shrinking, which
+                # turns a limit cycle into a contraction; `T1_best` retains the least-residual
+                # iterate so a cycle that is still running at the iteration cap is left at its
+                # best point rather than at whichever phase it happened to stop on. See
+                # `THERMAL_IMPLICIT_DAMPING_FLOOR`.
+                residual_previous = Inf
+                weight = 1.0
+                T1_best = T1
+                residual_best = Inf
+                for _ in 1:THERMAL_IMPLICIT_MAX_ITERATIONS
+                    longwave_upward, heat_flux_sensible, heat_flux_latent, _ =
+                        _surface_energy_balance(T1, emissivity, sfc, cfs)
+                    slope = _surface_energy_balance_slope(T1, emissivity, sfc, cfs,
+                        longwave_upward, heat_flux_sensible, heat_flux_latent)
 
-                # Joules this sub-step, and the slope in J m-2 K-1.
-                Q_surface = longwave_downward +
-                            (longwave_upward + heat_flux_sensible + heat_flux_latent) * dt
-                Lambda = slope * dt
+                    # Joules this sub-step, and the slope in J m-2 K-1.
+                    Q_surface = longwave_downward +
+                                (longwave_upward + heat_flux_sensible + heat_flux_latent) * dt
+                    Lambda = slope * dt
 
-                @inbounds begin
-                    MC = M[1] * chord_heat_capacity(mp, temperature[1], T1)
-                    # No face above cell 1; the surface slope enters as `-Λ ≥ 0`.
-                    d = MC + A_face[1] - Lambda
-                    r = MC * temperature[1] + Q_sw[1] + (Q_surface - Lambda * T1)
-                    if n > 1
-                        # Substitute the condensed row 2.
-                        d -= A_face[1] * sup[2]
-                        r += A_face[1] * rhs[2]
-                    else
-                        # Cell 1 is also the last unknown, so the reservoir term lands here.
-                        r += A_face[1] * T_bottom
+                    @inbounds begin
+                        MC = M_eff[1] * chord_heat_capacity(mp, T_old[1], T1)
+                        # No face above cell 1; the surface slope enters as `-Λ ≥ 0`.
+                        d = MC + A_face[1] - Lambda
+                        r = MC * T_old[1] + Q_sw[1] + (Q_surface - Lambda * T1)
+                        if n > 1
+                            # Substitute the condensed row 2.
+                            d -= A_face[1] * sup[2]
+                            r += A_face[1] * rhs[2]
+                        else
+                            # Cell 1 is also the last unknown, so the reservoir term lands here.
+                            r += A_face[1] * T_bottom
+                        end
+                        T1_next = r / d
                     end
-                    T1_next = r / d
-                end
 
-                # The Newton step, before damping. This is the quantity the tolerance is defined
-                # on, so the convergence test is unchanged by the damping below.
-                residual = abs(T1_next - T1)
-                if residual < residual_best
-                    residual_best = residual
-                    T1_best = T1_next
-                end
-                converged = residual <= THERMAL_IMPLICIT_T_TOLERANCE
+                    # The Newton step, before damping. This is the quantity the tolerance is
+                    # defined on, so the convergence test is unchanged by the damping below.
+                    residual = abs(T1_next - T1)
+                    if residual < residual_best
+                        residual_best = residual
+                        T1_best = T1_next
+                    end
+                    converged = residual <= THERMAL_IMPLICIT_T_TOLERANCE
 
-                # A step that did not shrink means the iteration is cycling rather than
-                # converging. Halving the weight from there breaks the cycle; on the normal
-                # (quadratically convergent) path the residual falls every iteration, `weight`
-                # stays at 1, and `T1 + 1.0*(T1_next - T1)` is exactly `T1_next` — which is why
-                # this leaves converging solves bit-identical.
-                if residual >= residual_previous
-                    weight = max(weight * 0.5, THERMAL_IMPLICIT_DAMPING_FLOOR)
-                end
-                residual_previous = residual
+                    # A step that did not shrink means the iteration is cycling rather than
+                    # converging. Halving the weight from there breaks the cycle; on the normal
+                    # (quadratically convergent) path the residual falls every iteration,
+                    # `weight` stays at 1, and `T1 + 1.0*(T1_next - T1)` is exactly `T1_next`
+                    # — which is why this leaves converging solves bit-identical.
+                    if residual >= residual_previous
+                        weight = max(weight * 0.5, THERMAL_IMPLICIT_DAMPING_FLOOR)
+                    end
+                    residual_previous = residual
 
-                T1 = T1 + weight * (T1_next - T1)
-                converged && break
-            end
-            # A cycle still running at the cap is left at its least-residual iterate. Without
-            # this the accepted value is whichever phase of the cycle the loop stopped on, which
-            # can be the worse one. A converged solve satisfies the test and is untouched, since
-            # its final iterate *is* the least-residual one.
-            if residual_best > THERMAL_IMPLICIT_T_TOLERANCE
-                T1 = T1_best
+                    T1 = T1 + weight * (T1_next - T1)
+                    converged && break
+                end
+                # A cycle still running at the cap is left at its least-residual iterate.
+                # Without this the accepted value is whichever phase of the cycle the loop
+                # stopped on, which can be the worse one. A converged solve satisfies the test
+                # and is untouched, since its final iterate *is* the least-residual one.
+                if residual_best > THERMAL_IMPLICIT_T_TOLERANCE
+                    T1 = T1_best
+                end
             end
 
             # Forward-substitute back down the column.
@@ -769,7 +849,20 @@ function _thermal_solve!(solver::ImplicitThermal,
                     T_it[i] = Ti
                 end
             end
-            dT_max <= THERMAL_IMPLICIT_T_TOLERANCE && break
+
+            # A wet cell's row is right only if the enthalpy the solve gives it stays in the
+            # state the row was written for; otherwise rewrite the row and solve again.
+            mode_changed = n_wet > 0 && _update_wet_modes!(mode, M_eff, T_old, H, M, water,
+                T_it, Q_sw, A_face, T_bottom, n, emissivity, sfc, cfs, longwave_downward, dt,
+                mp)
+
+            chords_settled = (mp.heat_capacity_method === :constant) ||
+                             dT_max <= THERMAL_IMPLICIT_T_TOLERANCE
+            if !mode_changed && chords_settled
+                break
+            end
+            mode_changed && pass == n_outer && error("implicit thermal solve: the wet-cell " *
+                "states did not settle in $(n_outer) passes")
         end
 
         # Applied fluxes: the *true* nonlinear surface balance at the converged iterate, so the
@@ -805,13 +898,18 @@ function _thermal_solve!(solver::ImplicitThermal,
         end
         heat_flux_basal_cumulative += heat_flux_basal
 
+        # Matrix temperatures with the water counted liquid (see `calculate_temperature`).
         @inbounds for i in 1:n
-            temperature[i] = temperature_from_specific_enthalpy(mp, H[i] / M[i])
+            temperature[i] = temperature_from_specific_enthalpy(mp,
+                (H[i] - water[i] * h_water) / M[i])
         end
 
-        # Emissivity melt switch, held outside the Newton iteration so it cannot chatter.
+        # Emissivity melt switch, held outside the Newton iteration so it cannot chatter. It
+        # reads the solve temperature, which holds a wet surface at the melting point.
         if sfc.emissivity_melt_switch
-            if temperature[1] < (CtoK - T_MELT_SWITCH_TOLERANCE)
+            T1_solve = water[1] > 0.0 ? _wet_cell_temperature(mp, H[1], M[1], water[1]) :
+                       temperature[1]
+            if T1_solve < (CtoK - T_MELT_SWITCH_TOLERANCE)
                 emissivity = mp.emissivity
             else
                 emissivity = mp.emissivity_grain_radius_large
@@ -849,6 +947,105 @@ function _thermal_solve!(solver::ImplicitThermal,
     return longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
         heat_flux_basal_out, evaporation_condensation_out, EC_liquid_cumulative
 end
+
+# Wet-cell states of the implicit solve. `Float64` codes so the buffer resizes with the rest.
+const WET_CELL_DRY = 0.0      # dry, or wet with all of its water liquid: matrix mass, T ≥ CtoK
+const WET_CELL_PINNED = 1.0   # on the freezing plateau: T = CtoK
+const WET_CELL_FROZEN = 2.0   # all of its water frozen: matrix-plus-water mass, T < CtoK
+
+"""
+    _wet_cell_mode(mp, H, M, W) -> code
+
+State of a wet cell with enthalpy `H` on the freezing plateau of
+[`_wet_cell_temperature`](@ref): `WET_CELL_DRY` at or above `H_hi`, `WET_CELL_PINNED` between
+`H_lo` and `H_hi`, `WET_CELL_FROZEN` below `H_lo`.
+"""
+@inline function _wet_cell_mode(mp::ModelParameters, H::Float64, M::Float64, W::Float64)
+    H_lo = (M + W) * specific_enthalpy(mp, CtoK)
+    H >= H_lo + W * LF && return WET_CELL_DRY
+    H >= H_lo && return WET_CELL_PINNED
+    return WET_CELL_FROZEN
+end
+
+"""
+    _wet_cell_row(mp, H, M, W, mode) -> (M_eff, T_old)
+
+Mass and start temperature of the implicit row for a wet cell whose start-of-sub-step enthalpy
+is `H`, written for state `mode`, so that `M_eff·(h(T) − h(T_old))` is the cell's enthalpy
+change: the matrix alone with the water liquid (`WET_CELL_DRY`), or matrix and water together
+(`WET_CELL_FROZEN`). A pinned row has no heat-capacity term and returns `(M, CtoK)`.
+"""
+@inline function _wet_cell_row(mp::ModelParameters, H::Float64, M::Float64, W::Float64,
+    mode::Float64)
+    mode == WET_CELL_DRY &&
+        return M, temperature_from_specific_enthalpy(mp, (H - W * specific_enthalpy_water(mp)) / M)
+    mode == WET_CELL_FROZEN && return M + W, temperature_from_specific_enthalpy(mp, H / (M + W))
+    return M, CtoK
+end
+
+"""
+    _update_wet_modes!(mode, M_eff, T_old, H, M, water, T_it, Q_sw, A_face, T_bottom, n, emissivity, sfc, cfs, longwave_downward, dt, mp) -> changed
+
+Classify each wet cell by the enthalpy the current iterate `T_it` would give it, and rewrite
+the rows (`M_eff`, `T_old`) of those whose state differs from the one they were solved in.
+Returns whether any changed. `H` is the start-of-sub-step enthalpy and is not modified.
+"""
+function _update_wet_modes!(mode::Vector{Float64}, M_eff::Vector{Float64},
+    T_old::Vector{Float64}, H::Vector{Float64}, M::Vector{Float64},
+    water::AbstractVector{Float64}, T_it::Vector{Float64}, Q_sw::Vector{Float64},
+    A_face::Vector{Float64}, T_bottom::Float64, n::Int, emissivity::Float64,
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, longwave_downward::Float64, dt::Float64,
+    mp::ModelParameters)
+
+    lw, shf, lhf, _, _ = _surface_energy_balance(T_it[1], emissivity, sfc, cfs)
+    Q_surface = longwave_downward + (lw + shf + lhf) * dt
+    changed = false
+    F_prev = 0.0
+    for i in 1:n
+        F = i < n ? A_face[i] * (T_it[i+1] - T_it[i]) : A_face[n] * (T_bottom - T_it[n])
+        if water[i] > 0.0
+            H_new = H[i] + Q_sw[i] + F - F_prev + (i == 1 ? Q_surface : 0.0)
+            new_mode = _wet_cell_mode(mp, H_new, M[i], water[i])
+            if new_mode != mode[i]
+                mode[i] = new_mode
+                M_eff[i], T_old[i] = _wet_cell_row(mp, H[i], M[i], water[i], new_mode)
+                changed = true
+            end
+        end
+        F_prev = F
+    end
+    return changed
+end
+
+"""
+    _wet_cell_temperature(mp, H, M, W) -> T [K]
+
+Temperature of a cell of ice-matrix mass `M` and water mass `W` [kg m-2] whose enthalpy `H`
+[J m-2] counts the water as liquid, `H = M·h(T) + W·h_w` with `h_w` the melt-point water
+enthalpy. With `H_lo = (M + W)·h(273.15)` (all water frozen at the melting point) and
+`H_hi = H_lo + W·LF` (none frozen):
+
+- `H ≥ H_hi`: `T = h⁻¹((H − W·h_w)/M) ≥ 273.15`, the water all liquid;
+- `H_lo ≤ H < H_hi`: `T = 273.15`, with `(H_hi − H)/LF` of the water frozen;
+- `H < H_lo`: `T = h⁻¹(H/(M + W))`, all of the water frozen into the matrix.
+
+Continuous in `H`.
+"""
+@inline function _wet_cell_temperature(mp::ModelParameters, H::Float64, M::Float64,
+    W::Float64)
+    H_lo = (M + W) * specific_enthalpy(mp, CtoK)
+    H_hi = H_lo + W * LF
+    H >= H_hi && return temperature_from_specific_enthalpy(mp,
+        (H - W * specific_enthalpy_water(mp)) / M)
+    H >= H_lo && return CtoK
+    return temperature_from_specific_enthalpy(mp, H / (M + W))
+end
+
+# Solve temperature of a cell from its enthalpy: the dry map through the cached scaled
+# inverse, or `_wet_cell_temperature` when the cell holds water.
+@inline _cell_temperature(mp::ModelParameters, H::Float64, M_inv::Float64, M::Float64,
+    W::Float64) =
+    W > 0.0 ? _wet_cell_temperature(mp, H, M, W) : temperature_from_scaled_enthalpy(mp, H * M_inv)
 
 """
     _emissivity_initialize(grain_radius_surface, mp::ModelParameters)

@@ -3,7 +3,7 @@ module GEMB
 using DimensionalData
 using Dates
 using Statistics
-using FillArrays: Fill
+using FillArrays: Fill, Zeros
 import DataInterpolations
 
 # Physical constants
