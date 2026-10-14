@@ -532,8 +532,8 @@ function herron_langway_density(depth::Real, T::Real, accumulation::Real, ρ0::R
     ρs = Float64(ρ0) / 1000
     ρc = DENSITY_STAGE_TRANSITION / 1000
     A = Float64(accumulation) / 1000
-    k0 = 11.0 * exp(-10160.0 / (R_GAS * T))
-    k1 = 575.0 * exp(-21400.0 / (R_GAS * T))
+    k0 = _hl_k0(Float64(T))
+    k1 = _hl_k1(Float64(T))
     logit(ρ) = log(ρ / (ρi - ρ))
     h55 = (logit(ρc) - logit(ρs)) / (ρi * k0)
     Z = depth <= h55 ? exp(logit(ρs) + ρi * k0 * depth) :

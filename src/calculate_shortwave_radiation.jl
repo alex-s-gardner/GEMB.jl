@@ -78,12 +78,10 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             # convert effective radius [mm] to grain size [m]
             gsz = (grain_radius .* 2) ./ 1000
 
-            # Spectral fractions [0.3-0.8um 0.8-1.5um 1.5-2.8um] and the surface spectral
-            # albedos, which set how the net is shared between the bands.
-            sF = (0.606, 0.301, 0.093)
-            a1 = min(0.98, 0.95 - 1.58 * gsz[1]^0.5)
-            a2 = max(0.0, 0.95 - 15.4 * gsz[1]^0.5)
-            a3 = max(0.127, 0.88 + 346.3 * gsz[1] - 32.31 * gsz[1]^0.5)
+            # Spectral fractions and surface band albedos, which set how the net is shared
+            # between the bands.
+            sF = BRUN_LEFEBRE_SPECTRAL_FRACTIONS
+            a1, a2, a3 = _brun_lefebre_band_albedos(grain_radius[1])
             w = (sF[1] * (1 - a1), sF[2] * (1 - a2), sF[3] * (1 - a3))
             w_total = w[1] + w[2] + w[3]
             (all(>=(0.0), w) && w_total > 0.0) ||

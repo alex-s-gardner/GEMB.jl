@@ -31,15 +31,15 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     ri_scale = GRAVITY * cfs.wind_observation_height / wind_speed^2
 
     return _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs,
-        wind_speed, C, logM, logHT, logHQ, ri_scale)
+        C, logM, logHT, logHQ, ri_scale)
 end
 
 """
-    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, logM, logHT, logHQ, ri_scale)
+    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, C, logM, logHT, logHQ, ri_scale)
 
 Core of [`turbulent_heat_flux`](@ref) with the sub-timestep-invariant quantities
-(`wind_speed`, the neutral factor `C = κ²U`, the neutral roughness logs `logM`/`logHT`/`logHQ`,
-and `ri_scale = g·z_w/U²`) hoisted to the caller. `calculate_temperature` computes these once
+(the neutral factor `C = κ²U` at the floored wind speed, the neutral roughness logs
+`logM`/`logHT`/`logHQ`, and `ri_scale = g·z_w/U²`) hoisted to the caller. `calculate_temperature` computes these once
 per timestep and reuses them across all thermal sub-steps, where only `T_surface` changes.
 
 ## Fluxes
@@ -68,7 +68,7 @@ water at it.
 """
 @inline function _turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep,
-    wind_speed::Float64, C::Float64,
+    C::Float64,
     logM::Float64, logHT::Float64, logHQ::Float64, ri_scale::Float64)
 
     z_w = cfs.wind_observation_height
