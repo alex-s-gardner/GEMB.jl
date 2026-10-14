@@ -150,6 +150,8 @@ end
 end
 
 @testset "Rain event" begin
+    # Rain joins water[1] at the melt-point enthalpy; its sensible heat above 0 °C warms the
+    # matrix. Density and thickness do not change.
     n = 5
     t_vec = 260.0 * ones(n)
     dz = 0.1 * ones(n)
@@ -159,107 +161,80 @@ end
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
-
-    mp = GEMB.ModelParameters(
-        new_snow_method=:Constant150,
-        column_dzmin=0.05,
-        density_ice=917.0,
-        albedo_snow=0.85,
-        albedo_method=:GardnerSharp,
-        rain_temperature_threshold=273.15,
-    )
-    # temperature_air > 273.15 -> Rain
-    cfs = _make_accum_cfs(precipitation=10.0, temperature_air=275.0, wind_speed=0.0)
-
-    # Constants from GEMB
-    lf = GEMB.LF
-    ci = mp.heat_capacity_ice
-
-    old_mass = density[1] * dz[1]
-    old_dz1 = dz[1]
-    old_t1 = t_vec[1]
-
-    # `calculate_accumulation` mutates its column arguments in place, so the pristine state
-    # is captured here for the second, `rain_heat_capacity=:ice` call below.
     pristine = map(copy, (t_vec, dz, density, water, grain_radius,
                           grain_dendricity, grain_sphericity, age))
 
-    (t_out, dz_out, d_out, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
-        t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age,
-        cfs, mp, false)
-
-    # Rain output flag
-    @test ra_out == 10.0
-
-    # Mass update: thickness stays same, density increases
-    new_mass = old_mass + 10.0
-    @test d_out[1] ≈ new_mass / old_dz1 atol = 1e-10
-    @test dz_out[1] ≈ old_dz1 atol = 1e-10
-
-    # Temperature update includes latent heat logic. Rain arrives at 275 K, so it carries
-    # sensible heat above the melting point as well as `LF`; under the default
-    # `rain_heat_capacity = :water` that sensible part is at the *water* heat capacity, not
-    # the ice one. Expressed as the equivalent temperature the mixing algebra sees:
-    # `T_liq = CtoK + LF/c_ice + c_water*(T_air - CtoK)/c_ice`.
-    cw = GEMB.HEAT_CAPACITY_WATER
-    term_rain = 10.0 * (GEMB.CtoK + lf / ci + cw * (275.0 - GEMB.CtoK) / ci)
-    term_snow = old_t1 * old_mass
-    expected_t = (term_rain + term_snow) / new_mass
-
-    @test t_out[1] ≈ expected_t atol = 1e-8
-
-    # `rain_heat_capacity = :ice` reproduces the pre-Fix-5 convention exactly, so the old
-    # reference is retained as the check that the gate is a faithful selector.
-    mp_ice = GEMB.ModelParameters(
-        new_snow_method=:Constant150, column_dzmin=0.05, density_ice=917.0,
-        albedo_snow=0.85, albedo_method=:GardnerSharp,
-        rain_temperature_threshold=273.15, rain_heat_capacity=:ice,
-    )
-    t_ice = GEMB.calculate_accumulation(pristine..., cfs, mp_ice, false)[1]
-    @test t_ice[1] ≈ (10.0 * (275.0 + lf / ci) + term_snow) / new_mass atol = 1e-8
-    # Water's larger heat capacity means more energy arrives with the same rain, so the
-    # default warms the surface cell strictly more.
-    @test t_out[1] > t_ice[1]
+    cfs = _make_accum_cfs(precipitation=10.0, temperature_air=275.0, wind_speed=0.0)
+    for (rain_heat_capacity, c_rain) in ((:water, GEMB.HEAT_CAPACITY_WATER),
+                                         (:ice, 2102.0))
+        mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05,
+            density_ice=917.0, rain_temperature_threshold=273.15,
+            rain_heat_capacity=rain_heat_capacity)
+        (t_out, dz_out, d_out, w_out, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
+            map(copy, pristine)..., cfs, mp, true)
+        @test ra_out == 10.0
+        @test w_out[1] == 10.0
+        @test d_out[1] == 400.0
+        @test dz_out[1] == 0.1
+        M1 = 400.0 * 0.1
+        @test M1 * mp.heat_capacity_ice * (t_out[1] - 260.0) ≈
+              10.0 * c_rain * (275.0 - GEMB.CtoK) rtol = 1e-12
+    end
 end
 
-@testset "Rain density cap" begin
-    # Huge rain event causing density to exceed ice density -> clamp and expand
-    n = 5
-    t_vec = 260.0 * ones(n)
-    dz = 0.1 * ones(n)
-    density = 400.0 * ones(n)
-    density[1] = 900.0  # Near ice density
-    dz[1] = 0.1         # Mass = 90
+@testset "Rain does not compact snow" begin
+    # 5 kg of rain at 275.15 K on a 0.05 m, 350 kg m-3 cell at 0 °C, through accumulation
+    # and melt. The cell keeps its density; its water gains the rain plus the ice its
+    # sensible heat melts, 5·c_w·2/LF; nothing is refrozen; and the deep column below holds
+    # all of the water, so nothing runs off.
+    n = 20
+    t_vec = fill(GEMB.CtoK, n)
+    dz = fill(0.05, n)
+    density = fill(350.0, n)
     water = zeros(n)
-    grain_radius = 0.5 * ones(n)
-    grain_dendricity = 0.5 * ones(n)
-    grain_sphericity = 0.5 * ones(n)
-    age = zeros(n)
+    gr, gd, gs, age = fill(0.5, n), fill(0.0, n), fill(0.5, n), zeros(n)
+    mp = GEMB.ModelParameters(new_snow_method=:Constant150, density_ice=917.0,
+        rain_temperature_threshold=273.15, melt_geometry=:thickness)
+    cfs = _make_accum_cfs(precipitation=5.0, temperature_air=275.15, wind_speed=0.0)
+    t1, dz1, ρ1, w1, gr1, gd1, gs1, a1, rain = GEMB.calculate_accumulation(t_vec, dz,
+        density, water, gr, gd, gs, age, cfs, mp, true)
+    @test ρ1[1] == 350.0
+    @test dz1[1] == 0.05
+    t2, dz2, ρ2, w2, _, _, _, _, melt, _, runoff, refreeze, _ = GEMB.calculate_melt(t1, dz1,
+        ρ1, w1, gr1, gd1, gs1, a1, mp, true)
+    melted = 5.0 * GEMB.HEAT_CAPACITY_WATER * 2.0 / GEMB.LF
+    @test all(ρ2 .== 350.0)
+    @test sum(w2) ≈ 5.0 + melted rtol = 1e-6
+    @test melt ≈ melted rtol = 1e-9
+    @test refreeze == 0.0
+    @test runoff == 0.0
+    @test sum(dz2 .* ρ2) ≈ n * 0.05 * 350.0 - melted rtol = 1e-12
+end
 
-    mp = GEMB.ModelParameters(
-        new_snow_method=:Constant150,
-        column_dzmin=0.05,
-        density_ice=917.0,
-        albedo_snow=0.85,
-        albedo_method=:GardnerSharp,
-        rain_temperature_threshold=273.15,
-    )
-    # Huge rain
-    cfs = _make_accum_cfs(precipitation=500.0, temperature_air=275.0, wind_speed=0.0)
-
-    (_, dz_out, d_out, _, _, _, _, _, _) = GEMB.calculate_accumulation(
-        t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age,
-        cfs, mp, false)
-
-    # Density should be capped at ice density
-    @test d_out[1] ≈ 917.0 atol = 1e-10
-
-    # Thickness should expand to conserve mass
-    total_mass = 90.0 + 500.0
-    expected_dz = total_mass / 917.0
-    @test dz_out[1] ≈ expected_dz atol = 1e-10
+@testset "Rain on cold snow refreezes and is counted" begin
+    # 2 kg of rain at 274.15 K on 17.5 kg of snow at -10 °C. The rain's sensible heat warms
+    # the cell, and the remaining cold content refreezes [c·M·10 − P·c_w·1]/LF of the rain.
+    n = 10
+    t_vec = fill(GEMB.CtoK - 10.0, n)
+    dz = fill(0.05, n)
+    density = fill(350.0, n)
+    gr, gd, gs, age = fill(0.5, n), fill(0.0, n), fill(0.5, n), zeros(n)
+    mp = GEMB.ModelParameters(new_snow_method=:Constant150, density_ice=917.0,
+        rain_temperature_threshold=273.15)
+    cfs = _make_accum_cfs(precipitation=2.0, temperature_air=274.15, wind_speed=0.0)
+    out = GEMB.calculate_accumulation(t_vec, dz, density, zeros(n), gr, gd, gs, age, cfs, mp,
+        true)
+    M = 0.05 * 350.0
+    w_before = sum(out[4])
+    t2, dz2, ρ2, w2, _, _, _, _, melt, _, runoff, refreeze, _ =
+        GEMB.calculate_melt(out[1:8]..., mp, true)
+    c = mp.heat_capacity_ice
+    expected = (c * M * 10.0 - 2.0 * GEMB.HEAT_CAPACITY_WATER * 1.0) / GEMB.LF
+    @test refreeze ≈ expected rtol = 1e-9
+    @test melt == 0.0
+    @test t2[1] ≈ GEMB.CtoK atol = 1e-9
+    # Liquid budget: melt + rain − refreeze − runoff = change in column water.
+    @test melt + out[9] - refreeze - runoff ≈ sum(w2) - 0.0 atol = 1e-12
 end
 
 @testset "New snow density methods" begin

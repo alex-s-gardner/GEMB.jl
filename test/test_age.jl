@@ -224,7 +224,7 @@ end
 
     (_, _, _, _, _, _, _, age_out, _, _, _, freeze, depth) =
         GEMB.calculate_melt(temperature, fill(0.1, n), fill(400.0, n), water,
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age), 0.0, mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age), mp, false)
 
     @test freeze > 0.0
     @test depth > 0.0
@@ -257,7 +257,7 @@ end
     cf = _age_forcing(n_days=n_days,
         temperature=258.0 .+ 17.0 .* seasonal,
         shortwave=100.0 .+ 200.0 .* max.(0.0, seasonal),
-        precipitation=3.0, longwave=240.0, vapor_pressure=200.0)
+        precipitation=3.0, longwave=300.0, vapor_pressure=200.0)
     profile = initialize_profile(mp, cf)
 
     out = gemb(profile, cf, mp)

@@ -107,7 +107,7 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, rain, mp::ModelParameters, verbose::Bool)
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -176,6 +176,10 @@ delay runoff rather than models that percolate deeper.
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
 age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
 
+`melt_total` is the ice melted this timestep and `freeze_total` all liquid water refrozen,
+including rain, which arrives as pore water (see [`calculate_accumulation`](@ref)). Over any
+period `melt + rain − refreeze − runoff` equals the change in column liquid water.
+
 # Age transport
 
 `age` [d] is the mass-weighted mean age of all mass in a cell, matrix and pore water
@@ -219,7 +223,7 @@ Arrays may shrink (cells deleted when mass=0).
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, age::Vector{Float64}, rain::Float64,
+    grain_sphericity::Vector{Float64}, age::Vector{Float64},
     mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace())
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
@@ -388,7 +392,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
         melt_surface = melt[1]
-        melt_total = max(0.0, melt_sum - rain)
+        melt_total = melt_sum
 
         # initialize refreeze, runoff, flux_dn and water_delta vectors
         runoff = _fit_buffer!(workspace.runoff, m)
