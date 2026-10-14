@@ -83,7 +83,8 @@ water at it.
     psi_h_T = stability_psi_h(ζ * z_T / z_w)
     coefM = logM - stability_psi_m(ζ) + stability_psi_m(ζ * z0 / z_w)
     coefHT = logHT - psi_h_T + stability_psi_h(ζ * zT / z_w)
-    coefHQ = logHQ - psi_h_T + stability_psi_h(ζ * zQ / z_w)
+    # GEMB's scalar roughness lengths are equal, which makes the two coefficients identical.
+    coefHQ = zQ == zT ? coefHT : logHQ - psi_h_T + stability_psi_h(ζ * zQ / z_w)
 
     # Sensible Heat Flux [W m-2]
     heat_flux_sensible = density_air * C * HEAT_CAPACITY_AIR *
@@ -150,11 +151,14 @@ Högström's (1988) coefficients (see [`stability_psi_m`](@ref)).
     rTs = zT / z_w
     for _ in 1:MO_NEWTON_STEPS
         ζ = sgn * exp(s)
-        Fm = logM - stability_psi_m(ζ) + stability_psi_m(ζ * r0)
-        Fh = logHT - stability_psi_h(ζ * rT) + stability_psi_h(ζ * rTs)
-        R = s + log(Fh) - 2 * log(Fm) - log_abs_Ri
-        dR = 1 + (stability_phi_h(ζ * rT) - stability_phi_h(ζ * rTs)) / Fh -
-             2 * (stability_phi_m(ζ) - stability_phi_m(ζ * r0)) / Fm
+        ψm, φm = _stability_m(ζ)
+        ψm0, φm0 = _stability_m(ζ * r0)
+        ψhT, φhT = _stability_h(ζ * rT)
+        ψh0, φh0 = _stability_h(ζ * rTs)
+        Fm = logM - ψm + ψm0
+        Fh = logHT - ψhT + ψh0
+        R = s + log(Fh / (Fm * Fm)) - log_abs_Ri
+        dR = 1 + (φhT - φh0) / Fh - 2 * (φm - φm0) / Fm
         s -= R / dR
     end
     return max(sgn * exp(s), ZETA_UNSTABLE_MIN)
@@ -193,22 +197,8 @@ enter the transfer functions as `ln(z/z₀) − Ψ(z/L) + Ψ(z₀/L)`.
 - Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces for
   atmospheric models. *J. Appl. Meteorol.* 30, 327-341.
 """
-@inline function stability_psi_m(ζ::Float64)
-    if ζ > 0.0
-        return -(_BH_A * ζ + _BH_B * (ζ - _BH_C / _BH_D) * exp(-_BH_D * ζ) +
-                 _BH_B * _BH_C / _BH_D)
-    end
-    x = (1.0 - 19.0 * ζ)^0.25
-    return 2.0 * log((1 + x) / 2.0) + log((1 + x^2) / 2.0) - 2 * atan(x) + pi / 2
-end
-
-@inline function stability_psi_h(ζ::Float64)
-    if ζ > 0.0
-        return -((1 + 2 * _BH_A * ζ / 3)^1.5 + _BH_B * (ζ - _BH_C / _BH_D) * exp(-_BH_D * ζ) +
-                 _BH_B * _BH_C / _BH_D - 1.0)
-    end
-    return 2.0 * log((1.0 + (1.0 - 11.6 * ζ)^0.5) / 2.0)
-end
+@inline stability_psi_m(ζ::Float64) = _stability_m(ζ)[1]
+@inline stability_psi_h(ζ::Float64) = _stability_h(ζ)[1]
 
 """
     stability_phi_m(ζ), stability_phi_h(ζ)
@@ -219,13 +209,33 @@ Profile functions `φ = 1 − ζ·dΨ/dζ` matching [`stability_psi_m`](@ref) an
 `φ_h = 1 + ζ[a(1 + 2aζ/3)^{1/2} + b e^{−dζ}(1 + c − dζ)]`; Högström (1988) when unstable,
 `φ_m = (1 − 19ζ)^{−1/4}` and `φ_h = (1 − 11.6ζ)^{−1/2}`.
 """
-@inline function stability_phi_m(ζ::Float64)
-    ζ > 0.0 && return 1 + ζ * (_BH_A + _BH_B * exp(-_BH_D * ζ) * (1 + _BH_C - _BH_D * ζ))
-    return (1.0 - 19.0 * ζ)^(-0.25)
+@inline stability_phi_m(ζ::Float64) = _stability_m(ζ)[2]
+@inline stability_phi_h(ζ::Float64) = _stability_h(ζ)[2]
+
+# `(Ψ, φ)` together: the Newton step in `obukhov_stability` needs both at each argument, and
+# they share their one transcendental (`exp(−dζ)` stable, the square roots unstable).
+@inline function _stability_m(ζ::Float64)
+    if ζ > 0.0
+        e = exp(-_BH_D * ζ)
+        ψ = -(_BH_A * ζ + _BH_B * (ζ - _BH_C / _BH_D) * e + _BH_B * _BH_C / _BH_D)
+        φ = 1 + ζ * (_BH_A + _BH_B * e * (1 + _BH_C - _BH_D * ζ))
+        return ψ, φ
+    end
+    x2 = sqrt(1.0 - 19.0 * ζ)          # x_m²
+    x = sqrt(x2)                       # x_m = (1 − 19ζ)^(1/4)
+    ψ = 2.0 * log((1 + x) / 2.0) + log((1 + x2) / 2.0) - 2 * atan(x) + pi / 2
+    return ψ, 1.0 / x
 end
 
-@inline function stability_phi_h(ζ::Float64)
-    ζ > 0.0 && return 1 + ζ * (_BH_A * sqrt(1 + 2 * _BH_A * ζ / 3) +
-                               _BH_B * exp(-_BH_D * ζ) * (1 + _BH_C - _BH_D * ζ))
-    return (1.0 - 11.6 * ζ)^(-0.5)
+@inline function _stability_h(ζ::Float64)
+    if ζ > 0.0
+        e = exp(-_BH_D * ζ)
+        y = 1 + 2 * _BH_A * ζ / 3
+        sy = sqrt(y)
+        ψ = -(y * sy + _BH_B * (ζ - _BH_C / _BH_D) * e + _BH_B * _BH_C / _BH_D - 1.0)
+        φ = 1 + ζ * (_BH_A * sy + _BH_B * e * (1 + _BH_C - _BH_D * ζ))
+        return ψ, φ
+    end
+    x = sqrt(1.0 - 11.6 * ζ)           # x_h
+    return 2.0 * log((1.0 + x) / 2.0), 1.0 / x
 end
