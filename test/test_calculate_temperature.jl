@@ -1049,3 +1049,100 @@ end
     end
     @test T1[1] ≈ T1[2] atol = 2.0
 end
+
+# A forcing with no turbulent or radiative exchange at surface temperature `T_s`: air at
+# `T_s`, saturated over ice, calm, no longwave. Used with `emissivity = 0`.
+_quiet_cfs(dt, T_s) = GEMB.ClimateForcingStep(dt, T_s, 100000.0, 0.0, 0.0, 0.0, 0.0,
+    GEMB.saturation_vapor_pressure_ice(T_s), T_s, 0.0, 0.0, 2.0, 2.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+@testset "Semi-infinite solid under constant surface flux" begin
+    # F = 100 W m-2 absorbed in a 1 cm surface cell of solid ice 2 m deep, constant K and c.
+    # After 6 h the profile matches
+    #   T(z,t) = T₀ + (2F/k)√(κt/π)·exp(−z²/4κt) − (Fz/k)·erfc(z/2√(κt))
+    # to 2% of the surface rise.
+    erfc_(x) = begin   # Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
+        t = 1 / (1 + 0.3275911 * x)
+        t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 +
+            t * (-1.453152027 + t * 1.061405429)))) * exp(-x^2)
+    end
+    n = 200
+    dz = fill(0.01, n)
+    ρ = 917.0
+    T0 = 250.0
+    F = 100.0
+    t_end = 6 * 3600.0
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
+            thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        k = GEMB.thermal_conductivity(fill(T0, n), fill(ρ, n), mp)[1]
+        κ = k / (ρ * mp.heat_capacity_ice)
+        sw = zeros(n); sw[1] = F
+        T = fill(T0, n)
+        ws = ThermalWorkspace()
+        for _ in 1:6
+            T, = GEMB.calculate_temperature(T, dz, fill(ρ, n), 0.0, fill(1.0, n), sw,
+                _quiet_cfs(3600.0, T0), mp, true, ws)
+        end
+        z = cumsum(dz) .- dz ./ 2
+        analytic = [T0 + (2F / k) * sqrt(κ * t_end / π) * exp(-zi^2 / (4κ * t_end)) -
+                    (F * zi / k) * erfc_(zi / (2 * sqrt(κ * t_end))) for zi in z]
+        rise = analytic[1] - T0
+        @test maximum(abs.(T[1:60] .- analytic[1:60])) < 0.02 * rise
+        @test T[end] == T0
+    end
+end
+
+@testset "Discrete linear steady state" begin
+    # Uniform K and dz, gradient F/K downward, F absorbed in cell 1, no surface exchange:
+    # every face carries F, so one step leaves T unchanged and the basal flux is −F.
+    n = 30
+    dz = fill(0.05, n)
+    ρ = 600.0
+    F = 20.0
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
+            thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        K = GEMB.thermal_conductivity(fill(250.0, n), fill(ρ, n), mp)[1]
+        z = cumsum(dz) .- dz ./ 2
+        T_in = [250.0 - (F / K) * (z[i] - z[1]) for i in 1:n]
+        sw = zeros(n); sw[1] = F
+        T, _, _, _, basal, = GEMB.calculate_temperature(copy(T_in), dz, fill(ρ, n), 0.0,
+            fill(1.0, n), sw, _quiet_cfs(3600.0, T_in[1]), mp, true)
+        @test maximum(abs.(T .- T_in)) < 1e-8
+        @test basal ≈ -F atol = 1e-8
+    end
+end
+
+@testset "Melting-point clamp on the surface flux" begin
+    # A surface cell above 273.15 K sees the surface fluxes of a 273.15 K surface, and its
+    # excess enthalpy is exactly what it received: M₁·c·(T₁ − 273.15) = Q·dt.
+    n = 2
+    dz = [0.05, 50.0]
+    ρ = 400.0
+    T_in = [GEMB.CtoK, GEMB.CtoK]
+    lw_down = 300.0
+    cfs = GEMB.ClimateForcingStep(3600.0, 278.0, 90000.0, 0.0, 6.0, 0.0, lw_down, 500.0,
+        270.0, 6.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    sw = [400.0, 0.0]
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        T, lw_up, shf, lhf, basal, = GEMB.calculate_temperature(copy(T_in), dz, fill(ρ, n),
+            0.0, fill(0.5, n), sw, cfs, mp, true)
+        @test T[1] > GEMB.CtoK
+        ε = mp.emissivity
+        @test lw_up ≈ ε * GEMB.SB * GEMB.CtoK^4 + (1 - ε) * lw_down rtol = 1e-12
+        z0 = GEMB.surface_roughness(mp, ρ, 0.0)
+        shf_0, lhf_0, _ = GEMB.turbulent_heat_flux(GEMB.CtoK,
+            GEMB.air_density(cfs.pressure_air, cfs.temperature_air), z0,
+            mp.surface_roughness_effective_ratio * z0, mp.surface_roughness_effective_ratio * z0,
+            cfs)
+        @test shf ≈ shf_0 rtol = 1e-12
+        @test lhf ≈ lhf_0 rtol = 1e-12
+        Q = sw[1] + lw_down - lw_up + shf + lhf + basal
+        @test ρ * dz[1] * mp.heat_capacity_ice * (T[1] - GEMB.CtoK) ≈ Q * 3600.0 rtol = 1e-9
+    end
+end
