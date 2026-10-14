@@ -13,7 +13,7 @@ and the initial-guess one (`_seb_annual_melt`), so both use one expression.
 """
     saturation_vapor_pressure_ice(T) -> e_s [Pa]
 
-Saturation vapour pressure over ice, Murray (1967), `610.78·exp(21.8745584·(T-273.16)/(T-7.66))`
+Saturation vapor pressure over ice, Murray (1967), `610.78·exp(21.8745584·(T-273.16)/(T-7.66))`
 with `T` in kelvin. Within 0.5% of Murphy & Koop (2005) from 255 to 273 K; 1.1% low at 243 K
 and 1.9% low at 233 K.
 
@@ -25,7 +25,7 @@ temperature, for a sub-freezing surface) and by [`blowing_snow_sublimation_rate`
 # References
 - Murray, F. W. (1967). On the computation of saturation vapor pressure.
   *J. Appl. Meteorol.* 6, 203-204.
-- Murphy, D. M. and Koop, T. (2005). Review of the vapour pressures of ice and supercooled
+- Murphy, D. M. and Koop, T. (2005). Review of the vapor pressures of ice and supercooled
   water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565.
 """
 @inline saturation_vapor_pressure_ice(T::Real) =

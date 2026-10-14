@@ -601,8 +601,8 @@ end
 
 @testset "Liquid budget over a run with rain, melt and refreeze" begin
     # Over any run, melt + rain − refreeze − runoff equals the change in column liquid water.
-    # The air holds exactly the saturation vapour pressure over water at 0 °C, so a melting
-    # surface exchanges no vapour with its liquid water and the budget has no fifth term.
+    # The air holds exactly the saturation vapor pressure over water at 0 °C, so a melting
+    # surface exchanges no vapor with its liquid water and the budget has no fifth term.
     n = 365
     time = DateTime(2001, 1, 1) .+ Day.(0:n-1)
     seasonal = cos.(2π .* (1:n) ./ 365.0 .- π)

@@ -166,7 +166,7 @@ end
     @test all(new_state.density .>= 300.0)
 end
 
-@testset "Vapour exchange uses the phase of its latent heat" begin
+@testset "Vapor exchange uses the phase of its latent heat" begin
     mp = _make_core_mp()
     h_w = GEMB.specific_enthalpy_water(mp)
     h_i0 = GEMB.specific_enthalpy(mp, GEMB.CtoK)
@@ -224,7 +224,7 @@ end
 
 @testset "Condensation on a melting surface closes the column energy budget" begin
     # Humid warm air over a melting, wet surface condenses onto it. `verbose = true` makes
-    # gemb_core check the column energy against the vapour enthalpy above.
+    # gemb_core check the column energy against the vapor enthalpy above.
     temperature = fill(GEMB.CtoK, 10)
     state = merge(_make_core_state(), (temperature=temperature, water=[0.3; zeros(9)]))
     cfs = GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=280.0, pressure_air=100000.0,

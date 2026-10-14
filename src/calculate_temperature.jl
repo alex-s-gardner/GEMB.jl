@@ -14,7 +14,7 @@ Sub-time steps are determined by Von Neumann stability analysis.
 
 Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)`.
 
-`evaporation_condensation` [kg m-2, positive for deposition or condensation] is the vapour mass
+`evaporation_condensation` [kg m-2, positive for deposition or condensation] is the vapor mass
 exchanged over the step. `evaporation_condensation_liquid` is the part exchanged in sub-steps
 whose latent heat was `LV` (a surface at the melting point), which is exchanged with liquid
 water; the rest, at `LS`, is exchanged with ice. See [`apply_vapor_exchange!`](@ref).
