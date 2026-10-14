@@ -316,14 +316,21 @@ end
 end
 
 @testset "Saturation vapor pressure over ice" begin
-    @test GEMB.saturation_vapor_pressure_ice(273.16) ≈ 610.78 rtol = 1e-14
-    # Murphy & Koop (2005) eq. 7. Murray's (1967) form is within 0.5% of it from 255 K up and
-    # falls 1.9% low by 233 K, as its docstring states.
-    mk(T) = exp(9.550426 - 5723.265 / T + 3.53068 * log(T) - 0.00728332 * T)
-    for T in 255.0:1.0:273.0
-        @test GEMB.saturation_vapor_pressure_ice(T) ≈ mk(T) rtol = 0.005
+    # Murphy & Koop (2005) eq. 7 in closed form, 611.657 Pa at the triple point.
+    T = 273.16
+    @test GEMB.saturation_vapor_pressure_ice(T) ≈
+          exp(9.550426 - 5723.265 / T + 3.53068 * log(T) - 0.00728332 * T) rtol = 1e-15
+    @test GEMB.saturation_vapor_pressure_ice(273.16) ≈ 611.657 rtol = 1e-4
+    # Against the IAPWS (2011) sublimation curve (Wagner et al., 2011, J. Phys. Chem. Ref.
+    # Data 40, 043103), which Murphy & Koop's eq. 7 reproduces to better than 0.1%.
+    function iapws(T)
+        θ = T / 273.16
+        a = (-0.212144006e2, 0.273203819e2, -0.610598130e1)
+        b = (0.333333333e-2, 0.120666667e1, 0.170333333e1)
+        return 611.657 * exp(sum(a[i] * θ^b[i] for i in 1:3) / θ)
     end
-    for T in 233.0:1.0:255.0
-        @test GEMB.saturation_vapor_pressure_ice(T) ≈ mk(T) rtol = 0.02
+    for T in 200.0:5.0:273.15
+        @test GEMB.saturation_vapor_pressure_ice(T) ≈ iapws(T) rtol = 1e-3
     end
 end
+

@@ -13,23 +13,23 @@ and the initial-guess one (`_seb_annual_melt`), so both use one expression.
 """
     saturation_vapor_pressure_ice(T) -> e_s [Pa]
 
-Saturation vapor pressure over ice, Murray (1967), `610.78·exp(21.8745584·(T-273.16)/(T-7.66))`
-with `T` in kelvin. Within 0.5% of Murphy & Koop (2005) from 255 to 273 K; 1.1% low at 243 K
-and 1.9% low at 233 K.
+Saturation vapor pressure over ice, Murphy & Koop (2005) eq. 7, with `T` in kelvin:
+
+    ln(e_s) = 9.550426 − 5723.265/T + 3.53068·ln(T) − 0.00728332·T
+
+valid above 110 K; 611.657 Pa at the triple point.
 
 Shared by the latent-heat flux in [`turbulent_heat_flux`](@ref) (evaluated at the surface
 temperature, for a sub-freezing surface) and by [`blowing_snow_sublimation_rate`](@ref)
 (evaluated at the air temperature). Companion of
-[`saturation_vapor_pressure_water`](@ref), which the flux uses above freezing.
+[`saturation_vapor_pressure_water`](@ref), which the flux uses at the melting point.
 
 # References
-- Murray, F. W. (1967). On the computation of saturation vapor pressure.
-  *J. Appl. Meteorol.* 6, 203-204.
 - Murphy, D. M. and Koop, T. (2005). Review of the vapor pressures of ice and supercooled
-  water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565.
+  water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565. Eq. 7.
 """
 @inline saturation_vapor_pressure_ice(T::Real) =
-    610.78 * exp(21.8745584 * (T - CtoK - 0.01) / (T - 7.66))
+    exp(9.550426 - 5723.265 / T + 3.53068 * log(T) - 0.00728332 * T)
 
 """
     saturation_vapor_pressure_water(T) -> e_s [Pa]
