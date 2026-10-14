@@ -271,3 +271,21 @@ function decyear2datenum(decyear)
     return datenum_out
 end
 
+
+"""
+    saturation_vapor_pressure_ice_derivative(T) -> de_s/dT [Pa K-1]
+
+Temperature derivative of [`saturation_vapor_pressure_ice`](@ref),
+`e_s·(5723.265/T² + 3.53068/T − 0.00728332)`.
+"""
+@inline saturation_vapor_pressure_ice_derivative(T::Real) =
+    saturation_vapor_pressure_ice(T) * (5723.265 / T^2 + 3.53068 / T - 0.00728332)
+
+"""
+    saturation_vapor_pressure_water_derivative(T) -> de_s/dT [Pa K-1]
+
+Temperature derivative of [`saturation_vapor_pressure_water`](@ref),
+`e_s·17.2693882·(273.16 − 35.86)/(T − 35.86)²`.
+"""
+@inline saturation_vapor_pressure_water_derivative(T::Real) =
+    saturation_vapor_pressure_water(T) * 17.2693882 * (CtoK + 0.01 - 35.86) / (T - 35.86)^2

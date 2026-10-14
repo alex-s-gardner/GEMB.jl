@@ -83,23 +83,20 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     # determine emissivity
     emissivity, emissivity_melt_switch = _emissivity_initialize(grain_radius[1], mp)
 
-    # zT and zQ are percentage of z0
+    # The scalar roughness length for heat and moisture is a fraction of z0.
     zT = z0 * mp.surface_roughness_effective_ratio
-    zQ = z0 * mp.surface_roughness_effective_ratio
 
     # minimum wind speed to avoid division by zero in turbulent flux calculations
     min_wind_speed = 0.01
 
-    # Sub-timestep-invariant turbulent-flux quantities (only T_surface changes
-    # across sub-steps). Hoisted here and passed to _turbulent_heat_flux so the
-    # bulk coefficient, Richardson-number scale, and roughness logs are computed once per
-    # timestep rather than once per sub-step.
+    # Sub-timestep-invariant turbulent-flux quantities (only T_surface changes across
+    # sub-steps): the bulk coefficient κ²U, the Richardson-number scale g·z_w/U², and the
+    # stability table for these heights and roughness lengths.
     thf_wind_speed = max(cfs.wind_speed, min_wind_speed)
     thf_C = VON_KARMAN^2 * thf_wind_speed
-    thf_logM = log(cfs.wind_observation_height / z0)
-    thf_logHT = log(cfs.temperature_observation_height / zT)
-    thf_logHQ = log(cfs.temperature_observation_height / zQ)
     thf_ri_scale = GRAVITY * cfs.wind_observation_height / thf_wind_speed^2
+    table = _stability_table!(workspace, cfs.wind_observation_height,
+        cfs.temperature_observation_height, z0, zT)
 
     ## THERMAL CONDUCTIVITY (per `mp.thermal_conductivity_method`; see
     ## `thermal_conductivity` for the five fits and their sources)
@@ -108,8 +105,8 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     _resize_workspace!(workspace, length(density))
     K = thermal_conductivity!(workspace.conductivity, temperature, density, mp)
 
-    sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
-        thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
+    sfc = _ThermalSurface(density_air, emissivity, emissivity_melt_switch, thf_C, thf_ri_scale,
+        table)
 
     if water === nothing
         water_cells = Zeros(m)
@@ -137,23 +134,17 @@ end
     _ThermalSurface
 
 Sub-timestep-invariant surface quantities, computed once per `calculate_temperature` call and
-handed to the thermal solver. `isbits`, so it is stack-allocated and the field reads fold away.
-
-Carries only the surface energy balance's own inputs — roughness lengths, air density, the
-hoisted turbulent-flux factors, and the emissivity state. Diagnostics travel separately.
+handed to the thermal solver: the surface energy balance's own inputs — air density, the hoisted
+turbulent-flux factors, the emissivity state, and the [`StabilityTable`](@ref) for this step's
+heights and roughness. Diagnostics travel separately.
 """
 struct _ThermalSurface
     density_air::Float64
-    z0::Float64
-    zT::Float64
-    zQ::Float64
     emissivity::Float64
     emissivity_melt_switch::Bool
     C::Float64
-    logM::Float64
-    logHT::Float64
-    logHQ::Float64
     ri_scale::Float64
+    table::StabilityTable
 end
 
 """
@@ -428,7 +419,7 @@ fluxes in W m-2 (signed as energy *into* the column, so `longwave_upward` is neg
 
 `longwave_upward = −(εσT_surface⁴ + (1 − ε)·LW↓)` is emitted plus reflected longwave, so with
 `LW↓` added the surface absorbs `ε·LW↓ − εσT_surface⁴`. The reflected term does not depend on
-`T1`, so it does not enter [`_surface_energy_balance_slope`](@ref).
+`T1`, so it does not enter the slope of [`_surface_energy_balance_and_slope`](@ref).
 
 The clamp is what makes the balance non-smooth at the melting point: above it the surface stops
 responding to `T1` entirely, so every flux — and every derivative — goes flat. Shared by the
@@ -436,68 +427,41 @@ implicit solver's Newton iteration and its final applied-flux evaluation so the 
 """
 @inline function _surface_energy_balance(T1::Float64, emissivity::Float64,
     sfc::_ThermalSurface, cfs::ClimateForcingStep)
-
-    T_surface = min(CtoK, T1)
-    heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
-        T_surface, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
-    T2 = T_surface * T_surface
-    longwave_upward = -(SB * T2 * T2 * emissivity +
-                        (1.0 - emissivity) * cfs.longwave_downward)
+    longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, _ =
+        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs)
     return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface
 end
 
 """
-    _surface_energy_balance_slope(T1, emissivity, sfc, cfs, longwave_upward, heat_flux_sensible, heat_flux_latent)
+    _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs)
+        -> (longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, slope)
 
-Slope `dQ_surface/dT1` [W m-2 K-1] of [`_surface_energy_balance`](@ref) at `T1`, given the fluxes
-already evaluated there. Returns a value `≤ 0`.
+[`_surface_energy_balance`](@ref) together with its slope `dQ_surface/dT1` [W m-2 K-1], which is
+`≤ 0`. The longwave slope is `−4εσT³`; the turbulent slope is the exact derivative of the tabulated
+fluxes ([`_table_turbulent_heat_flux`](@ref)), so it carries the change of the transfer
+coefficients with stability.
 
-The longwave term is analytic, `-4σεT³`. The two turbulent terms come from a single extra
-`_turbulent_heat_flux` call, differenced with [`THERMAL_BC_DERIVATIVE_STEP`](@ref): the
-Beljaars-Holtslag stability branches make hand-differentiation a maintenance liability for no
-benefit, because this slope sets only the Newton convergence *rate* and never the converged
-answer (see [`_thermal_solve!`](@ref)).
+Two rules shape it, and since the slope sets only the implicit solver's Newton convergence rate
+(see [`_thermal_solve!`](@ref)) neither changes an answer:
 
-Three deliberate crudenesses, each licensed by that:
-
-- **Above the melting point the slope is exactly zero.** The `min(CtoK, T1)` clamp makes `Q`
-  independent of `T1` there, so this is not an approximation.
-- **The difference is taken away from the clamp.** A forward step that would cross `CtoK` is
-  replaced by a backward one; `Q` is smooth below the melting point, so either is equally good.
-- **Each component is clamped at `≤ 0`.** A positive slope would weaken the Newton diagonal
-  instead of strengthening it, and it can arise spuriously — the `LV`/`LS` latent-heat switch at
-  `turbulent_heat_flux.jl` is a genuine jump in `heat_flux_latent` right at the melting point,
-  where wet columns sit. Clamping costs convergence rate, never correctness.
-
-!!! note "An analytic turbulent slope was tried and reverted"
-    `dQ_shf/dT` and `dQ_lhf/dT` are both algebraic in quantities the flux evaluation already
-    computes, *if* the transfer coefficients are held fixed — and they cannot be, because
-    `coefM`/`coefHT`/`coefHQ` depend on `T_surface` through the bulk Richardson number and the
-    term dropped by freezing them substantially cancels the rest. The frozen-coefficient slope
-    overshoots, which under-relaxes Newton and made the run slower, not faster. Differentiating
-    the stability branches too would be sound, and remains open. Measurements on the
-    [Thermal solvers](@ref) page.
+- **At or above the melting point the slope is zero.** The `min(CtoK, T1)` clamp makes `Q`
+  independent of `T1` there.
+- **The longwave and turbulent parts are each clamped at `≤ 0`.** A positive slope would weaken
+  the Newton diagonal instead of strengthening it.
 """
-@inline function _surface_energy_balance_slope(T1::Float64, emissivity::Float64,
-    sfc::_ThermalSurface, cfs::ClimateForcingStep, longwave_upward::Float64,
-    heat_flux_sensible::Float64, heat_flux_latent::Float64)
-
-    # Clamped: the surface balance no longer sees T1 at all.
-    T1 >= CtoK && return 0.0
+@inline function _surface_energy_balance_and_slope(T1::Float64, emissivity::Float64,
+    sfc::_ThermalSurface, cfs::ClimateForcingStep)
 
     T_surface = min(CtoK, T1)
-    slope_longwave = -4 * SB * emissivity * T_surface * T_surface * T_surface
-
-    # Step away from the melting-point clamp so the difference stays on the smooth branch.
-    step = (T1 + THERMAL_BC_DERIVATIVE_STEP <= CtoK) ? THERMAL_BC_DERIVATIVE_STEP :
-           -THERMAL_BC_DERIVATIVE_STEP
-    shf_p, lhf_p, _ = _turbulent_heat_flux(
-        T1 + step, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
-    slope_turbulent = ((shf_p - heat_flux_sensible) + (lhf_p - heat_flux_latent)) / step
-
-    return min(0.0, slope_longwave) + min(0.0, slope_turbulent)
+    heat_flux_sensible, heat_flux_latent, latent_heat, dshf, dlhf =
+        _table_turbulent_heat_flux(sfc.table, T_surface, sfc.density_air, sfc.C,
+            sfc.ri_scale, cfs)
+    T2 = T_surface * T_surface
+    longwave_upward = -(SB * T2 * T2 * emissivity +
+                        (1.0 - emissivity) * cfs.longwave_downward)
+    slope = T1 >= CtoK ? 0.0 :
+            min(0.0, -4 * SB * emissivity * T2 * T_surface) + min(0.0, dshf + dlhf)
+    return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, slope
 end
 
 """
@@ -543,11 +507,10 @@ explicit path's lagged sub-steps are stable for the converse reason: their tiny 
 same gain far below 1.)
 
 So the flux is linearized into the diagonal, `Q(T_1) ≈ Q_k + Λ_k(T_1 − T_{1,k})` with `Λ_k ≤ 0`
-from [`_surface_energy_balance_slope`](@ref), which *strengthens* the already dominant diagonal.
+from [`_surface_energy_balance_and_slope`](@ref), which *strengthens* the already dominant diagonal.
 Since `Q_k` is the true nonlinear flux at the iterate, the two `Λ` terms cancel at convergence and
 the residual satisfied is the true nonlinear surface balance. **`Λ` therefore affects only the
-convergence rate, never the answer** — the licence for its finite-difference turbulent terms and
-its clamp.
+convergence rate, never the answer** — the licence for its clamp.
 
 Both discontinuities are held as far outside the iteration as possible: the emissivity melt switch
 is evaluated once per sub-step, as on the explicit path, and the `LV`/`LS` latent-heat switch is
@@ -765,10 +728,8 @@ function _thermal_solve!(solver::ImplicitThermal,
                 T1_best = T1
                 residual_best = Inf
                 for _ in 1:THERMAL_IMPLICIT_MAX_ITERATIONS
-                    longwave_upward, heat_flux_sensible, heat_flux_latent, _ =
-                        _surface_energy_balance(T1, emissivity, sfc, cfs)
-                    slope = _surface_energy_balance_slope(T1, emissivity, sfc, cfs,
-                        longwave_upward, heat_flux_sensible, heat_flux_latent)
+                    longwave_upward, heat_flux_sensible, heat_flux_latent, _, _, slope =
+                        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs)
 
                     # Joules this sub-step, and the slope in J m-2 K-1.
                     Q_surface = longwave_downward +
@@ -1134,11 +1095,11 @@ own-temperature coefficient as a face conductance does,
 `coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`, so `ρ₁c₁dz₁/(G₁ + |Λ|)` is the step at which that
 coefficient reaches zero.
 
-`Λ` is evaluated at the start-of-step surface temperature, by a backward difference on the
-sub-freezing branch: at most `2·THERMAL_BC_DERIVATIVE_STEP` below the melting point, so the
-difference never spans the `LS`/`LV` switch in the latent flux, whose jump would otherwise be
-read as an enormous slope. A wet surface cell on its freezing plateau, or a cell at or above the
-melting point, has `Λ = 0`: its temperature does not respond to the surface flux.
+`Λ` is the analytic slope of [`_surface_energy_balance_and_slope`](@ref) at the start-of-step
+surface temperature, taken at most `2·THERMAL_BC_DERIVATIVE_STEP` below the melting point so it is
+the slope of the sub-freezing branch rather than of the `LS`/`LV` switch. A wet surface cell on
+its freezing plateau, or a cell at or above the melting point, has `Λ = 0`: its temperature does
+not respond to the surface flux.
 
 The fraction is for accuracy, not stability: the surface flux is lagged one sub-step, so its
 error grows with `dt` relative to the relaxation time. At 0.25 the forcing-step mean turbulent
@@ -1154,10 +1115,7 @@ function _surface_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
     Λ = 0.0
     if T1 < CtoK && water_surface <= 0.0
         T_eval = min(T1, CtoK - 2 * THERMAL_BC_DERIVATIVE_STEP)
-        h = THERMAL_BC_DERIVATIVE_STEP
-        lw, shf, lhf, _, _ = _surface_energy_balance(T_eval, sfc.emissivity, sfc, cfs)
-        lw_m, shf_m, lhf_m, _, _ = _surface_energy_balance(T_eval - h, sfc.emissivity, sfc, cfs)
-        Λ = min(0.0, ((lw + shf + lhf) - (lw_m + shf_m + lhf_m)) / h)
+        Λ = _surface_energy_balance_and_slope(T_eval, sfc.emissivity, sfc, cfs)[6]
     end
     return THERMAL_SURFACE_STEP_FRACTION * density[1] * heat_capacity(mp, T1) * dz[1] /
            (G1 + abs(Λ))

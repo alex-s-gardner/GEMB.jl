@@ -653,27 +653,20 @@ end
     @test t_out[1] > t_in[1]
 
     # The slope is exactly zero once clamped — the flux no longer sees T1 at all.
-    sfc = GEMB._ThermalSurface(1.3, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 0.16 * 5.0,
-        log(2.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
-        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 2.0 / 5.0^2)
-    @test GEMB._surface_energy_balance_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs,
-        -300.0, 10.0, 5.0) === 0.0
+    sfc = GEMB._ThermalSurface(1.3, 0.97, false, 0.16 * 5.0, GEMB.GRAVITY * 2.0 / 5.0^2,
+        GEMB._stability_table(2.0, 2.0, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY))
+    @test GEMB._surface_energy_balance_and_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs)[6] === 0.0
     # Below the clamp it is strictly negative — the property that strengthens the diagonal.
-    lw, shf, lhf, _, _ = GEMB._surface_energy_balance(260.0, 0.97, sfc, cfs)
-    slope = GEMB._surface_energy_balance_slope(260.0, 0.97, sfc, cfs, lw, shf, lhf)
+    slope = GEMB._surface_energy_balance_and_slope(260.0, 0.97, sfc, cfs)[6]
     @test slope < 0.0
 
-    # The finite-difference slope must track the balance it differentiates. Loose (5%) only
-    # because the two turbulent components are clamped at ≤ 0 independently; the longwave term
-    # is analytic. An *analytic* turbulent slope that froze the Beljaars-Holtslag transfer
-    # coefficients was tried and reverted — it overshoots by up to 10x, which more than doubles
-    # the Newton iteration count. See the note in `_surface_energy_balance_slope`.
+    # The analytic slope is the derivative of the balance it accompanies, transfer-coefficient
+    # changes included.
     _Q(T) = let (lw2, s, l, _, _) = GEMB._surface_energy_balance(T, 0.97, sfc, cfs)
         lw2 + s + l
     end
     fd = (_Q(260.0 + 1e-3) - _Q(260.0 - 1e-3)) / 2e-3
-    @test slope ≈ fd rtol = 0.05
+    @test slope ≈ fd rtol = 1e-5
 end
 
 @testset "Implicit solver: steady state is a fixed point" begin
@@ -1018,12 +1011,13 @@ end
     mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
     K = GEMB.thermal_conductivity(T0, density, mp)
-    sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY, mp.emissivity, false, 0.16 * 15.0, log(10.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
-        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 10.0 / 15.0^2)
+    sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), mp.emissivity, false,
+        0.16 * 15.0, GEMB.GRAVITY * 10.0 / 15.0^2,
+        GEMB._stability_table(10.0, 2.0, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY))
     Q(T) = sum(GEMB._surface_energy_balance(T, mp.emissivity, sfc, cfs)[1:3])
     h = GEMB.THERMAL_BC_DERIVATIVE_STEP
-    Λ = (Q(T0[1]) - Q(T0[1] - h)) / h
+    Λ = GEMB._surface_energy_balance_and_slope(T0[1], mp.emissivity, sfc, cfs)[6]
+    @test Λ ≈ (Q(T0[1] + 1e-3) - Q(T0[1] - 1e-3)) / 2e-3 rtol = 1e-5
     @test Λ < 0.0
     G1 = 1 / (dz[2] / (2K[2]) + dz[1] / (2K[1]))
     bound(T, w) = GEMB._surface_safe_dt(T, dz, density, K, mp, sfc, cfs, w)

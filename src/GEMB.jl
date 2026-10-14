@@ -30,6 +30,7 @@ include("initialize_profile.jl")
 include("heat_capacity.jl")
 include("thermal_conductivity.jl")
 include("turbulent_heat_flux.jl")
+include("stability_table.jl")
 include("densification_lookup.jl")
 
 # Shared vertical-grid primitives (used by the accumulation / melt / layer-management
