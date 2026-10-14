@@ -918,3 +918,78 @@ end
     @test length(ws.H) == 100
     @test all(length(b) == 100 for b in GEMB._workspace_buffers(ws))
 end
+
+@testset "Wet surface cell holds the melting point while its water freezes" begin
+    # A wet surface cell at 273.15 K loses 100 W m-2: absorbed ε·LW↓ is 100 W m-2 short of
+    # εσT⁴, and the air is at the melting point and saturated over water, so the turbulent
+    # fluxes vanish there. Until its water has frozen the cell stays at 273.15 K inside the
+    # solve, so the upward longwave is that of a 273.15 K surface throughout; the water that
+    # froze, 100·dt/LF, comes back as cold content in the returned matrix temperature, and
+    # calculate_melt refreezes it and counts it.
+    n = N_CELLS
+    ε = 0.97
+    W = 1.0
+    T0 = GEMB.CtoK
+    lw_down = GEMB.SB * T0^4 - 100.0 / ε
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()), dt in (1800.0, 7200.0)
+        # 60 s explicit sub-steps, so the lagged surface flux resolves the cooling.
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, dt_divisors=[60.0])
+        cfs = GEMB.ClimateForcingStep(
+            dt, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+            GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        water = [W; zeros(n - 1)]
+        dz = fill(DZ_UNIFORM, n)
+        density = fill(DENSITY_UNIFORM, n)
+        t_out, lw_up, shf, lhf, _, _, _ = GEMB.calculate_temperature(fill(T0, n), dz,
+            density, W, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true; water)
+        M1 = DENSITY_UNIFORM * DZ_UNIFORM
+        frozen = 100.0 * dt / GEMB.LF
+        if frozen < W
+            @test lw_up ≈ ε * GEMB.SB * T0^4 + (1 - ε) * lw_down rtol = 1e-12
+            @test shf == 0.0 && lhf == 0.0
+            @test all(t_out[2:end] .== T0)
+            @test M1 * mp.heat_capacity_ice * (T0 - t_out[1]) ≈ 100.0 * dt rtol = 1e-9
+            out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n),
+                zeros(n), fill(0.5, n), zeros(n), mp, true)
+            @test out[1][1] ≈ T0 atol = 1e-6
+            @test out[4][1] ≈ W - frozen rtol = 1e-9
+            @test out[12] ≈ frozen rtol = 1e-9
+        else
+            # 7200 s freezes all of it after 3345 s; the surface then cools below 273.15 K.
+            @test lw_up < ε * GEMB.SB * T0^4 + (1 - ε) * lw_down
+            @test t_out[1] < T0
+        end
+    end
+
+    # Without `water` the same column is dry and cools at once.
+    mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+        surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+        dt_divisors=[60.0])
+    cfs = GEMB.ClimateForcingStep(
+        1800.0, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+        GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    _, lw_dry, = GEMB.calculate_temperature(fill(T0, n), fill(DZ_UNIFORM, n),
+        fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true)
+    @test lw_dry < ε * GEMB.SB * T0^4 + (1 - ε) * lw_down
+
+    @test_throws "must equal water_surface" GEMB.calculate_temperature(fill(T0, n),
+        fill(DZ_UNIFORM, n), fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n),
+        zeros(n), cfs, mp, false; water=[1.0; zeros(n - 1)])
+end
+
+@testset "Wet-cell temperature map" begin
+    mp = GEMB.ModelParameters()
+    M, W = 40.0, 2.0
+    h0 = GEMB.specific_enthalpy(mp, GEMB.CtoK)
+    H_lo = (M + W) * h0
+    H_hi = H_lo + W * GEMB.LF
+    @test GEMB._wet_cell_temperature(mp, H_hi, M, W) ≈ GEMB.CtoK rtol = 1e-15
+    @test GEMB._wet_cell_temperature(mp, 0.5 * (H_lo + H_hi), M, W) == GEMB.CtoK
+    @test GEMB._wet_cell_temperature(mp, H_lo, M, W) == GEMB.CtoK
+    @test GEMB._wet_cell_temperature(mp, H_hi + M * 2102.0, M, W) ≈ GEMB.CtoK + 1.0 rtol = 1e-12
+    @test GEMB._wet_cell_temperature(mp, H_lo - (M + W) * 2102.0, M, W) ≈ GEMB.CtoK - 1.0 rtol = 1e-12
+end

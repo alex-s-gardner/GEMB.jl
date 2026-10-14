@@ -121,7 +121,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal,
         evaporation_condensation, evaporation_condensation_liquid =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
-            shortwave_flux, cfs, mp, verbose, thermal_workspace)
+            shortwave_flux, cfs, mp, verbose, thermal_workspace; water)
 
     # 6. Exchange the vapour mass with the surface cell, in the phase its latent heat implied.
     #    Deposition and condensation (positive) are new mass at age 0, so they dilute the
