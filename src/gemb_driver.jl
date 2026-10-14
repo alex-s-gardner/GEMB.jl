@@ -62,20 +62,13 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     n = length(times)
     tdim = Ti(times)
 
-    # Prescribed drift: the forcing layer wins, `mp.drift_rate` is the fallback for a run with
-    # no drift product. "The forcing carries one" is resolved as *not identically zero*, which
-    # is exactly the state the `ClimateForcing` constructor leaves the layer in when the caller
-    # supplies no `snow_drift` — so an absent layer and a layer of zeros are the same thing, and
-    # a forcing that does carry drift is never overridden by a stray scalar. The scan is once
-    # per run, not per timestep.
-    snow_drift_forcing = climate_forcing.snow_drift
-    if mp.drift_rate != 0.0 && all(iszero, snow_drift_forcing)
-        snow_drift_forcing = DimArray(Fill(mp.drift_rate, n), (tdim,))
-    end
-
-    # Radiation geometry follows the same rule as the drift layer: the forcing layer wins, and
-    # the `mp` scalar is the fallback for a forcing whose layer is identically zero (the state
-    # `initialize_forcing` leaves it in when the caller supplies nothing).
+    # Prescribed drift and radiation geometry: the forcing layer wins, and the `mp` scalar is
+    # the fallback for a run without one. "The forcing carries one" is resolved as *not
+    # identically zero*, which is exactly the state the `ClimateForcing` constructor and
+    # `initialize_forcing` leave a layer in when the caller supplies nothing — so an absent
+    # layer and a layer of zeros are the same thing, and a forcing that does carry a layer is
+    # never overridden by a stray scalar. The scans are once per run, not per timestep.
+    snow_drift_forcing = _forcing_or_parameter(climate_forcing.snow_drift, mp.drift_rate, tdim)
     cloud_optical_thickness = _forcing_or_parameter(climate_forcing.cloud_optical_thickness,
         mp.cloud_optical_thickness, tdim)
     solar_zenith_angle = _forcing_or_parameter(climate_forcing.solar_zenith_angle,

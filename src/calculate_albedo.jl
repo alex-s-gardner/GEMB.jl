@@ -88,8 +88,9 @@ function calculate_albedo(dz::Vector{Float64},
         # The grain-size methods describe semi-infinite snow; replace them over firn, ice, or
         # thin snow on either (see the docstring).
         if (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
-            albedo = _underlying_surface_albedo(albedo, dz, density, mp)
-            albedo_diffuse = _underlying_surface_albedo(albedo_diffuse, dz, density, mp)
+            albedo_under, snow_weight = _underlying_surface(dz, density, mp)
+            albedo = albedo_under + (albedo - albedo_under) * snow_weight
+            albedo_diffuse = albedo_under + (albedo_diffuse - albedo_under) * snow_weight
         end
     end
 
@@ -122,43 +123,57 @@ or above `mp.density_ice`, and linear in density from there up to `ALBEDO_FIRN_M
 end
 
 """
-    _underlying_surface_albedo(albedo_snow, dz, density, mp) -> α
+    _underlying_surface(dz, density, mp) -> (albedo_under, snow_weight)
 
-Apply the firn, ice and thin-snow rules of [`calculate_albedo`](@ref) to the semi-infinite
-snow albedo `albedo_snow`.
+The firn, ice and thin-snow rules of [`calculate_albedo`](@ref) as a blend: the surface albedo
+is `albedo_under + (albedo_snow − albedo_under)·snow_weight`, with `albedo_snow` the
+semi-infinite snow albedo. `snow_weight` is 0 for exposed firn or ice, `depth/0.1 m` for thin
+snow over them, and 1 for deep snow (or a column with no firn), where `albedo_under` is unused.
 """
-@inline function _underlying_surface_albedo(albedo_snow::Float64, dz::Vector{Float64},
-    density::Vector{Float64}, mp::ModelParameters)
+@inline function _underlying_surface(dz::Vector{Float64}, density::Vector{Float64},
+    mp::ModelParameters)
 
-    density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return firn_ice_albedo(density[1], mp)
-
-    i_firn = findfirst(d -> d >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE, density)
-    i_firn === nothing && return albedo_snow
+    density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return firn_ice_albedo(density[1], mp), 0.0
 
     depth_snow = 0.0
-    for i in firstindex(dz):(i_firn - 1)
+    for i in eachindex(dz, density)
+        if density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE
+            depth_snow >= ALBEDO_SNOW_DEPTH_THICK && return 0.0, 1.0
+            return firn_ice_albedo(density[i], mp), depth_snow / ALBEDO_SNOW_DEPTH_THICK
+        end
         depth_snow += dz[i]
     end
-    depth_snow >= ALBEDO_SNOW_DEPTH_THICK && return albedo_snow
-
-    albedo_under = firn_ice_albedo(density[i_firn], mp)
-    return albedo_under + (albedo_snow - albedo_under) * (depth_snow / ALBEDO_SNOW_DEPTH_THICK)
+    return 0.0, 1.0
 end
 
-"""
-    _albedo_brun_lefebre(grain_radius_surface) -> α
+# Spectral fractions of Lefebre et al. (2003) for 0.3–0.8, 0.8–1.5 and 1.5–2.8 µm; they sum to 1.
+const BRUN_LEFEBRE_SPECTRAL_FRACTIONS = (0.606, 0.301, 0.093)
 
-Broadband albedo of semi-infinite snow from three spectral-band albedos weighted by the
-spectral fractions of Lefebre et al. (2003), `[0.606, 0.301, 0.093]` for 0.3–0.8, 0.8–1.5 and
-1.5–2.8 µm. The fractions sum to 1.
 """
-@inline function _albedo_brun_lefebre(grain_radius_surface::Float64)
+    _brun_lefebre_band_albedos(grain_radius_surface) -> (a1, a2, a3)
+
+Albedos of semi-infinite snow in the three spectral bands of Lefebre et al. (2003)
+(`BRUN_LEFEBRE_SPECTRAL_FRACTIONS`), from the surface effective grain radius [mm].
+"""
+@inline function _brun_lefebre_band_albedos(grain_radius_surface::Float64)
     # grain size (diameter) in metres
     gsz = (grain_radius_surface * 2.0) / 1000.0
     a1 = min(0.98, 0.95 - 1.58 * gsz^0.5)
     a2 = max(0.0, 0.95 - 15.4 * gsz^0.5)
     a3 = max(0.127, 0.88 + 346.3 * gsz - 32.31 * gsz^0.5)
-    return 0.606 * a1 + 0.301 * a2 + 0.093 * a3
+    return a1, a2, a3
+end
+
+"""
+    _albedo_brun_lefebre(grain_radius_surface) -> α
+
+Broadband albedo of semi-infinite snow, the band albedos of
+[`_brun_lefebre_band_albedos`](@ref) weighted by `BRUN_LEFEBRE_SPECTRAL_FRACTIONS`.
+"""
+@inline function _albedo_brun_lefebre(grain_radius_surface::Float64)
+    sF = BRUN_LEFEBRE_SPECTRAL_FRACTIONS
+    a1, a2, a3 = _brun_lefebre_band_albedos(grain_radius_surface)
+    return sF[1] * a1 + sF[2] * a2 + sF[3] * a3
 end
 
 """

@@ -338,8 +338,11 @@ end
 
 # Herron & Langway (1980) two-stage coefficients, equivalent to Arthern et al.
 # (2010) eq. (2).
-@inline _hl_c0(T::Float64, pm::Float64) = (11.0 * exp(-10160.0 / (T * R_GAS))) * (pm / 1000.0)          # ρ <= 550
-@inline _hl_c1(T::Float64, pm::Float64) = (575.0 * exp(-21400.0 / (T * R_GAS))) * sqrt(pm / 1000.0)     # ρ > 550
+# `_hl_k0`/`_hl_k1` are the temperature-only rate constants k₀ and k₁ of Herron & Langway's eq. 7.
+@inline _hl_k0(T::Float64) = 11.0 * exp(-10160.0 / (T * R_GAS))
+@inline _hl_k1(T::Float64) = 575.0 * exp(-21400.0 / (T * R_GAS))
+@inline _hl_c0(T::Float64, pm::Float64) = _hl_k0(T) * (pm / 1000.0)          # ρ <= 550
+@inline _hl_c1(T::Float64, pm::Float64) = _hl_k1(T) * sqrt(pm / 1000.0)      # ρ > 550
 
 # Arthern et al. (2010) semi-empirical, and the family of schemes that scale it.
 #

@@ -226,7 +226,7 @@ _forcing_layer(x::Real, tdim, name::Symbol) = DimArray(Fill(Float64(x), length(t
 function _forcing_layer(x::AbstractVector{<:Real}, tdim, name::Symbol)
     length(x) == length(tdim) || throw(ArgumentError(
         "$(name) has $(length(x)) values but the forcing has $(length(tdim)) timesteps"))
-    return DimArray(Float64.(collect(x)), (tdim,))
+    return DimArray(Float64.(x), (tdim,))
 end
 
 """

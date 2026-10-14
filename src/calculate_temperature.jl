@@ -109,7 +109,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     K = thermal_conductivity!(workspace.conductivity, temperature, density, mp)
 
     sfc = _ThermalSurface(density_air, z0, zT, zQ, emissivity, emissivity_melt_switch,
-        thf_wind_speed, thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
+        thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
 
     if water === nothing
         water_cells = Zeros(m)
@@ -149,7 +149,6 @@ struct _ThermalSurface
     zQ::Float64
     emissivity::Float64
     emissivity_melt_switch::Bool
-    wind_speed::Float64
     C::Float64
     logM::Float64
     logHT::Float64
@@ -188,20 +187,9 @@ function _thermal_solve!(solver::ExplicitThermal,
 
     m = length(density)
 
-    # Unpack the surface state. `emissivity` is mutated by the melt switch below, so it
-    # becomes a local; the rest are read-only aliases of the carrier's fields.
-    density_air = sfc.density_air
-    z0 = sfc.z0
-    zT = sfc.zT
-    zQ = sfc.zQ
+    # `emissivity` is mutated by the melt switch below, so it becomes a local.
     emissivity = sfc.emissivity
     emissivity_melt_switch = sfc.emissivity_melt_switch
-    thf_wind_speed = sfc.wind_speed
-    thf_C = sfc.C
-    thf_logM = sfc.logM
-    thf_logHT = sfc.logHT
-    thf_logHQ = sfc.logHQ
-    thf_ri_scale = sfc.ri_scale
 
     # initialize cumulative quantities
     longwave_upward_cumulative = 0.0
@@ -306,13 +294,11 @@ function _thermal_solve!(solver::ExplicitThermal,
             end
         end
 
-        # calculate temperature of snow surface
-        T_surface = min(273.15, temperature[1])
-
-        # TURBULENT HEAT FLUX (invariant quantities hoisted above the loop)
-        heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
-            T_surface, density_air, z0, zT, zQ, cfs,
-            thf_wind_speed, thf_C, thf_logM, thf_logHT, thf_logHQ, thf_ri_scale)
+        # Surface fluxes at the surface temperature `min(CtoK, T₁)`, lagged one sub-step.
+        # `emissivity` is the value in force this sub-step (the melt switch below can change it
+        # between sub-steps).
+        longwave_upward_flux, heat_flux_sensible, heat_flux_latent, latent_heat, _ =
+            _surface_energy_balance(temperature[1], emissivity, sfc, cfs)
 
         lhf_cumulative += heat_flux_latent * dt
         shf_cumulative += heat_flux_sensible * dt
@@ -323,12 +309,8 @@ function _thermal_solve!(solver::ExplicitThermal,
         # energy supplied by turbulent fluxes [J]
         thf = (heat_flux_sensible + heat_flux_latent) * dt
 
-        # Upward longwave: emitted plus reflected. A gray surface reflects (1 − ε)·LW↓, so the
-        # net longwave it absorbs is ε·LW↓ − εσTs⁴. `emissivity` is the value in force this
-        # sub-step (the melt switch below can change it between sub-steps).
-        T2 = T_surface * T_surface
-        longwave_upward = -(SB * T2 * T2 * emissivity +
-                            (1.0 - emissivity) * cfs.longwave_downward) * dt
+        # Upward longwave, emitted plus reflected [J]
+        longwave_upward = longwave_upward_flux * dt
         longwave_upward_cumulative += -longwave_upward
 
         # net energy delivered to the surface cell this sub-step [J]
@@ -422,8 +404,7 @@ function _thermal_solve!(solver::ExplicitThermal,
     # reservoir.
     @inbounds for i in 1:m-1
         temperature[i] = water[i] > 0.0 ?
-            temperature_from_specific_enthalpy(mp, (H[i] - water[i] * h_water) /
-                                                   (density[i] * dz[i])) :
+            _matrix_temperature(mp, H[i], density[i] * dz[i], water[i]) :
             temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
     end
 
@@ -459,7 +440,7 @@ implicit solver's Newton iteration and its final applied-flux evaluation so the 
     T_surface = min(CtoK, T1)
     heat_flux_sensible, heat_flux_latent, latent_heat = _turbulent_heat_flux(
         T_surface, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.wind_speed, sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
+        sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
     T2 = T_surface * T_surface
     longwave_upward = -(SB * T2 * T2 * emissivity +
                         (1.0 - emissivity) * cfs.longwave_downward)
@@ -513,7 +494,7 @@ Three deliberate crudenesses, each licensed by that:
            -THERMAL_BC_DERIVATIVE_STEP
     shf_p, lhf_p, _ = _turbulent_heat_flux(
         T1 + step, sfc.density_air, sfc.z0, sfc.zT, sfc.zQ, cfs,
-        sfc.wind_speed, sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
+        sfc.C, sfc.logM, sfc.logHT, sfc.logHQ, sfc.ri_scale)
     slope_turbulent = ((shf_p - heat_flux_sensible) + (lhf_p - heat_flux_latent)) / step
 
     return min(0.0, slope_longwave) + min(0.0, slope_turbulent)
@@ -902,8 +883,7 @@ function _thermal_solve!(solver::ImplicitThermal,
 
         # Matrix temperatures with the water counted liquid (see `calculate_temperature`).
         @inbounds for i in 1:n
-            temperature[i] = temperature_from_specific_enthalpy(mp,
-                (H[i] - water[i] * h_water) / M[i])
+            temperature[i] = _matrix_temperature(mp, H[i], M[i], water[i])
         end
 
         # Emissivity melt switch, held outside the Newton iteration so it cannot chatter. It
@@ -963,8 +943,8 @@ State of a wet cell with enthalpy `H` on the freezing plateau of
 `H_lo` and `H_hi`, `WET_CELL_FROZEN` below `H_lo`.
 """
 @inline function _wet_cell_mode(mp::ModelParameters, H::Float64, M::Float64, W::Float64)
-    H_lo = (M + W) * specific_enthalpy(mp, CtoK)
-    H >= H_lo + W * LF && return WET_CELL_DRY
+    H_lo, H_hi = _wet_cell_plateau(mp, M, W)
+    H >= H_hi && return WET_CELL_DRY
     H >= H_lo && return WET_CELL_PINNED
     return WET_CELL_FROZEN
 end
@@ -979,8 +959,7 @@ change: the matrix alone with the water liquid (`WET_CELL_DRY`), or matrix and w
 """
 @inline function _wet_cell_row(mp::ModelParameters, H::Float64, M::Float64, W::Float64,
     mode::Float64)
-    mode == WET_CELL_DRY &&
-        return M, temperature_from_specific_enthalpy(mp, (H - W * specific_enthalpy_water(mp)) / M)
+    mode == WET_CELL_DRY && return M, _matrix_temperature(mp, H, M, W)
     mode == WET_CELL_FROZEN && return M + W, temperature_from_specific_enthalpy(mp, H / (M + W))
     return M, CtoK
 end
@@ -1035,13 +1014,23 @@ Continuous in `H`.
 """
 @inline function _wet_cell_temperature(mp::ModelParameters, H::Float64, M::Float64,
     W::Float64)
-    H_lo = (M + W) * specific_enthalpy(mp, CtoK)
-    H_hi = H_lo + W * LF
-    H >= H_hi && return temperature_from_specific_enthalpy(mp,
-        (H - W * specific_enthalpy_water(mp)) / M)
+    H_lo, H_hi = _wet_cell_plateau(mp, M, W)
+    H >= H_hi && return _matrix_temperature(mp, H, M, W)
     H >= H_lo && return CtoK
     return temperature_from_specific_enthalpy(mp, H / (M + W))
 end
+
+# Enthalpy bounds of the freezing plateau of a cell with matrix `M` and water `W`: all of the
+# water frozen at the melting point (`H_lo`) and none of it (`H_hi = H_lo + W·LF`).
+@inline function _wet_cell_plateau(mp::ModelParameters, M::Float64, W::Float64)
+    H_lo = (M + W) * specific_enthalpy(mp, CtoK)
+    return H_lo, H_lo + W * LF
+end
+
+# Matrix temperature of a cell of matrix mass `M` whose enthalpy `H` counts its water `W` as
+# liquid at the melting point.
+@inline _matrix_temperature(mp::ModelParameters, H::Float64, M::Float64, W::Float64) =
+    temperature_from_specific_enthalpy(mp, (H - W * specific_enthalpy_water(mp)) / M)
 
 # Solve temperature of a cell from its enthalpy: the dry map through the cached scaled
 # inverse, or `_wet_cell_temperature` when the cell holds water.

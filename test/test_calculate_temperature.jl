@@ -654,7 +654,7 @@ end
 
     # The slope is exactly zero once clamped — the flux no longer sees T1 at all.
     sfc = GEMB._ThermalSurface(1.3, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 5.0, 0.16 * 5.0,
+        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 0.16 * 5.0,
         log(2.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
         log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 2.0 / 5.0^2)
     @test GEMB._surface_energy_balance_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs,
@@ -1019,8 +1019,7 @@ end
         dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
     K = GEMB.thermal_conductivity(T0, density, mp)
     sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY, mp.emissivity, false, 15.0,
-        0.16 * 15.0, log(10.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
+        0.1 * GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY, mp.emissivity, false, 0.16 * 15.0, log(10.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
         log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), GEMB.GRAVITY * 10.0 / 15.0^2)
     Q(T) = sum(GEMB._surface_energy_balance(T, mp.emissivity, sfc, cfs)[1:3])
     h = GEMB.THERMAL_BC_DERIVATIVE_STEP
