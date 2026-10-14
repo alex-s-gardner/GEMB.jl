@@ -12,9 +12,15 @@ direct-beam and for the diffuse stream.
 Every method here is **diagnostic**: the albedo is a function of the current column
 state alone, so nothing is carried across a timestep boundary and nothing is stored per
 cell. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
-fixed 50° effective zenith angle), which is also the only method whose consumer,
-[`calculate_shortwave_radiation`](@ref), splits the direct and diffuse streams; the
-other methods return it equal to `albedo`.
+fixed 50° effective zenith angle); the other methods return it equal to `albedo`.
+[`calculate_shortwave_radiation`](@ref) applies `albedo` to the direct beam
+`SW↓ − SW↓_diffuse` and `albedo_diffuse` to `SW↓_diffuse`.
+
+Under `:GardnerSharp` the direct-beam albedo uses `cfs.solar_zenith_angle` [degrees] and
+`cfs.cloud_optical_thickness`. When the sun is at or below the horizon
+(`solar_zenith_angle ≥ 90°`) there is no direct beam, and `albedo` is returned equal to
+`albedo_diffuse`. A step with `SW↓ = 0` and the sun above the horizon is evaluated normally.
+Neither case changes the energy budget, since no shortwave is absorbed when `SW↓ = 0`.
 
 # Firn, ice, and thin snow over them
 
@@ -59,10 +65,13 @@ function calculate_albedo(dz::Vector{Float64},
         albedo_diffuse = albedo
     else
         if mp.albedo_method == :GardnerSharp
-            albedo = _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                cfs.solar_zenith_angle, cfs.cloud_optical_thickness)
             albedo_diffuse = _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                50.0, cfs.cloud_optical_thickness)
+                ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness)
+            # With the sun at or below the horizon there is no direct beam; see the docstring.
+            albedo = cfs.solar_zenith_angle < 90.0 ?
+                     _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
+                         cfs.solar_zenith_angle, cfs.cloud_optical_thickness) :
+                     albedo_diffuse
 
         elseif mp.albedo_method == :BrunLefebre
             albedo = _albedo_brun_lefebre(grain_radius[1])
@@ -157,10 +166,16 @@ end
 
 Broadband albedo of semi-infinite snow from Gardner and Sharp (2010): pure-snow albedo from
 the specific surface area, plus the changes due to soot loading `c` [ppmw], solar zenith angle
-`SZA` [degrees] and cloud optical thickness `τ`.
+`SZA` [degrees, 0 ≤ SZA < 90] and cloud optical thickness `τ ≥ 0`. A zenith angle outside that
+range throws: the zenith term is defined only for the sun above the horizon.
 """
 function _albedo_gardner(grain_radius_surface::Float64, c::Float64,
     SZA::Float64, t::Float64)
+
+    (0.0 <= SZA < 90.0) ||
+        throw(DomainError(SZA, "solar zenith angle must be in [0, 90) degrees for the " *
+                               "Gardner-Sharp zenith term"))
+    t >= 0.0 || throw(DomainError(t, "cloud optical thickness must be non-negative"))
 
     # convert effective radius to specific surface area [cm2 g-1]
     S1 = 3.0 / (0.091 * grain_radius_surface)

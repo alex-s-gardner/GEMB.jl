@@ -30,6 +30,15 @@ Create a `ClimateForcing` struct from time-series vectors.
   `calculate_density` under `mean_temperature_method = :arrhenius`.
 - `rain_temperature_threshold::Float64`: Rain/snow partition temperature [K] used only to
   derive `accumulation_mean`; keep it equal to the `ModelParameters` field of the same name.
+- `solar_zenith_angle`: Solar zenith angle [degrees], `0 ≤ SZA ≤ 180`; values `≥ 90` are night.
+  A scalar (held for every step, default 0) or a per-timestep vector.
+- `cloud_optical_thickness`: Cloud optical thickness [-], `≥ 0`. A scalar (default 0) or a
+  per-timestep vector.
+- `shortwave_downward_diffuse`: Diffuse part of `shortwave_downward` [W m-2],
+  `0 ≤ SW↓_diffuse ≤ SW↓` at every step. A scalar (default 0) or a per-timestep vector.
+  These three are read by [`calculate_albedo`](@ref) and
+  [`calculate_shortwave_radiation`](@ref); a range violation at any step throws an
+  `ArgumentError` naming the step (see [`validate_radiation_geometry`](@ref)).
 - `snow_drift`: Optional per-timestep net drifting-snow divergence [kg m-2 yr-1], positive
   for erosion and negative for deposition. A time series, not a scalar, because this is a
   forcing layer rather than a tunable: the IMAU-FDM path reads it from a drift product
@@ -55,9 +64,9 @@ function initialize_forcing(
     rain_temperature_threshold::Real=273.15,
     black_carbon_snow::Real=0.0,
     black_carbon_ice::Real=0.0,
-    cloud_optical_thickness::Real=0.0,
-    solar_zenith_angle::Real=0.0,
-    shortwave_downward_diffuse::Real=0.0,
+    cloud_optical_thickness::Union{Real,AbstractVector{<:Real}}=0.0,
+    solar_zenith_angle::Union{Real,AbstractVector{<:Real}}=0.0,
+    shortwave_downward_diffuse::Union{Real,AbstractVector{<:Real}}=0.0,
     cloud_fraction::Real=0.1,
     snow_drift::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
@@ -165,6 +174,14 @@ function initialize_forcing(
     # Create DimArrays with Ti dimension
     tdim = Ti(time)
 
+    cloud_optical_thickness_layer = _forcing_layer(cloud_optical_thickness, tdim,
+        :cloud_optical_thickness)
+    solar_zenith_angle_layer = _forcing_layer(solar_zenith_angle, tdim, :solar_zenith_angle)
+    shortwave_downward_diffuse_layer = _forcing_layer(shortwave_downward_diffuse, tdim,
+        :shortwave_downward_diffuse)
+    validate_radiation_geometry(solar_zenith_angle_layer, cloud_optical_thickness_layer,
+        shortwave_downward_diffuse_layer, shortwave_downward)
+
     return ClimateForcing(
         DimArray(Float64.(temperature_air), (tdim,)),
         DimArray(Float64.(pressure_air), (tdim,)),
@@ -175,9 +192,9 @@ function initialize_forcing(
         DimArray(Float64.(vapor_pressure), (tdim,)),
         DimArray(Fill(Float64(black_carbon_snow), n), (tdim,)),
         DimArray(Fill(Float64(black_carbon_ice), n), (tdim,)),
-        DimArray(Fill(Float64(cloud_optical_thickness), n), (tdim,)),
-        DimArray(Fill(Float64(solar_zenith_angle), n), (tdim,)),
-        DimArray(Fill(Float64(shortwave_downward_diffuse), n), (tdim,)),
+        cloud_optical_thickness_layer,
+        solar_zenith_angle_layer,
+        shortwave_downward_diffuse_layer,
         DimArray(Fill(Float64(cloud_fraction), n), (tdim,)),
         time_step,
         Float64(temperature_air_mean),
@@ -196,6 +213,49 @@ function initialize_forcing(
         elevation_native=elevation_native,
         elevation_offset=elevation_offset,
     )
+end
+
+"""
+    _forcing_layer(x, tdim, name) -> DimArray
+
+A forcing layer on `tdim` from either a scalar (held for every step, `Fill`-backed) or a
+per-timestep vector, which must have one value per step.
+"""
+_forcing_layer(x::Real, tdim, name::Symbol) = DimArray(Fill(Float64(x), length(tdim)), (tdim,))
+
+function _forcing_layer(x::AbstractVector{<:Real}, tdim, name::Symbol)
+    length(x) == length(tdim) || throw(ArgumentError(
+        "$(name) has $(length(x)) values but the forcing has $(length(tdim)) timesteps"))
+    return DimArray(Float64.(collect(x)), (tdim,))
+end
+
+"""
+    validate_radiation_geometry(solar_zenith_angle, cloud_optical_thickness,
+                                shortwave_downward_diffuse, shortwave_downward)
+
+Throw an `ArgumentError` naming the first offending step unless, at every step,
+`0 ≤ solar_zenith_angle ≤ 180` [degrees], `cloud_optical_thickness ≥ 0`, and
+`0 ≤ shortwave_downward_diffuse ≤ shortwave_downward` [W m-2]. NaN fails every test.
+"""
+function validate_radiation_geometry(solar_zenith_angle::AbstractVector,
+    cloud_optical_thickness::AbstractVector, shortwave_downward_diffuse::AbstractVector,
+    shortwave_downward::AbstractVector)
+
+    for (k, i) in enumerate(eachindex(solar_zenith_angle, cloud_optical_thickness,
+        shortwave_downward_diffuse, shortwave_downward))
+        sza = solar_zenith_angle[i]
+        (0.0 <= sza <= 180.0) || throw(ArgumentError(
+            "solar_zenith_angle = $(sza) at step $(k) is outside [0, 180] degrees"))
+        τ = cloud_optical_thickness[i]
+        τ >= 0.0 || throw(ArgumentError(
+            "cloud_optical_thickness = $(τ) at step $(k) is negative or NaN"))
+        sw_d = shortwave_downward_diffuse[i]
+        sw = shortwave_downward[i]
+        (0.0 <= sw_d <= sw) || throw(ArgumentError(
+            "shortwave_downward_diffuse = $(sw_d) W m-2 at step $(k) is outside " *
+            "[0, shortwave_downward = $(sw)] W m-2"))
+    end
+    return nothing
 end
 
 """
@@ -226,14 +286,18 @@ vectors and metadata from `stack` and forwards them to the vector method of
 - `temperature_observation_height`: Height of temperature observations (m)
 - `wind_observation_height`: Height of wind observations (m)
 
+# Optional Layers or Metadata
+Each is read as a per-timestep layer when the stack has a layer of that name, otherwise as
+a scalar from the metadata, otherwise the default:
+- `solar_zenith_angle` (degrees, 0–180, ≥ 90 is night; default: 0.0)
+- `cloud_optical_thickness` (dimensionless, ≥ 0; default: 0.0)
+- `shortwave_downward_diffuse` (W/m², between 0 and `shortwave_downward`; default: 0.0)
+
 # Optional Metadata (defaults used if not present)
 - `accumulation_mean` (kg/m²/year; derived from the record by rain/snow partitioning)
 - `temperature_air_effective` (K; derived from the record as the Arrhenius-weighted mean)
 - `black_carbon_snow` (default: 0.0)
 - `black_carbon_ice` (default: 0.0)
-- `cloud_optical_thickness` (default: 0.0)
-- `solar_zenith_angle` (degrees, default: 0.0)
-- `shortwave_downward_diffuse` (W/m², default: 0.0)
 - `cloud_fraction` (default: 0.1)
 
 # Examples
@@ -327,9 +391,12 @@ function initialize_forcing(stack::DimStack)
     # Optional variables with defaults
     black_carbon_snow = get(meta, "black_carbon_snow", 0.0)
     black_carbon_ice = get(meta, "black_carbon_ice", 0.0)
-    cloud_optical_thickness = get(meta, "cloud_optical_thickness", 0.0)
-    solar_zenith_angle = get(meta, "solar_zenith_angle", 0.0)
-    shortwave_downward_diffuse = get(meta, "shortwave_downward_diffuse", 0.0)
+    # Radiation geometry: a layer when the stack carries one, else a metadata scalar.
+    _layer_or_meta(name, default) =
+        haskey(stack, name) ? parent(stack[name]) : get(meta, String(name), default)
+    cloud_optical_thickness = _layer_or_meta(:cloud_optical_thickness, 0.0)
+    solar_zenith_angle = _layer_or_meta(:solar_zenith_angle, 0.0)
+    shortwave_downward_diffuse = _layer_or_meta(:shortwave_downward_diffuse, 0.0)
     cloud_fraction = get(meta, "cloud_fraction", 0.1)
 
     # Provenance metadata (optional): source name, cell coordinates, the absolute

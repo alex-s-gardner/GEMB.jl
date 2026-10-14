@@ -55,7 +55,8 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 | `albedo_density_threshold` | **`Inf`** | kg m⁻³ | `Inf` disables the density-based snow/ice albedo switch |
 | `cloud_fraction` | **0.1** | – | |
 | `shortwave_subsurface_absorption` | **`false`** | – | Absorb shortwave with depth rather than at the surface only |
-| `shortwave_downward_diffuse`, `solar_zenith_angle`, `cloud_optical_thickness`, `black_carbon_snow`, `black_carbon_ice` | **0.0** | – | Overridden by the forcing when supplied |
+| `shortwave_downward_diffuse`, `solar_zenith_angle`, `cloud_optical_thickness` | **0.0** | W m⁻², degrees, – | Used only where the forcing layer of the same name is identically zero |
+| `black_carbon_snow`, `black_carbon_ice` | **0.0** | ppmw | Applied to every step |
 | `column_ztop` | **10.0** | m | Depth of the uniform near-surface zone |
 | `column_dztop` | **0.05** | m | Cell thickness in that zone |
 | `column_dzmin` / `column_dzmax` | **0.025** / **0.075** | m | Merge/split bands enforcing the fixed cell count |

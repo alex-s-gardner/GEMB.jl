@@ -1,4 +1,12 @@
 """
+    _forcing_or_parameter(layer, value, tdim) -> DimArray
+
+`layer` unless it is identically zero, in which case a `Fill` of the scalar `value` on `tdim`.
+"""
+_forcing_or_parameter(layer::AbstractVector, value::Float64, tdim) =
+    all(iszero, layer) ? DimArray(Fill(value, length(tdim)), (tdim,)) : layer
+
+"""
     gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
          verbose=false, thermal_workspace=ThermalWorkspace(),
          column_workspace=ColumnWorkspace())
@@ -14,6 +22,13 @@ writes. `mp` is an immutable description and holds no scratch, so a single `mp` 
 by any number of threads stepping columns concurrently. `thermal_workspace` is the mutable
 half: it is reused across timesteps within a run, so each concurrent run needs its own (the
 default gives every call a fresh one). See [`ThermalWorkspace`](@ref).
+
+# Radiation geometry
+`solar_zenith_angle`, `cloud_optical_thickness` and `shortwave_downward_diffuse` come from the
+forcing layers of those names. Where a layer is identically zero (what
+[`initialize_forcing`](@ref) builds when none is supplied), the `mp` field of the same name is
+used for every step instead. The merged layers are range-checked per step by
+[`validate_radiation_geometry`](@ref).
 
 # Provenance
 The output metadata records where the forcing came from (`dataset`, `latitude`,
@@ -58,6 +73,18 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         snow_drift_forcing = DimArray(Fill(mp.drift_rate, n), (tdim,))
     end
 
+    # Radiation geometry follows the same rule as the drift layer: the forcing layer wins, and
+    # the `mp` scalar is the fallback for a forcing whose layer is identically zero (the state
+    # `initialize_forcing` leaves it in when the caller supplies nothing).
+    cloud_optical_thickness = _forcing_or_parameter(climate_forcing.cloud_optical_thickness,
+        mp.cloud_optical_thickness, tdim)
+    solar_zenith_angle = _forcing_or_parameter(climate_forcing.solar_zenith_angle,
+        mp.solar_zenith_angle, tdim)
+    shortwave_downward_diffuse = _forcing_or_parameter(
+        climate_forcing.shortwave_downward_diffuse, mp.shortwave_downward_diffuse, tdim)
+    validate_radiation_geometry(solar_zenith_angle, cloud_optical_thickness,
+        shortwave_downward_diffuse, climate_forcing.shortwave_downward)
+
     # TODO: time evolving parameters should all be handled in ClimateForcing, not ModelParameters, as inputs to gemb.
     climate_forcing = ClimateForcing(
         climate_forcing.temperature_air,
@@ -69,9 +96,9 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.vapor_pressure,
         DimArray(Fill(mp.black_carbon_snow, n), (tdim,)),
         DimArray(Fill(mp.black_carbon_ice, n), (tdim,)),
-        DimArray(Fill(mp.cloud_optical_thickness, n), (tdim,)),
-        DimArray(Fill(mp.solar_zenith_angle, n), (tdim,)),
-        DimArray(Fill(mp.shortwave_downward_diffuse, n), (tdim,)),
+        cloud_optical_thickness,
+        solar_zenith_angle,
+        shortwave_downward_diffuse,
         DimArray(Fill(mp.cloud_fraction, n), (tdim,)),
         climate_forcing.time_step,
         climate_forcing.temperature_air_mean,
