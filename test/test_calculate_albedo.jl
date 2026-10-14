@@ -195,7 +195,7 @@ end
         mp = ModelParameters(output_frequency=:daily, albedo_ice=albedo_ice)
         profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
         out = gemb(profile, cf, mp)
-        @test all(parent(out[:albedo_broadband]) .== albedo_ice)
+        @test all(a -> isapprox(a, albedo_ice; rtol=1e-12), parent(out[:albedo_broadband]))
         sum(parent(out[:shortwave_net]))
     end
     @test sw_net[1] / sw_net[2] ≈ 0.70 / 0.52 rtol = 0.02
