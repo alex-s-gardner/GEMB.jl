@@ -216,12 +216,12 @@ function _thermal_solve!(solver::ExplicitThermal,
     end
 
     ## FIND STABLE dt (allocation-free)
-    # The Von Neumann limit uses the pointwise heat capacity. Under `:CuffeyPaterson` this is
-    # conservative: c_p < 2102 everywhere below the melting point, so the limit only shrinks.
-    # The safety factor is not slack against an imprecise limit — it covers the surface energy
-    # balance's own feedback on cell 1, which `_max_safe_dt` does not see. See
-    # `THERMAL_EXPLICIT_SAFETY_FACTOR`.
-    max_safe_dt = _max_safe_dt(temperature, dz, density, K, mp)
+    # The positivity limit of every cell: diffusion (`_max_safe_dt`) and, for the surface cell,
+    # diffusion plus the surface energy balance's own feedback (`_surface_safe_dt`). Both use the
+    # pointwise heat capacity; under `:CuffeyPaterson` that is conservative, since c_p < 2102
+    # everywhere below the melting point. See `THERMAL_EXPLICIT_SAFETY_FACTOR`.
+    max_safe_dt = min(_max_safe_dt(temperature, dz, density, K, mp),
+        _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs))
     dt = _find_dt_divisor(max_safe_dt * mp.thermal_explicit_safety_factor, mp.dt_divisors)
 
     ## THERMAL DIFFUSION IN ENTHALPY FORM (Patankar 1980, Ch. 3&4)
@@ -1108,15 +1108,8 @@ Cell `m` is excluded: it is the Dirichlet reservoir, its enthalpy is never updat
 (`Q_sw[m] = 0`, no flux is drawn from it), so it imposes no stability constraint. The old
 form included it.
 
-!!! warning "Diffusion only — the surface cell is under-constrained"
-    Cell 1 also carries the explicitly-evaluated surface energy balance, whose slope
-    `Λ = dQ_sfc/dT₁ ≤ 0` enters its own-temperature coefficient exactly as a face conductance
-    does: `coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`. The `|Λ|` is not included here, so the value
-    returned is always an *over*estimate of the true surface constraint, by a factor the model
-    does not bound. That is what `mp.thermal_explicit_safety_factor` covers, and why it is
-    not simply slack — see [`THERMAL_EXPLICIT_SAFETY_FACTOR`](@ref) for the measured margin.
-    Folding `|Λ|` in here directly is the open option; it would need the surface state, which
-    this function deliberately does not take.
+Diffusion only: cell 1 also carries the explicitly-evaluated surface energy balance, whose
+limit is [`_surface_safe_dt`](@ref). The explicit solver takes the smaller of the two.
 
 # References
 - Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Hemisphere Publishing,
@@ -1138,6 +1131,36 @@ function _max_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     return max_safe_dt
+end
+
+"""
+    _surface_safe_dt(temperature, dz, density, K, mp, sfc, cfs) -> dt [s]
+
+Explicit sub-step bound from the surface cell, `THERMAL_SURFACE_STEP_FRACTION` of its
+relaxation time with diffusion included. The surface energy balance's slope
+`Λ = dQ_sfc/dT₁ ≤ 0` ([`_surface_energy_balance_slope`](@ref): `−4εσT³` plus the turbulent
+derivative) enters cell 1's own-temperature coefficient as a face conductance does,
+`coef₁ = 1 − dt·(G₁ + |Λ|)/(ρ₁c₁dz₁)`, so `ρ₁c₁dz₁/(G₁ + |Λ|)` is the step at which that
+coefficient reaches zero. `Λ` is evaluated at the start-of-step surface temperature; at or
+above the melting point `Λ = 0`.
+
+The fraction is for accuracy, not stability: the surface flux is lagged one sub-step, so its
+error grows with `dt` relative to the relaxation time. At 0.25 the forcing-step mean turbulent
+flux of a thin surface cell under 15 m s⁻¹ of cold wind is within 2% of its value at a 16x
+smaller step.
+"""
+function _surface_safe_dt(temperature::Vector{Float64}, dz::Vector{Float64},
+    density::Vector{Float64}, K::Vector{Float64}, mp::ModelParameters,
+    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+
+    T1 = temperature[1]
+    longwave_upward, heat_flux_sensible, heat_flux_latent, _, _ =
+        _surface_energy_balance(T1, sfc.emissivity, sfc, cfs)
+    Λ = _surface_energy_balance_slope(T1, sfc.emissivity, sfc, cfs, longwave_upward,
+        heat_flux_sensible, heat_flux_latent)
+    G1 = 1.0 / (dz[2] / (2 * K[2]) + dz[1] / (2 * K[1]))
+    return THERMAL_SURFACE_STEP_FRACTION * density[1] * heat_capacity(mp, T1) * dz[1] /
+           (G1 + abs(Λ))
 end
 
 """
