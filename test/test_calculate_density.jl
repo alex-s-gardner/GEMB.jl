@@ -1332,3 +1332,26 @@ end
     @test cfs.accumulation_mean == cfs.precipitation_mean
     @test cfs.temperature_air_effective == cfs.temperature_air_mean
 end
+
+@testset "Arthern densification: one step in closed form" begin
+    # ρ₁ = ρ₀ + c·(ρᵢ − ρ₀)·dt/365 with c = 0.07·A·g·exp(−60000/RT + 42400/RT̄) below
+    # 550 kg m-3 and 0.03·(…) above, A the mean snowfall [kg m-2 yr-1] and dt in days.
+    n = 4
+    T = [250.0, 255.0, 260.0, 265.0]
+    density = [300.0, 450.0, 600.0, 800.0]
+    dz = fill(0.2, n)
+    A, T̄, dt_days = 350.0, 252.0, 3.0
+    cfs = GEMB.ClimateForcingStep(; dt=86400.0 * dt_days, temperature_air_mean=T̄,
+        precipitation_mean=500.0, accumulation_mean=A)
+    mp = GEMB.ModelParameters(densification_method=:Arthern,
+        densification_accumulation=:accumulation, mean_temperature_method=:arithmetic)
+    dz_out, ρ_out = GEMB.calculate_density(T, copy(dz), copy(density), fill(0.5, n),
+        zeros(n), cfs, mp)
+    for i in 1:n
+        H = A * GEMB.GRAVITY * exp(-60000.0 / (GEMB.R_GAS * T[i]) + 42400.0 / (GEMB.R_GAS * T̄))
+        c = (density[i] <= 550.0 ? 0.07 : 0.03) * H
+        ρ1 = density[i] + c * (mp.density_ice - density[i]) * dt_days / 365
+        @test ρ_out[i] ≈ ρ1 rtol = 1e-12
+        @test dz_out[i] * ρ_out[i] ≈ dz[i] * density[i] rtol = 1e-12
+    end
+end

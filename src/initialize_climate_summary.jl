@@ -23,8 +23,10 @@ relative to any model integration.
   is the only regime discriminator**: positive buries snow and grows firn,
   non-positive exposes ice. Rainfall is not subtracted — see the note in
   [`initialize_climate_summary`](@ref).
-- `accumulation_effective`: `accumulation + refreeze`, the mass flux that drives
-  densification.
+- `accumulation_effective`: `accumulation + refreeze`, the mass flux one annual layer
+  receives (it sets the latent warming and the fresh-snow density of the initial guess; the
+  densification rate uses the forcing's own mean accumulation, see
+  [`densification_accumulation`](@ref)).
 
 # Temperature [K]
 - `temperature_air_mean`: mean annual air temperature.

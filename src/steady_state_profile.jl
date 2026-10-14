@@ -1,6 +1,6 @@
 """
-    steady_state_profile(dz, cs::ClimateSummary, mp::ModelParameters; n_age=2000)
-        -> NamedTuple
+    steady_state_profile(dz, cs::ClimateSummary, mp::ModelParameters;
+                         densification_accumulation, n_age=2000) -> NamedTuple
 
 Build a steady-state estimate of the full firn column state by marching a single
 parcel of snow forward in age and recording every state variable as it is buried.
@@ -24,7 +24,11 @@ seeds:
 
 - **density** relaxes as `ρ(t+dt) = ρᵢ − (ρᵢ − ρ)·exp(−c·dt)` (Arthern et al.
   2010 eq. 1) with `c` from [`_densification_rate`](@ref) for the configured
-  `mp.densification_method` — *not* always Herron–Langway.
+  `mp.densification_method` — *not* always Herron–Langway — evaluated at
+  `densification_accumulation`, which must be the mean accumulation the transient
+  [`calculate_density`](@ref) uses (`cf.accumulation_mean` or `cf.precipitation_mean`, per
+  `mp.densification_accumulation`), so that the guess is the transient model's own steady
+  state.
 - **depth** follows from mass balance, `z(t) = b·∫₀ᵗ ds/ρ(s)`, where
   `b = cs.balance` [kg m-2 yr-1] is the mass buried per year.
 - **temperature** is a damped annual wave about the mean surface temperature, warmed
@@ -54,6 +58,7 @@ if the march never reached ice.
 - `cs`: the climate summary from [`initialize_climate_summary`](@ref).
 - `mp`: model parameters; supplies the densification method, ice density and
   irreducible-water saturation.
+- `densification_accumulation`: mean accumulation [kg m-2 yr-1] in the densification rate.
 - `n_age`: number of march steps spanning the column. The march is stepped in
   *depth* (`max_depth/n_age` per step) with the age step derived from the local
   density, so resolution is uniform in depth and the step count does not depend on
@@ -67,7 +72,7 @@ if the march never reached ice.
   *J. Glaciol.* 25, 373-385.
 """
 function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
-    mp::ModelParameters; n_age::Int=2000)
+    mp::ModelParameters; densification_accumulation::Real, n_age::Int=2000)
 
     dz = Float64.(dz)
     depth = -dz2z(dz)                               # positive downward [m]
@@ -106,10 +111,8 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
         )
     end
 
-    # `accumulation_effective` is already the snowfall-plus-refreeze flux, so the
-    # `densification_accumulation` gate has nothing to switch here — the initializer never
-    # used total precipitation. Only the temperature gate applies.
-    p = DensificationCoeffs(mp, cs.accumulation_effective,
+    # The same climatological accumulation and mean temperature `calculate_density` uses.
+    p = DensificationCoeffs(mp, densification_accumulation,
         mp.mean_temperature_method === :arrhenius ? cs.temperature_air_effective :
                                                     cs.temperature_air_mean)
 
@@ -500,4 +503,40 @@ function steady_state_density(z_center::AbstractVector, T_mean::Real,
     end
 
     return _interp_curve(ρ_curve, z_curve, depth; lo=Float64(ρ0), hi=ρi)
+end
+
+"""
+    herron_langway_density(depth, T, accumulation, ρ0, ρ_ice) -> ρ [kg m-3]
+
+Steady-state firn density at `depth` [m below the surface] from the closed form of Herron &
+Langway (1980), eq. 7, for mean temperature `T` [K], mean accumulation `accumulation`
+[kg m-2 yr-1], surface density `ρ0` and ice density `ρ_ice` [kg m-3]. With densities in
+Mg m-3, accumulation `A` in m w.e. yr-1 and `R` the gas constant:
+
+    stage 1 (ρ ≤ 550):  ln(ρ/(ρᵢ − ρ)) = ln(ρ₀/(ρᵢ − ρ₀)) + ρᵢ·k₀·z,         k₀ = 11·exp(−10160/RT)
+    stage 2 (ρ > 550):  ln(ρ/(ρᵢ − ρ)) = ln(0.55/(ρᵢ − 0.55)) + ρᵢ·k₁·(z − h₅₅)/√A,
+                        k₁ = 575·exp(−21400/RT)
+
+with `h₅₅` the depth at which stage 1 reaches 550 kg m-3. Non-positive accumulation buries
+nothing and returns `ρ_ice`.
+
+# References
+- Herron, M. M. and Langway, C. C. (1980). Firn densification: an empirical model.
+  *J. Glaciol.* 25, 373-385. Eq. 7.
+"""
+function herron_langway_density(depth::Real, T::Real, accumulation::Real, ρ0::Real,
+    ρ_ice::Real)
+    accumulation <= 0.0 && return Float64(ρ_ice)
+    depth >= 0.0 || throw(DomainError(depth, "depth must be non-negative (metres below the surface)"))
+    ρi = Float64(ρ_ice) / 1000
+    ρs = Float64(ρ0) / 1000
+    ρc = DENSITY_STAGE_TRANSITION / 1000
+    A = Float64(accumulation) / 1000
+    k0 = 11.0 * exp(-10160.0 / (R_GAS * T))
+    k1 = 575.0 * exp(-21400.0 / (R_GAS * T))
+    logit(ρ) = log(ρ / (ρi - ρ))
+    h55 = (logit(ρc) - logit(ρs)) / (ρi * k0)
+    Z = depth <= h55 ? exp(logit(ρs) + ρi * k0 * depth) :
+        exp(logit(ρc) + ρi * k1 * (depth - h55) / sqrt(A))
+    return 1000 * ρi * Z / (1 + Z)
 end

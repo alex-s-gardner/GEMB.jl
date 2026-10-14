@@ -83,7 +83,7 @@ end
     gemb_spinup(profile, cf, mp; simulation_years_maximum=100,
                 convergence_delta_density=nothing, convergence_drift_density=nothing,
                 convergence_delta_fac=nothing, convergence_drift_fac=nothing,
-                drift_window=$SPINUP_DRIFT_WINDOW, verbose=false)
+                drift_window=$SPINUP_DRIFT_WINDOW, require_convergence=false, verbose=false)
 
 Run GEMB for multiple spinup cycles to reach quasi-steady state.
 
@@ -167,6 +167,10 @@ When none is given the spinup always runs to the `simulation_years_maximum` ceil
   ([`firn_air_content`](@ref)), see above.
 - `drift_window`: trailing cycles the drift slope is fitted over (default
   $SPINUP_DRIFT_WINDOW). Must be ≥ 2. Shared by both drift criteria.
+- `require_convergence`: throw an error, instead of returning the profile, when the requested
+  criteria are not met by the `simulation_years_maximum` ceiling. Requires at least one
+  criterion. Without it, an unconverged spinup returns its profile with
+  `spinup_converged = false` in the provenance and logs a warning.
 - `verbose`: print a convergence message when early exit occurs.
 - `thermal_workspace`: reusable thermal-solve scratch, shared across every cycle of this
   spinup. One belongs to one column; give each concurrent thread its own
@@ -180,9 +184,15 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      convergence_delta_fac=nothing,
                      convergence_drift_fac=nothing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
+                     require_convergence::Bool=false,
                      verbose::Bool=false,
                      thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
                      column_workspace::ColumnWorkspace=ColumnWorkspace())
+
+    require_convergence && convergence_delta_density === nothing &&
+        convergence_drift_density === nothing && convergence_delta_fac === nothing &&
+        convergence_drift_fac === nothing &&
+        throw(ArgumentError("require_convergence needs at least one convergence criterion"))
 
     if (convergence_drift_density !== nothing || convergence_drift_fac !== nothing) &&
        drift_window < 2
@@ -258,6 +268,15 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     end
 
     @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run years_simulated=cycles_run*years_per_cycle converged=converged final_delta_density=rho_track.final_delta final_drift_density=rho_track.final_drift final_delta_fac=fac_track.final_delta final_drift_fac=fac_track.final_drift
+
+    if checking && !converged
+        summary = "gemb_spinup did not converge in $(cycles_run) cycles " *
+                  "($(cycles_run * years_per_cycle) simulated years): " *
+                  "Δρ = $(rho_track.final_delta), ρ drift = $(rho_track.final_drift), " *
+                  "ΔFAC = $(fac_track.final_delta), FAC drift = $(fac_track.final_drift)"
+        require_convergence && error(summary)
+        @warn summary
+    end
 
     return _attach_spinup_provenance(current_profile, cf;
         cycles=cycles_run, converged=converged,
