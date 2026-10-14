@@ -3,6 +3,10 @@
 
 Compute sensible and latent heat fluxes using Monin-Obukhov similarity theory.
 
+`z0`, `zT` and `zQ` are the roughness lengths for momentum, heat and moisture [m]. Wind is
+observed at `cfs.wind_observation_height` and temperature and humidity at
+`cfs.temperature_observation_height`; the two may differ (see [`obukhov_stability`](@ref)).
+
 `min_wind_speed` floors `cfs.wind_speed` (which would otherwise drive the bulk
 Richardson number to infinity at zero wind); clamping here avoids rebuilding the
 `ClimateForcingStep` in the caller.
@@ -15,146 +19,75 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
 
     wind_speed = max(cfs.wind_speed, min_wind_speed)
 
-    # Bulk-transfer coefficient (Neutral)
-    An = VON_KARMAN^2  # 0.4^2 = 0.16
-    C = An * wind_speed
-
-    # Exner-like pressure factor (100000/p)^0.286; reused below for the
-    # sensible-heat flux, so compute the pow only once.
-    pressure_factor = (100000 / cfs.pressure_air)^0.286
+    # Neutral bulk-transfer factor κ²U
+    C = VON_KARMAN^2 * wind_speed
 
     # Neutral roughness log terms (invariant in T_surface).
     logM = log(cfs.wind_observation_height / z0)
     logHT = log(cfs.temperature_observation_height / zT)
     logHQ = log(cfs.temperature_observation_height / zQ)
 
-    # Squared wind-to-height ratio in the bulk Richardson number, also invariant in
-    # T_surface. Integer exponent: `^2` and `^2.0` agree bit-for-bit but the float
-    # exponent compiles to a `pow` call rather than a multiply.
-    wind_ratio_sq = (wind_speed / cfs.wind_observation_height)^2
+    # g·z_w/U², the part of the bulk Richardson number that does not depend on T_surface.
+    ri_scale = GRAVITY * cfs.wind_observation_height / wind_speed^2
 
     return _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs,
-        wind_speed, C, pressure_factor, logM, logHT, logHQ, wind_ratio_sq)
+        wind_speed, C, logM, logHT, logHQ, ri_scale)
 end
 
 """
-    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, pressure_factor, logM, logHT, logHQ, wind_ratio_sq)
+    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, wind_speed, C, logM, logHT, logHQ, ri_scale)
 
 Core of [`turbulent_heat_flux`](@ref) with the sub-timestep-invariant quantities
-(`wind_speed`, bulk coefficient `C`, Exner `pressure_factor`, the neutral
-roughness logs `logM`/`logHT`/`logHQ`, and the squared wind-to-height ratio
-`wind_ratio_sq`) hoisted to the caller. `calculate_temperature`
-computes these once per timestep and reuses them across all thermal sub-steps,
-where only `T_surface` changes. Numerically identical to the inline form.
+(`wind_speed`, the neutral factor `C = κ²U`, the neutral roughness logs `logM`/`logHT`/`logHQ`,
+and `ri_scale = g·z_w/U²`) hoisted to the caller. `calculate_temperature` computes these once
+per timestep and reuses them across all thermal sub-steps, where only `T_surface` changes.
 
-## Integrated stability functions
+## Fluxes
 
-Both branches return `Ψ(ζ) = ∫₀^ζ (1 - φ(z))/z dz`, the integrated correction that enters the
-transfer coefficients as `coef = log(z/z₀) - Ψ`. Two properties follow from that definition and
-are what the branches are checked against in `test_turbulent_heat_flux.jl`:
+With `ζ = z_w/L` from [`obukhov_stability`](@ref), the integrated transfer functions are
 
-- **`Ψ(0) = 0`.** The integrand vanishes at neutral, so both branches must meet at `Ri = 0`.
-  Without this the fluxes step discontinuously as `T_surface` crosses `T_air` — and since the
-  implicit solver's Newton iteration converges on exactly that crossing, a jump there can leave
-  the surface energy balance with no solution in `T_surface` (Fourteau et al., 2024, Appendix D,
-  who move their own branch point to `Ri_b = 0` for this reason).
-- **`Ψ > 0` when unstable, `Ψ < 0` when stable.** Convection enhances exchange, so subtracting a
-  positive `Ψ` shrinks `coef` and raises the flux; stable stratification does the reverse.
+    F_m = ln(z_w/z0) − Ψ_m(ζ) + Ψ_m(ζ·z0/z_w)
+    F_h = ln(z_T/zT) − Ψ_h(ζ·z_T/z_w) + Ψ_h(ζ·zT/z_w)
+    F_q = ln(z_T/zQ) − Ψ_h(ζ·z_T/z_w) + Ψ_h(ζ·zQ/z_w)
 
-The stable branch is Beljaars & Holtslag (1991) eqs. 28 and 32, integrated in closed form. The
-unstable branch is Paulson (1970) with Högström's (1988) coefficients. Paulson's argument is the
-*inverse* profile function `x = φ⁻¹`, so both exponents are positive:
-`x_m = (1 - 19ζ)^{1/4}` inverts `φ_m = (1 - 19ζ)^{-1/4}`, and `x_h = (1 - 11.6ζ)^{1/2}` inverts
-`φ_h = (1 - 11.6ζ)^{-1/2}`. `Ψ_h = 2·ln((1 + x_h)/2)` takes `x_h` to the first power, the square
-root already being carried by `x_h` itself.
+and the fluxes are
 
-Both closed forms were verified by numerically integrating their own `φ` back through the
-definition above, agreeing to 6 decimal places at `ζ = ±0.01, ±0.1, ±1, ±5`.
+    H  = ρ_a·c_p·κ²U·(T_a − T_s)/(F_m·F_h)
+    LE = κ²U·L·(e_a − e_s(T_s))/(R_v·T̄·F_m·F_q),    T̄ = (T_a + T_s)/2
 
-Högström's `φ_h` carries a `0.95` prefactor (his `κ_H/κ_M` ratio) which makes `φ_h(0) = 0.95`
-rather than 1. It is dropped here: `Ψ` is defined against a profile function that is 1 at
-neutral, and retaining it would put `Ψ_h(0) = -0.0999` instead of 0 — reintroducing the very
-discontinuity described above. The ratio belongs to the neutral transfer coefficient, not
-inside the integral.
+The potential temperature is referenced to the surface pressure, so `θ_a − θ_s = T_a − T_s`
+and no pressure factor enters either flux or the Richardson number. The dry-adiabatic
+difference over the observation height, `g·z_T/c_p` (0.02 K at 2 m), is neglected.
 
-`ζ` is bounded below by `ZETA_UNSTABLE_MIN` on the unstable branch. This is a numerical
-guard, not physics: `Ri` carries `wind_speed^-2`, so at the `min_wind_speed` floor it reaches
-values far outside the range Monin-Obukhov theory was ever fit over, where `Ψ_h` would grow past
-`log(z_T/z_Q)` and drive the transfer coefficient through zero. See that constant's comment.
+`L` is `LS` with saturation over ice below the melting point and `LV` with saturation over
+water at it.
 
 # References
-- Paulson, C. A. (1970). The mathematical representation of wind speed and temperature profiles
-  in the unstable atmospheric surface layer. *J. Appl. Meteorol.* 9, 857-861.
-- Högström, U. (1988). Non-dimensional wind and temperature profiles in the atmospheric surface
-  layer: a re-evaluation. *Boundary-Layer Meteorol.* 42, 55-78.
-- Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces for
-  atmospheric models. *J. Appl. Meteorol.* 30, 327-341.
-- Fourteau, K., Brondex, J., Brun, F. & Dumont, M. (2024). A novel numerical implementation for
-  the surface energy budget of melting snowpacks and glaciers. *Geosci. Model Dev.* 17,
-  1903-1929. https://doi.org/10.5194/gmd-17-1903-2024
+- Monin, A. S. and Obukhov, A. M. (1954). Basic laws of turbulent mixing in the surface
+  layer of the atmosphere. *Tr. Akad. Nauk SSSR Geofiz. Inst.* 24, 163-187.
 """
 @inline function _turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep,
-    wind_speed::Float64, C::Float64, pressure_factor::Float64,
-    logM::Float64, logHT::Float64, logHQ::Float64, wind_ratio_sq::Float64)
+    wind_speed::Float64, C::Float64,
+    logM::Float64, logHT::Float64, logHQ::Float64, ri_scale::Float64)
 
-    # Bulk Richardson Number
-    Ri = pressure_factor *
-         (2.0 * GRAVITY * (cfs.temperature_air - T_surface)) /
-         (cfs.temperature_observation_height * (cfs.temperature_air + T_surface) *
-          wind_ratio_sq)
+    z_w = cfs.wind_observation_height
+    z_T = cfs.temperature_observation_height
+    T_mean = 0.5 * (cfs.temperature_air + T_surface)
 
-    # Constants for Beljaars and Holtslag (1991)
-    a1 = 1.0
-    b1 = 2.0 / 3.0
-    c1 = 5.0
-    d1 = 0.35
-    PhiMz0 = 0.0
-    PhiHzT = 0.0
-    PhiHzQ = 0.0
+    # Bulk Richardson number with the wind height as reference: Ri_b = g·Δθ·z_w/(θ̄·U²).
+    Ri = ri_scale * (cfs.temperature_air - T_surface) / T_mean
 
-    if Ri > 0.0 + T_TOLERANCE  # STABLE
-        if Ri < 0.2 - T_TOLERANCE
-            zL = Ri / (1.0 - 5.0 * Ri)
-        else
-            zL = Ri
-        end
+    ζ = obukhov_stability(Ri, z_w, z_T, z0, zT, logM, logHT)
 
-        zLM = max(zL / cfs.wind_observation_height * z0, 1e-3)
-        zLT = max(zL / cfs.temperature_observation_height * zT, 1e-3)
-
-        # Integrated Stability Functions (Psi)
-        PhiMz = -(a1 * zL + b1 * (zL - c1 / d1) * exp(-d1 * zL) + b1 * c1 / d1)
-        PhiHz = -((1 + 2 * a1 * zL / 3)^1.5 + b1 * (zL - c1 / d1) * exp(-d1 * zL) + b1 * c1 / d1 - 1.0)
-
-        PhiMz0 = -(a1 * zLM + b1 * (zLM - c1 / d1) * exp(-d1 * zLM) + b1 * c1 / d1)
-        PhiHzT = -((1 + 2 * a1 * zLT / 3)^1.5 + b1 * (zLT - c1 / d1) * exp(-d1 * zLT) + b1 * c1 / d1 - 1.0)
-
-        PhiHzQ = PhiHzT
-    else  # UNSTABLE
-        # `Ri` carries `wind_speed^-2`, so at the `min_wind_speed` floor it reaches
-        # magnitudes that are an artifact of that floor rather than a stability regime.
-        # See `ZETA_UNSTABLE_MIN` for why it is bounded and why -100 is safe.
-        zL = max(Ri / 1.5, ZETA_UNSTABLE_MIN)
-        # Paulson (1970) integrated forms. Their argument is the *inverse* profile
-        # function `x = φ⁻¹`, not `φ` itself: `x_m = (1 - 19ζ)^(1/4)` is `φ_m⁻¹` for
-        # Högström's (1988) `φ_m = (1 - 19ζ)^(-1/4)`, and likewise for heat. Both
-        # exponents are therefore positive here, and `x_h` enters `Ψ_h` to the first
-        # power because it already carries the square root. See the docstring.
-        xm = (1.0 - 19.0 * zL)^0.25
-        PhiMz = 2.0 * log((1 + xm) / 2.0) + log((1 + xm^2) / 2.0) - 2 * atan(xm) + pi / 2
-        xh = (1.0 - 11.6 * zL)^0.5
-        PhiHz = 2.0 * log((1.0 + xh) / 2.0)
-    end
-
-    # Final Transfer Coefficients
-    coefM = logM - PhiMz + PhiMz0
-    coefHT = logHT - PhiHz + PhiHzT
-    coefHQ = logHQ - PhiHz + PhiHzQ
+    psi_h_T = stability_psi_h(ζ * z_T / z_w)
+    coefM = logM - stability_psi_m(ζ) + stability_psi_m(ζ * z0 / z_w)
+    coefHT = logHT - psi_h_T + stability_psi_h(ζ * zT / z_w)
+    coefHQ = logHQ - psi_h_T + stability_psi_h(ζ * zQ / z_w)
 
     # Sensible Heat Flux [W m-2]
-    heat_flux_sensible = density_air * C * HEAT_CAPACITY_AIR * (cfs.temperature_air - T_surface) * pressure_factor
-    heat_flux_sensible = heat_flux_sensible / (coefM * coefHT)
+    heat_flux_sensible = density_air * C * HEAT_CAPACITY_AIR *
+                         (cfs.temperature_air - T_surface) / (coefM * coefHT)
 
     # Latent Heat Flux [W m-2]
     if T_surface >= CtoK - T_TOLERANCE
@@ -165,14 +98,134 @@ values far outside the range Monin-Obukhov theory was ever fit over, where `Ψ_h
     else
         # Ice surface
         latent_heat = LS
-        # Saturation Vapor Pressure (Bolton 1980)
+        # Saturation Vapor Pressure (Murray 1967)
         eS = saturation_vapor_pressure_ice(T_surface)
     end
 
     # 461.9 is the specific gas constant for water vapor [J kg-1 K-1]
     heat_flux_latent = C * latent_heat * (cfs.vapor_pressure - eS) /
-                       (461.9 * (cfs.temperature_air + T_surface) / 2.0)
-    heat_flux_latent = heat_flux_latent / (coefM * coefHQ)
+                       (461.9 * T_mean) / (coefM * coefHQ)
 
     return heat_flux_sensible, heat_flux_latent, latent_heat
+end
+
+"""
+    obukhov_stability(Ri, z_w, z_T, z0, zT, logM=log(z_w/z0), logHT=log(z_T/zT)) -> ζ
+
+Stability parameter `ζ = z_w/L` at the wind observation height `z_w`, from the bulk Richardson
+number `Ri = g·Δθ·z_w/(θ̄·U²)` (Δθ between the temperature height `z_T` and the surface, `U`
+at `z_w`).
+
+Monin-Obukhov similarity with `u* = κU/F_m(ζ)` and `θ* = κΔθ/F_h(ζ)` (see
+[`_turbulent_heat_flux`](@ref) for `F_m` and `F_h`, which evaluate `Ψ_m` at `z_w/L` and `Ψ_h`
+at `z_T/L`) gives `z_w/L = Ri·F_m(ζ)²/F_h(ζ)`. This function solves that relation for `ζ` by
+`MO_NEWTON_STEPS` Newton steps on `ln|ζ|`,
+
+    R(s) = s + ln F_h − 2 ln F_m − ln|Ri| = 0,    s = ln|ζ|,
+    dR/ds = 1 + (φ_h(ζ z_T/z_w) − φ_h(ζ zT/z_w))/F_h − 2(φ_m(ζ) − φ_m(ζ z0/z_w))/F_m,
+
+starting from the neutral estimate `ζ₀ = Ri·ln(z_w/z0)²/ln(z_T/zT)`. The number of steps is
+fixed and there is no convergence test, so `ζ` is a smooth function of `Ri` with the sign of
+`Ri`, zero at `Ri = 0`, on both sides of neutral. Against the converged solution the transfer
+coefficient `1/(F_m F_h)` agrees to 1e-12 for `-100 < ζ < 1` and to 5e-5 for any `ζ` reached
+with `|Ri| ≤ 10^4`, over `z0` from 1e-5 to 1e-2 m, `zT/z0` from 0.01 to 1, and wind and
+temperature heights of 2 and 10 m in any combination.
+
+The unstable result is bounded below by `ZETA_UNSTABLE_MIN`.
+
+The stable functions are Beljaars & Holtslag (1991); the unstable ones Paulson (1970) with
+Högström's (1988) coefficients (see [`stability_psi_m`](@ref)).
+"""
+@inline function obukhov_stability(Ri::Float64, z_w::Float64, z_T::Float64, z0::Float64,
+    zT::Float64, logM::Float64=log(z_w / z0), logHT::Float64=log(z_T / zT))
+
+    isfinite(Ri) || error("obukhov_stability: bulk Richardson number is $(Ri)")
+    Ri == 0.0 && return 0.0
+
+    sgn = sign(Ri)
+    log_abs_Ri = log(abs(Ri))
+    s = log_abs_Ri + 2 * log(logM) - log(logHT)
+    r0 = z0 / z_w
+    rT = z_T / z_w
+    rTs = zT / z_w
+    for _ in 1:MO_NEWTON_STEPS
+        ζ = sgn * exp(s)
+        Fm = logM - stability_psi_m(ζ) + stability_psi_m(ζ * r0)
+        Fh = logHT - stability_psi_h(ζ * rT) + stability_psi_h(ζ * rTs)
+        R = s + log(Fh) - 2 * log(Fm) - log_abs_Ri
+        dR = 1 + (stability_phi_h(ζ * rT) - stability_phi_h(ζ * rTs)) / Fh -
+             2 * (stability_phi_m(ζ) - stability_phi_m(ζ * r0)) / Fm
+        s -= R / dR
+    end
+    return max(sgn * exp(s), ZETA_UNSTABLE_MIN)
+end
+
+# Beljaars & Holtslag (1991) stable-function constants.
+const _BH_A = 1.0
+const _BH_B = 2.0 / 3.0
+const _BH_C = 5.0
+const _BH_D = 0.35
+
+"""
+    stability_psi_m(ζ), stability_psi_h(ζ)
+
+Integrated stability functions `Ψ(ζ) = ∫₀^ζ (1 − φ(x))/x dx` for momentum and heat, which
+enter the transfer functions as `ln(z/z₀) − Ψ(z/L) + Ψ(z₀/L)`.
+
+- **Stable (`ζ > 0`)**: Beljaars & Holtslag (1991) eqs. 28 and 32 in closed form, with
+  `a = 1, b = 2/3, c = 5, d = 0.35`:
+  `Ψ_m = −[aζ + b(ζ − c/d)e^{−dζ} + bc/d]` and
+  `Ψ_h = −[(1 + 2aζ/3)^{3/2} + b(ζ − c/d)e^{−dζ} + bc/d − 1]`.
+- **Unstable (`ζ ≤ 0`)**: Paulson (1970) with Högström's (1988) coefficients, in terms of the
+  inverse profile functions `x_m = (1 − 19ζ)^{1/4}` and `x_h = (1 − 11.6ζ)^{1/2}`:
+  `Ψ_m = 2ln((1 + x_m)/2) + ln((1 + x_m²)/2) − 2atan(x_m) + π/2` and
+  `Ψ_h = 2ln((1 + x_h)/2)`.
+
+`Ψ(0) = 0` on both branches, so the transfer functions are continuous through neutral;
+`Ψ > 0` when unstable and `Ψ < 0` when stable. Högström's `φ_h` carries a `0.95` prefactor (his
+`κ_H/κ_M` ratio) that makes `φ_h(0) = 0.95`; it is dropped here so that `Ψ_h(0) = 0`.
+
+# References
+- Paulson, C. A. (1970). The mathematical representation of wind speed and temperature profiles
+  in the unstable atmospheric surface layer. *J. Appl. Meteorol.* 9, 857-861.
+- Högström, U. (1988). Non-dimensional wind and temperature profiles in the atmospheric surface
+  layer: a re-evaluation. *Boundary-Layer Meteorol.* 42, 55-78.
+- Beljaars, A. C. M. & Holtslag, A. A. M. (1991). Flux parameterization over land surfaces for
+  atmospheric models. *J. Appl. Meteorol.* 30, 327-341.
+"""
+@inline function stability_psi_m(ζ::Float64)
+    if ζ > 0.0
+        return -(_BH_A * ζ + _BH_B * (ζ - _BH_C / _BH_D) * exp(-_BH_D * ζ) +
+                 _BH_B * _BH_C / _BH_D)
+    end
+    x = (1.0 - 19.0 * ζ)^0.25
+    return 2.0 * log((1 + x) / 2.0) + log((1 + x^2) / 2.0) - 2 * atan(x) + pi / 2
+end
+
+@inline function stability_psi_h(ζ::Float64)
+    if ζ > 0.0
+        return -((1 + 2 * _BH_A * ζ / 3)^1.5 + _BH_B * (ζ - _BH_C / _BH_D) * exp(-_BH_D * ζ) +
+                 _BH_B * _BH_C / _BH_D - 1.0)
+    end
+    return 2.0 * log((1.0 + (1.0 - 11.6 * ζ)^0.5) / 2.0)
+end
+
+"""
+    stability_phi_m(ζ), stability_phi_h(ζ)
+
+Profile functions `φ = 1 − ζ·dΨ/dζ` matching [`stability_psi_m`](@ref) and
+`stability_psi_h`: Beljaars & Holtslag (1991) when stable,
+`φ_m = 1 + ζ[a + b e^{−dζ}(1 + c − dζ)]` and
+`φ_h = 1 + ζ[a(1 + 2aζ/3)^{1/2} + b e^{−dζ}(1 + c − dζ)]`; Högström (1988) when unstable,
+`φ_m = (1 − 19ζ)^{−1/4}` and `φ_h = (1 − 11.6ζ)^{−1/2}`.
+"""
+@inline function stability_phi_m(ζ::Float64)
+    ζ > 0.0 && return 1 + ζ * (_BH_A + _BH_B * exp(-_BH_D * ζ) * (1 + _BH_C - _BH_D * ζ))
+    return (1.0 - 19.0 * ζ)^(-0.25)
+end
+
+@inline function stability_phi_h(ζ::Float64)
+    ζ > 0.0 && return 1 + ζ * (_BH_A * sqrt(1 + 2 * _BH_A * ζ / 3) +
+                               _BH_B * exp(-_BH_D * ζ) * (1 + _BH_C - _BH_D * ζ))
+    return (1.0 - 11.6 * ζ)^(-0.5)
 end

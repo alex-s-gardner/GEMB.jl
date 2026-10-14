@@ -306,7 +306,7 @@ end
     # block across this crossing; the continuous scheme must not.
     mp = GEMB.ModelParameters()
     make(p) = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=p,
-                                shortwave=100.0, longwave=320.0)
+                                shortwave=100.0, longwave=325.0)
     precips = collect(range(0.8, 2.4; length=17))
 
     summaries = [GEMB.initialize_climate_summary(make(p), mp) for p in precips]
@@ -318,7 +318,7 @@ end
     @test issorted(balances)
 
     # Melt is *not* constant across the sweep: more snowfall means more snow cover,
-    # a higher albedo and so less melt (here 395 -> 134 kg m-2 yr-1). That coupling
+    # a higher albedo and so less melt (here 417 -> 151 kg m-2 yr-1). That coupling
     # is the albedo/melt feedback `initialize_climate_summary` iterates to close, so
     # assert it runs the right way and stays smooth rather than assuming melt is an
     # independent knob.
@@ -381,8 +381,8 @@ end
     @test issorted([s.balance for s in steps]; rev=true)
     @test steps[end].balance < 0.1 * steps[1].balance
     # ...and the surface density closes onto ice as it does, with no floor. Measured:
-    # b = 9.8 -> 4.8 -> 2.6 -> 1.3 -> 0.61 kg m-2 yr-1 gives a gap below ice of
-    # 520 -> 479 -> 408 -> 300 -> 162 kg m-3. Every refinement shrinks it, so the
+    # b = 6.3 -> 1.7 -> 1.7 -> 0.58 -> 0.005 kg m-2 yr-1 gives a gap below ice of
+    # 498 -> 321 -> 321 -> 134 -> 0 kg m-3. No refinement widens it, so the
     # ablation column (exactly ice) is the `b -> 0+` limit of the firn column rather
     # than a separate branch — the claim that lets the scheme drop the threshold.
     gaps = [s.gap for s in steps]
@@ -514,7 +514,7 @@ end
     # residence time to report on either setting. Same forcing as the ablation end of the
     # balance sweep below.
     cf_ablation = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=0.8,
-        shortwave=100.0, longwave=320.0)
+        shortwave=100.0, longwave=325.0)
     @test GEMB.initialize_climate_summary(cf_ablation, mp_ss).balance < 0.0
     @test all(collect(GEMB.initialize_profile(mp_ss, cf_ablation)[:age]) .== 0.0)
 end

@@ -249,17 +249,24 @@ Both branches — this one and the stable Beljaars and Holtslag (1991) eqs. 28 a
 checked against the definition directly, by numerically integrating their own published `φ`
 and comparing to the closed form, agreeing to 6 decimal places at `ζ = ±0.01, ±0.1, ±1, ±5`.
 
+**Stability from the bulk Richardson number.** `ζ = z_w/L` at the wind height solves
+`z_w/L = Ri_b·F_m²/F_h`, with `Ri_b = g·Δθ·z_w/(θ̄·U²)`, `Ψ_m` evaluated at `z_w/L` and
+`z₀/L`, and `Ψ_h` at `z_T/L` and `z_T0/L`, so differing wind and temperature heights enter
+through the stability functions rather than through an effective height. The relation is
+solved by four Newton steps on `ln|ζ|` from the neutral first guess, a fixed sequence of
+operations with no convergence test: `ζ` is a smooth function of `Ri_b` through neutral, and
+the transfer coefficient matches the converged solution to 1e-12 for `−100 < ζ < 1`.
+Potential temperature is referenced to the surface pressure, so no pressure factor enters
+the sensible flux or `Ri_b`.
+
 **`ζ` is bounded below by −100 on the unstable branch.** This is a numerical guard on the
-bulk formulation, not a change to the physics. `ζ` is diagnosed from the bulk Richardson
-number, which carries `wind_speed⁻²`, so at the `min_wind_speed = 0.01 m s⁻¹` floor over a
-melting surface under very cold air the synthetic forcing reaches `ζ ≈ −4.9e5`. That is the
-wind floor showing through rather than a stability regime, and Monin–Obukhov theory has no
-observational support anywhere near it (Högström's fits span `|ζ| ≲ 2`). Unbounded, `Ψ_h`
-grows past `log(z_T/z_Q)`, so `coefHT` crosses zero and the flux diverges and changes sign.
-−100 is two orders of magnitude beyond the calibration range, so it never binds in physically
-meaningful conditions, and it keeps the transfer coefficients positive for every roughness
-GEMB uses. Bounding `ζ` rather than clamping the coefficients keeps the fluxes a continuous,
-monotone function of `T_surface`, which the implicit solver needs.
+bulk formulation, not a change to the physics. `Ri_b` carries `wind_speed⁻²`, so at the
+`min_wind_speed = 0.01 m s⁻¹` floor over a melting surface under very cold air it reaches
+~−10⁵. That is the wind floor showing through rather than a stability regime, and
+Monin–Obukhov theory has no observational support anywhere near it (Högström's fits span
+`|ζ| ≲ 2`). −100 is two orders of magnitude beyond the calibration range, so it never binds in
+physically meaningful conditions. Bounding `ζ` rather than clamping the coefficients keeps the
+fluxes a continuous, monotone function of `T_surface`, which the implicit solver needs.
 
 ## Meltwater
 
