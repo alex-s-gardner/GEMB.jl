@@ -361,7 +361,11 @@ using Dates
             fill(200.0, n_steps), fill(100.0, n_steps);
             temperature_air_mean=255.0, wind_speed_mean=5.0, precipitation_mean=300.0,
             temperature_observation_height=2.0, wind_observation_height=10.0)
-        out = gemb(initialize_profile(mp, forcing), forcing, mp; verbose=true)
+        # The base of a deep initialized column can be isothermal to the last bit, so the
+        # reservoir is set 1 K warmer than the cell above it to give the face a gradient.
+        profile = initialize_profile(mp, forcing)
+        parent(profile[:temperature])[end] = parent(profile[:temperature])[end-1] + 1.0
+        out = gemb(profile, forcing, mp; verbose=true)
 
         bhf = parent(out[:heat_flux_basal])
         @test haskey(out, :heat_flux_basal)

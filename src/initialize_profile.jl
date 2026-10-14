@@ -1,7 +1,7 @@
 """
     initialize_profile(mp::ModelParameters, cf::ClimateForcing;
                        constant_density=false, constant_temperature=false,
-                       climate_summary=nothing)
+                       climate_summary=nothing, density_seed=:steady_state)
         -> profile::DimStack
 
 Initialize a GEMB firn column profile as a DimStack, as a steady-state guess
@@ -55,6 +55,14 @@ Setting **both** takes a separate early-return path
 ([`_uniform_ice_profile`](@ref)): pure ice at a uniform mean-annual temperature, with no
 march and no climate summary.
 
+- `density_seed`: the initial density profile. `:steady_state` (the default) is the
+  steady state of `mp.densification_method` that [`steady_state_profile`](@ref) marches, with
+  the burial rate `b` and the transient's own mean accumulation. `:HerronLangway` is the
+  closed-form Herron & Langway (1980) profile ([`herron_langway_density`](@ref)) for the
+  column's mean surface temperature and that same mean accumulation. The two agree when
+  `mp.densification_method = :HerronLangway`; for any other method the first is that method's
+  own equilibrium, and so the closer start for a spinup. Temperature, grains, water and age
+  come from the march either way. An ablation column (`b ≤ 0`) is ice under both.
 - `climate_summary`: a [`ClimateSummary`](@ref) for `cf`, when the caller already has one.
   Purely an optimization — the summary is a pure function of `(cf, mp)`, so passing one cannot
   change the result, and `nothing` (the default) builds it here as before. Exists because
@@ -81,7 +89,10 @@ choice is output-only.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false,
-    climate_summary=nothing)
+    climate_summary=nothing, density_seed::Symbol=:steady_state)
+
+    density_seed in (:steady_state, :HerronLangway) || throw(ArgumentError(
+        "density_seed must be :steady_state or :HerronLangway, got :$(density_seed)"))
 
     T_mean = Float64(cf.temperature_air_mean)
 
@@ -120,15 +131,26 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # Size the grid to the depth this climate needs, unless a flag pins it
     # to the configured value. The depth is not returned: it is realized in `dz`,
     # which is what fixes the column depth for the run.
+    # The mean accumulation the transient densification uses, so the guess is its steady state.
+    A_dens = densification_accumulation(mp, cf)
+
     depth = (constant_density || constant_temperature) ? mp.column_depth_max :
-            _derive_column_depth(mp, cs)
+            _derive_column_depth(mp, cs, A_dens)
 
     dz = initialize_grid(mp, depth)
     m = length(dz)
 
-    ss = steady_state_profile(dz, cs, mp)
+    ss = steady_state_profile(dz, cs, mp; densification_accumulation=A_dens)
 
-    density = constant_density ? fill(mp.density_ice, m) : ss.density
+    density = if constant_density
+        fill(mp.density_ice, m)
+    elseif density_seed === :HerronLangway && cs.balance > 0.0
+        ρ0 = ss.density[1]
+        [herron_langway_density(z, cs.temperature_surface_mean, A_dens, ρ0, mp.density_ice)
+         for z in -dz2z(dz)]
+    else
+        ss.density
+    end
     temperature = constant_temperature ? fill(T_mean, m) : ss.temperature
     water = constant_density ? zeros(m) : ss.water
     grain_radius = constant_density ? fill(GRAIN_RADIUS_ICE, m) : ss.grain_radius
@@ -163,6 +185,17 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
 end
 
 """
+    densification_accumulation(mp, cf) -> A [kg m-2 yr-1]
+
+The climatological accumulation [`calculate_density`](@ref) compacts against:
+`cf.accumulation_mean` (snowfall) under `mp.densification_accumulation = :accumulation`,
+`cf.precipitation_mean` under `:precipitation`.
+"""
+densification_accumulation(mp::ModelParameters, cf::ClimateForcing) =
+    Float64(mp.densification_accumulation === :accumulation ? cf.accumulation_mean :
+                                                             cf.precipitation_mean)
+
+"""
     _uniform_ice_profile(mp::ModelParameters, T_mean) -> DimStack
 
 A pure-ice column at a uniform temperature, with non-dendritic faceted ice grains
@@ -194,7 +227,7 @@ function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
 end
 
 """
-    _derive_column_depth(mp::ModelParameters, cs::ClimateSummary;
+    _derive_column_depth(mp::ModelParameters, cs::ClimateSummary, densification_accumulation;
                          margin=1.2, thermal_depths=4)
         -> depth [m]
 
@@ -224,14 +257,14 @@ mp.column_depth_max)`. Depths are found by marching on a coarse 1 m probe grid, 
 is all the resolution two scalars need and keeps this independent of the final grid
 it is used to build.
 """
-function _derive_column_depth(mp::ModelParameters, cs::ClimateSummary;
-    margin::Real=1.2, thermal_depths::Real=4)
+function _derive_column_depth(mp::ModelParameters, cs::ClimateSummary,
+    densification_accumulation::Real; margin::Real=1.2, thermal_depths::Real=4)
 
     ceiling = mp.column_depth_max
 
     # Coarse uniform probe grid spanning the ceiling.
     probe_dz = fill(1.0, max(ceil(Int, ceiling), 1))
-    ss = steady_state_profile(probe_dz, cs, mp)
+    ss = steady_state_profile(probe_dz, cs, mp; densification_accumulation)
 
     # Annual thermal-wave damping depth at ice density.
     d_thermal = thermal_damping_depth(cs.temperature_air_mean, mp.density_ice, mp)

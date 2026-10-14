@@ -457,8 +457,9 @@ end
     # steps over a column, not a sweep of the series.
     dz = GEMB.initialize_grid(mp)
     cs = GEMB.initialize_climate_summary(cf, mp)
-    GEMB.steady_state_profile(dz, cs, mp)            # warm up
-    t_march = @elapsed GEMB.steady_state_profile(dz, cs, mp)
+    GEMB.steady_state_profile(dz, cs, mp; densification_accumulation=cf.accumulation_mean)  # warm up
+    t_march = @elapsed GEMB.steady_state_profile(dz, cs, mp;
+        densification_accumulation=cf.accumulation_mean)
     @test t_march < 0.1 * t_pass
 end
 
