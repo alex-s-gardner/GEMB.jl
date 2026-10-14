@@ -213,8 +213,10 @@ const THERMAL_EXPLICIT_SAFETY_FACTOR = 0.8
 # sub-step (see `_surface_relaxation_dt`). The linearized surface flux is stable at any step, so
 # this bound is for accuracy: the flux over a sub-step is first order in the step relative to the
 # relaxation time. At 0.5 the hour-mean turbulent flux of a thin surface cell under 15 m s-1 of
-# cold wind is within 1.3% of its value at a 16x smaller step; at 1.0 it is 2.6%.
-const THERMAL_SURFACE_STEP_FRACTION = 0.5
+# cold wind is within 1.3% of its value at a 16x smaller step; at 1.0 it is 2.6%. At 0.25, two-year
+# melt and refreeze on the `test_1` forcing, and on it at +4 K, are within 0.4% of a
+# time-converged run, for a runtime within 1% of 0.5.
+const THERMAL_SURFACE_STEP_FRACTION = 0.25
 
 
 # --- ImplicitThermal solver ---
