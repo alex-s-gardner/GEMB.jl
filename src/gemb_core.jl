@@ -52,7 +52,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     #    column, not carried state: `albedo_broadband` is returned in `flux` for output and
     #    is not read again.
     albedo_broadband, albedo_diffuse =
-        calculate_albedo(dz, density, water, grain_radius, melt_surface, cfs, mp)
+        calculate_albedo(dz, density, grain_radius, cfs, mp)
 
     # 3. Determine distribution of absorbed SW radiation with depth
     _resize_workspace!(column_workspace, length(dz))

@@ -60,6 +60,8 @@ const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
 const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+const ALBEDO_FIRN_MAX = 0.65  # Albedo of exposed firn at pore close-off [-] (Alexander et al., 2014)
+const ALBEDO_SNOW_DEPTH_THICK = 0.1  # Snow depth above which firn or ice below no longer shows in albedo [m]
 
 # Activation energy for grain growth [J mol-1], Arthern et al. (2010). Sets the
 # `exp(Eg/(R·T_mean))` grain-growth factor in the accumulation-driven densification schemes
