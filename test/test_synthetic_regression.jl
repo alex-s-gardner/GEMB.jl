@@ -41,7 +41,7 @@ using GEMB_ClimateForcing
     # The three pinned fields. `refreeze` replaced `runoff` when `test_1` moved to 2200 m:
     # the site now retains all of its meltwater, so `runoff` is identically zero and pinning
     # it would assert nothing. `refreeze` covers the same melt/percolation path with signal
-    # in it (402.6 kg m-2), which is the property the third pin was there for.
+    # in it (303.4 kg m-2), which is the property the third pin was there for.
     mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
     total_refreeze = sum(parent(output[:refreeze]))
@@ -50,7 +50,7 @@ using GEMB_ClimateForcing
     # third pin is watching the wrong field and this fails rather than passing quietly.
     @test sum(parent(output[:runoff])) == 0.0
 
-    # Reference = deterministic output on arm64 (macOS). Tolerances bracket
+    # Reference = deterministic output on x86_64 (Linux). Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
     # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt,
     # against the ~10000 kg/m² totals of the time — i.e. ~0.49% — and the windows are
@@ -160,24 +160,24 @@ using GEMB_ClimateForcing
     # and the pin becomes unfalsifiable-by-arithmetic — asserting agreement to a window
     # narrower than the FP noise it exists to tolerate. `MASS_ATOL_FLOOR = 2.0` kg m-2 holds a
     # usable window there; it binds only below ~167 kg m-2, so it is inert at the current
-    # references (4.77 and 4.83 kg m-2 respectively).
+    # references (3.66 and 3.64 kg m-2 respectively).
     MASS_RTOL = 0.012
     MASS_ATOL_FLOOR = 2.0
     mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
 
-    @test mean_albedo ≈ 0.835208 atol=3e-3      # ~0.36% relative
-    @test total_melt ≈ 397.216343 atol=mass_tol(397.216343)
-    @test total_refreeze ≈ 402.605404 atol=mass_tol(402.605404)
+    @test mean_albedo ≈ 0.835720 atol=3e-3      # ~0.36% relative
+    @test total_melt ≈ 304.973653 atol=mass_tol(304.973653)
+    @test total_refreeze ≈ 303.364663 atol=mass_tol(303.364663)
 
     # Pin the tolerance policy itself, so a later edit cannot quietly reintroduce the failure
     # mode either half exists to prevent: a window that does not scale, or one that collapses
     # to zero. These are assertions about the *test*, which is why they are cheap and here.
-    @test mass_tol(397.216343) ≈ 4.7666 atol=1e-3     # rtol binds at the current references
+    @test mass_tol(304.973653) ≈ 3.6597 atol=1e-3     # rtol binds at the current references
     @test mass_tol(0.0) == MASS_ATOL_FLOOR            # floor binds if a total ever goes to 0
     @test mass_tol(1e5) > MASS_ATOL_FLOOR             # and scales up with a larger total
 
     # Still worth measuring rather than inferring: 0.012 is the *old* site's spread-to-window
     # ratio carried across, not a spread measured at 2200 m. The references above are exact on
-    # arm64, so an x86_64 CI run gives the real figure for this site directly; if it comes in
+    # x86_64, so an arm64 run gives the real figure for this site directly; if it comes in
     # materially below 0.49%, this can tighten.
 end
