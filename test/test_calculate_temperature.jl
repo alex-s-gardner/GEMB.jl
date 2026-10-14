@@ -40,10 +40,11 @@ end
 """
     _balanced_longwave(T)
 
-Downward longwave that exactly balances the upward emission of a surface at `T`, so a
-steady-state column neither warms nor cools radiatively.
+Downward longwave that exactly balances the upward emission of a gray surface at `T`, so a
+steady-state column neither warms nor cools radiatively: the surface absorbs `ε·LW↓` and emits
+`εσT⁴`, so the balance `LW↓ = σT⁴` holds for every emissivity.
 """
-_balanced_longwave(T::Float64, emissivity::Float64=0.97) = GEMB.SB * T^4 * emissivity
+_balanced_longwave(T::Float64) = GEMB.SB * T^4
 
 @testset "Steady state" begin
     # If T_surf = temperature_air and LW balanced, T should remain roughly constant
@@ -423,6 +424,89 @@ end
             copy(temperature), dz, density, 0.0, grain_radius, shortwave_flux, cfs, mp, true)
         @test t_out[end] === t_in[end]
     end
+end
+
+@testset "Radiative equilibrium holds for one day (both solvers)" begin
+    # Isothermal column at T_eq with LW↓ = σT_eq⁴, no shortwave, air at T_eq and saturated
+    # over ice, so the sensible and latent fluxes vanish at T_s = T_eq. A gray surface absorbs
+    # ε·LW↓ = εσT_eq⁴ and emits the same, so the column is an exact steady state.
+    T_eq = 260.0
+    n = N_CELLS
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()), ε in (0.97, 0.8)
+        mp = _temperature_mp(864000000; emissivity=ε, thermal_solver=solver)
+        cfs = GEMB.ClimateForcingStep(
+            86400.0, T_eq, 100000.0, 0.0, 5.0, 0.0, GEMB.SB * T_eq^4,
+            GEMB.saturation_vapor_pressure_ice(T_eq), T_eq, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        t_out, lw_up, shf, lhf, _, _ = GEMB.calculate_temperature(
+            fill(T_eq, n), fill(DZ_UNIFORM, n), fill(DENSITY_UNIFORM, n), 0.0,
+            fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true)
+        @test maximum(abs.(t_out .- T_eq)) < 1e-3
+        # Upward longwave is emitted plus reflected, which at equilibrium equals LW↓.
+        @test lw_up ≈ GEMB.SB * T_eq^4 rtol = 1e-9
+    end
+end
+
+@testset "Energy budget against fluxes recomputed outside the solver" begin
+    # One sub-step, so the surface fluxes are those of a single surface temperature that the
+    # test can recompute itself: the initial T₁ on the explicit path (fluxes lagged), the new
+    # T₁ on the implicit path (backward Euler). The expected enthalpy change is the textbook
+    # surface balance (1 − α)SW + ε·LW↓ − εσT_s⁴ + H + LE plus the basal conduction, with H and
+    # LE from `turbulent_heat_flux` and the basal flux from the harmonic-mean face conductance.
+    n = N_CELLS
+    dz = fill(DZ_UNIFORM, n)
+    density = fill(DENSITY_UNIFORM, n)
+    t_in = [255.0 + (i - 1) for i in 1:n]
+    shortwave_flux = [150.0 * exp(-2.0 * (i - 1)) for i in 1:n]
+    ε = 0.9
+    for (solver, dt) in ((GEMB.ExplicitThermal(), 60.0), (GEMB.ImplicitThermal(), 900.0))
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, dt_divisors=[dt])
+        cfs = GEMB.ClimateForcingStep(
+            dt, 265.0, 90000.0, 0.0, 6.0, 300.0, 280.0,
+            150.0, 265.0, 6.0, 0.0, 2.0, 10.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        t_out, = GEMB.calculate_temperature(copy(t_in), dz, density, 0.0,
+            fill(GRAIN_RADIUS_UNIFORM, n), shortwave_flux, cfs, mp, true)
+
+        T_s = solver isa GEMB.ExplicitThermal ? t_in[1] : t_out[1]
+        T_prof = solver isa GEMB.ExplicitThermal ? t_in : t_out
+        z0 = GEMB.surface_roughness(mp, density[1], 0.0)
+        H, LE, _ = GEMB.turbulent_heat_flux(T_s, GEMB.air_density(cfs.pressure_air,
+                cfs.temperature_air), z0, 0.1 * z0, 0.1 * z0, cfs)
+        K = GEMB.thermal_conductivity(t_in, density, mp)
+        G = (T_prof[n] - T_prof[n-1]) / (dz[n] / (2 * K[n]) + dz[n-1] / (2 * K[n-1]))
+        expected = (sum(shortwave_flux) + ε * cfs.longwave_downward - ε * GEMB.SB * T_s^4 +
+                    H + LE + G) * dt
+        M = density .* dz
+        ΔH = sum(M[i] * (GEMB.specific_enthalpy(mp, t_out[i]) -
+                         GEMB.specific_enthalpy(mp, t_in[i])) for i in 1:n)
+        @test ΔH ≈ expected atol = GEMB.energy_tolerance(GEMB.column_enthalpy(mp, M, t_in))
+    end
+end
+
+@testset "Emissivity melt switch and reflected longwave per sub-step" begin
+    # Two explicit sub-steps of 1 s on a surface held at the melting point. The first sub-step
+    # uses `mp.emissivity`; the switch then selects `emissivity_grain_radius_large` for the
+    # second. Each sub-step's upward longwave is εσ·273.15⁴ + (1 − ε)·LW↓ with its own ε.
+    n = N_CELLS
+    ε_small, ε_large, lw_down = 0.90, 0.98, 310.0
+    mp = GEMB.ModelParameters(emissivity=ε_small, emissivity_grain_radius_large=ε_large,
+        emissivity_method=:grain_radius_w_threshold, emissivity_grain_radius_threshold=10.0,
+        thermal_conductivity_method=:Sturm, dt_divisors=[1.0])
+    cfs = GEMB.ClimateForcingStep(
+        2.0, 275.0, 100000.0, 0.0, 5.0, 800.0, lw_down,
+        700.0, 275.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    shortwave_flux = zeros(n); shortwave_flux[1] = 800.0
+    _, lw_up, = GEMB.calculate_temperature(fill(GEMB.CtoK, n), fill(DZ_UNIFORM, n),
+        fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n), shortwave_flux,
+        cfs, mp, true)
+    σT4 = GEMB.SB * GEMB.CtoK^4
+    expected = 0.5 * ((ε_small * σT4 + (1 - ε_small) * lw_down) +
+                      (ε_large * σT4 + (1 - ε_large) * lw_down))
+    @test lw_up ≈ expected rtol = 1e-12
 end
 
 @testset "Implicit solver: energy budget closes" begin

@@ -14,6 +14,10 @@ Sub-time steps are determined by Von Neumann stability analysis.
 
 Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation)`.
 
+`longwave_upward` [W m-2, positive upward] is emitted plus reflected longwave,
+`εσT_s⁴ + (1 − ε)·LW↓`, with ε the emissivity in force at each sub-step. The surface therefore
+absorbs `ε·LW↓`, and `LW↓ − longwave_upward` is the net longwave the column received.
+
 `workspace` supplies the solver's scratch buffers (see [`ThermalWorkspace`](@ref)). The default
 allocates a fresh one per call, which is convenient for a one-off call but allocates every time;
 `gemb` passes a single workspace down for the whole run.
@@ -237,7 +241,8 @@ function _thermal_solve!(solver::ExplicitThermal,
         Q_sw[m] = 0.0
     end
 
-    # energy supplied by downward longwave radiation to the top grid cell [J]
+    # Downward longwave incident on the top grid cell [J]. The reflected part leaves again
+    # through `longwave_upward`.
     longwave_downward = cfs.longwave_downward * dt
 
     # Total SW absorbed per sub-step, for the verbose budget. Loop-invariant.
@@ -279,9 +284,12 @@ function _thermal_solve!(solver::ExplicitThermal,
         # energy supplied by turbulent fluxes [J]
         thf = (heat_flux_sensible + heat_flux_latent) * dt
 
-        # upward longwave radiation
+        # Upward longwave: emitted plus reflected. A gray surface reflects (1 − ε)·LW↓, so the
+        # net longwave it absorbs is ε·LW↓ − εσTs⁴. `emissivity` is the value in force this
+        # sub-step (the melt switch below can change it between sub-steps).
         T2 = T_surface * T_surface
-        longwave_upward = -(SB * T2 * T2 * emissivity) * dt
+        longwave_upward = -(SB * T2 * T2 * emissivity +
+                            (1.0 - emissivity) * cfs.longwave_downward) * dt
         longwave_upward_cumulative += -longwave_upward
 
         # net energy delivered to the surface cell this sub-step [J]
@@ -387,6 +395,10 @@ Surface energy balance at surface-cell temperature `T1` [K]. Returns
 fluxes in W m-2 (signed as energy *into* the column, so `longwave_upward` is negative) and
 `T_surface = min(CtoK, T1)`.
 
+`longwave_upward = −(εσT_surface⁴ + (1 − ε)·LW↓)` is emitted plus reflected longwave, so with
+`LW↓` added the surface absorbs `ε·LW↓ − εσT_surface⁴`. The reflected term does not depend on
+`T1`, so it does not enter [`_surface_energy_balance_slope`](@ref).
+
 The clamp is what makes the balance non-smooth at the melting point: above it the surface stops
 responding to `T1` entirely, so every flux — and every derivative — goes flat. Shared by the
 implicit solver's Newton iteration and its final applied-flux evaluation so the two cannot drift.
@@ -400,7 +412,8 @@ implicit solver's Newton iteration and its final applied-flux evaluation so the 
         sfc.wind_speed, sfc.C, sfc.pressure_factor, sfc.logM, sfc.logHT, sfc.logHQ,
         sfc.wind_ratio_sq)
     T2 = T_surface * T_surface
-    longwave_upward = -(SB * T2 * T2 * emissivity)
+    longwave_upward = -(SB * T2 * T2 * emissivity +
+                        (1.0 - emissivity) * cfs.longwave_downward)
     return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface
 end
 
