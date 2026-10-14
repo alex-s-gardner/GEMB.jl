@@ -25,7 +25,7 @@ rationale is in the [`ModelParameters`](@ref) docstring.
 | `heat_capacity_method` | **`:constant`**, `:CuffeyPaterson` | `:constant` (2102 J kg⁻¹ K⁻¹) matches the CFM's melt-enabled path; `:CuffeyPaterson` is `152.5 + 7.122·T` |
 | `rain_heat_capacity` | **`:water`**, `:ice` | Heat capacity carrying rain's sensible heat above the melting point |
 | `mean_temperature_method` | **`:arithmetic`**, `:arrhenius` | How the mean annual temperature driving densification is averaged |
-| `grain_growth_method` | **`:Arthern`**, `:Marbouty`, `:hybrid` | Dry non-dendritic grain growth. The CFM ships `:Arthern`. `:Marbouty` is temperature-gradient metamorphism, inactive above 400 kg m⁻³; `:hybrid` runs it below that and `:Arthern` above |
+| `grain_growth_method` | **`:hybrid`**, `:Arthern`, `:Marbouty` | Dry non-dendritic grain growth. `:Marbouty` is temperature-gradient metamorphism, inactive above 400 kg m⁻³; `:hybrid` runs it below that and `:Arthern` above. The CFM ships `:Arthern` |
 | `water_irreducible_method` | **`:ColeouLesaffre`**, `:constant` | Both the CFM and IMAU-FDM use Coléou & Lesaffre. RetMIP §5.4 ties a flat saturation to under-retention in the percolation zone |
 | `melt_geometry` | **`:thickness`**, `:density` | What melting does to a cell: shrink `dz` at fixed density (Crocus) or lower density at fixed `dz` (SNOWPACK). Only `:density` makes a melt–refreeze cycle return the geometry as well as the mass |
 | `runoff_method` | **`:instantaneous`**, `:ZuoOerlemans`, `:Darcy` | All three RetMIP bucket lineages and both comparison models use instantaneous runoff. The other two give a drainage timescale and permit firn aquifers |

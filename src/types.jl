@@ -436,13 +436,14 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     rain_heat_capacity::Symbol = :water
 
     # --- Grain Growth ---
-    # Selects the non-dendritic *dry* grain-growth law. `:Arthern` (the default, and what the
-    # Community Firn Model ships as `GrGrowPhysics: "Arthern"`) uses Arthern et al. (2010)
-    # `dr²/dt = kgr·exp(-Eg/RT)` at every density. `:Marbouty` stops growing grains at
+    # Selects the non-dendritic *dry* grain-growth law. `:hybrid` (the default) uses Marbouty
+    # (1980) temperature-gradient growth in snow below `DENSITY_MARBOUTY_MAX` and Arthern et al.
+    # (2010) `dr²/dt = kgr·exp(-Eg/RT)` at or above it. `:Arthern` (what the Community Firn
+    # Model ships as `GrGrowPhysics: "Arthern"`) applies the firn law at every density, where
+    # dry surface snow barely coarsens. `:Marbouty` stops growing grains at
     # `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen in deep firn — where `:ArthernB`
-    # and `:Crocus` densification read it as `1/r²`. `:hybrid` switches from the latter to the
-    # former at that density. See `calculate_grain_size`.
-    grain_growth_method::Symbol = :Arthern
+    # and `:Crocus` densification read it as `1/r²`. See `calculate_grain_size`.
+    grain_growth_method::Symbol = :hybrid
 
     # --- Melt & Water ---
     # `:ColeouLesaffre` (the default) makes the irreducible water content density-dependent

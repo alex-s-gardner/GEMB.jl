@@ -141,9 +141,11 @@ independently of the albedo scheme.
   identically zero above 400 kg m⁻³ and its gradient factor is meaningless where `∇T → 0`,
   so it does not evolve grain radius in deep firn.
 - **`:Arthern`** — Arthern et al. (2010) normal growth, `dr²/dt = k_gr·exp(−E_g/RT)`,
-  density-independent. This is the default and what the Community Firn Model uses.
+  density-independent. This is what the Community Firn Model uses; fitted to firn, it
+  barely coarsens dry surface snow.
 - **`:hybrid`** — Marbouty below 400 kg m⁻³ and Arthern at or above it, keeping the
   temperature-gradient physics in seasonal snow while grains continue to coarsen in firn.
+  This is the default.
 
 The dendritic and wet (Brun, 1989) branches and the `GRAIN_DIAMETER_MAX` cap are common to
 all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growth densifies
