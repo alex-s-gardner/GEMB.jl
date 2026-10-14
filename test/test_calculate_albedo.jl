@@ -201,3 +201,48 @@ end
     @test sw_net[1] / sw_net[2] ≈ 0.70 / 0.52 rtol = 0.02
 end
 
+@testset "Gardner-Sharp closed forms (deep snow, r_e = 0.5 mm)" begin
+    r = 0.5
+    S = 3.0 / (0.091 * r)
+    α_s = 1.48 - S^(-0.07)
+    @test α_s ≈ 0.73413 atol = 5e-6
+    # Overhead sun, clear sky, clean snow: the pure-snow albedo exactly.
+    @test GEMB._albedo_gardner(r, 0.0, 0.0, 0.0) === α_s
+    # Zenith term at 60°, clear sky: u = cos 60° = 0.5.
+    @test GEMB._albedo_gardner(r, 0.0, 60.0, 0.0) ≈
+          α_s + 0.53 * α_s * (1 - α_s) * 0.5^1.2 rtol = 1e-12
+    # Cloud term at τ = 5, overhead sun: x = min(√(5/3), 1) = 1, so u = 0.64.
+    τ = 5.0
+    @test GEMB._albedo_gardner(r, 0.0, 0.0, τ) ≈
+          α_s + 0.53 * α_s * (1 - α_s) * (1 - 0.64)^1.2 +
+          0.1 * τ * α_s^1.3 / (1 + 1.5 * τ)^α_s rtol = 1e-12
+    # Soot at c = 1 ppmw, overhead sun, clear sky.
+    dα_c = max(0.04 - α_s, -1.0 / (0.16 + 0.6 * S^0.5 + 1.8 * S^(-0.25)))
+    @test GEMB._albedo_gardner(r, 1.0, 0.0, 0.0) ≈ α_s + dα_c rtol = 1e-12
+end
+
+@testset "Gardner-Sharp limits and monotonicity" begin
+    for r in (0.05, 0.2, 0.5, 1.0, 2.5)
+        α_s = 1.48 - (3.0 / (0.091 * r))^(-0.07)
+        @test GEMB._albedo_gardner(r, 0.0, 0.0, 0.0) === α_s
+        @test issorted([GEMB._albedo_gardner(r, 0.0, sza, 0.0) for sza in 0.0:1.0:89.0])
+        @test issorted([GEMB._albedo_gardner(r, 0.0, 30.0, τ) for τ in 0.0:0.5:30.0])
+    end
+    @test_throws DomainError GEMB._albedo_gardner(0.5, 0.0, 90.0, 1.0)
+    @test_throws DomainError GEMB._albedo_gardner(0.5, 0.0, 30.0, -1.0)
+end
+
+@testset "Night steps return the diffuse albedo" begin
+    n = 10
+    dz = fill(0.1, n)
+    density = fill(350.0, n)
+    grain_radius = fill(0.5, n)
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
+    for sza in (90.0, 95.0, 180.0)
+        cfs = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=sza,
+            cloud_optical_thickness=3.0)
+        α, α_d = GEMB.calculate_albedo(dz, density, grain_radius, cfs, mp)
+        @test α === α_d
+        @test α_d == GEMB._albedo_gardner(0.5, 0.0, 50.0, 3.0)
+    end
+end

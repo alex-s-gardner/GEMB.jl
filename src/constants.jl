@@ -61,6 +61,7 @@ const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calcula
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
 const ALBEDO_FIRN_MAX = 0.65  # Albedo of exposed firn at pore close-off [-] (Alexander et al., 2014)
+const ALBEDO_DIFFUSE_ZENITH_ANGLE = 50.0  # Effective zenith angle of diffuse radiation [degrees] (Gardner & Sharp, 2010)
 const ALBEDO_SNOW_DEPTH_THICK = 0.1  # Snow depth above which firn or ice below no longer shows in albedo [m]
 
 # Activation energy for grain growth [J mol-1], Arthern et al. (2010). Sets the

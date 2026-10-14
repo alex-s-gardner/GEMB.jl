@@ -445,3 +445,73 @@ using Dates
         @test !haskey(md, "standard_name")
     end
 end
+
+@testset "Radiation geometry: forcing layers, fallback, validation" begin
+    n = 48
+    time = DateTime(2020, 6, 1) .+ Hour.(0:n-1)
+    sw = [max(0.0, 600.0 * sin(2π * (k - 6) / 24)) for k in 0:n-1]
+    sza = [s > 0 ? 50.0 : 100.0 for s in sw]
+    diffuse = 0.3 .* sw
+    base = (time, fill(265.0, n), fill(80000.0, n), zeros(n), fill(3.0, n), sw,
+        fill(250.0, n), fill(250.0, n))
+    kw = (temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=500.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+
+    cf_layers = initialize_forcing(base...; kw..., solar_zenith_angle=sza,
+        cloud_optical_thickness=fill(2.0, n), shortwave_downward_diffuse=diffuse)
+    @test parent(cf_layers.solar_zenith_angle) == sza
+    @test parent(cf_layers.shortwave_downward_diffuse) == diffuse
+
+    mp = initialize_parameters(output_frequency=:all)
+    # Ice column with 1 m of snow on top, so the grain-size albedo is in play.
+    profile = initialize_profile(mp, cf_layers; constant_density=true,
+        constant_temperature=true)
+    k_snow = findfirst(>=(1.0), cumsum(parent(profile[:dz])))
+    parent(profile[:density])[1:k_snow] .= 350.0
+    parent(profile[:grain_radius])[1:k_snow] .= 0.3
+
+    # The forcing layers reach the physics: the run differs from one with no geometry, and
+    # an `mp` scalar does not override a supplied layer.
+    out_layers = gemb(profile, cf_layers, mp; verbose=true)
+    cf_none = initialize_forcing(base...; kw...)
+    out_none = gemb(profile, cf_none, mp)
+    @test parent(out_layers[:albedo_broadband]) != parent(out_none[:albedo_broadband])
+    mp_scalar = initialize_parameters(output_frequency=:all, solar_zenith_angle=30.0,
+        cloud_optical_thickness=1.0)
+    @test parent(gemb(profile, cf_layers, mp_scalar)[:albedo_broadband]) ==
+          parent(out_layers[:albedo_broadband])
+
+    # Without layers, the `mp` scalars are used for every step: a constant 30° layer and the
+    # `mp` fallback at 30° give the same run.
+    cf_const = initialize_forcing(base...; kw..., solar_zenith_angle=fill(30.0, n),
+        cloud_optical_thickness=fill(1.0, n))
+    @test parent(gemb(profile, cf_none, mp_scalar)[:albedo_broadband]) ==
+          parent(gemb(profile, cf_const, mp)[:albedo_broadband])
+
+    # A DimStack forcing supplies them as layers.
+    tdim = Ti(time)
+    names = (:temperature_air, :pressure_air, :precipitation, :wind_speed,
+        :shortwave_downward, :longwave_downward, :vapor_pressure)
+    layers = NamedTuple{names}(Tuple(DimArray(v, (tdim,)) for v in base[2:end]))
+    meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(kw))
+    stack = DimStack(merge(layers, (solar_zenith_angle=DimArray(sza, (tdim,)),
+            shortwave_downward_diffuse=DimArray(diffuse, (tdim,)))); metadata=meta)
+    cf_stack = initialize_forcing(stack)
+    @test parent(cf_stack.solar_zenith_angle) == sza
+    @test parent(cf_stack.shortwave_downward_diffuse) == diffuse
+    @test all(iszero, cf_stack.cloud_optical_thickness)
+
+    # Per-step range checks.
+    bad_sza = copy(sza); bad_sza[5] = 181.0
+    @test_throws "outside [0, 180]" initialize_forcing(base...; kw...,
+        solar_zenith_angle=bad_sza)
+    @test_throws "negative" initialize_forcing(base...; kw...,
+        cloud_optical_thickness=fill(-0.1, n))
+    bad_diffuse = copy(diffuse); bad_diffuse[13] = sw[13] + 1.0
+    @test_throws "step 13" initialize_forcing(base...; kw...,
+        shortwave_downward_diffuse=bad_diffuse)
+    # A scalar diffuse flux larger than a night step's zero shortwave is a violation too.
+    @test_throws ArgumentError initialize_forcing(base...; kw...,
+        shortwave_downward_diffuse=10.0)
+    @test_throws "timesteps" initialize_forcing(base...; kw..., solar_zenith_angle=sza[1:10])
+end
