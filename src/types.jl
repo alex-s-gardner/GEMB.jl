@@ -52,10 +52,10 @@ The interface a subtype must implement is
     _thermal_solve!(solver, temperature, dz, density, K, shortwave_flux,
                     water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
         -> (longwave_upward, heat_flux_sensible, heat_flux_latent,
-            heat_flux_basal, evaporation_condensation)
+            heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)
 
 updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
-the last in kg m-2 accumulated over the step). Three invariants bind every implementation: the
+the last two in kg m-2 accumulated over the step; the last is the part exchanged at `LV`). Three invariants bind every implementation: the
 bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged; the
 returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
 energy and mass budgets against them; and every buffer entry drawn from `workspace` must be

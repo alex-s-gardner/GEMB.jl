@@ -165,3 +165,73 @@ end
     @test flux.densification_from_compaction > 0.0
     @test all(new_state.density .>= 300.0)
 end
+
+@testset "Vapour exchange uses the phase of its latent heat" begin
+    mp = _make_core_mp()
+    h_w = GEMB.specific_enthalpy_water(mp)
+    h_i0 = GEMB.specific_enthalpy(mp, GEMB.CtoK)
+    n = 4
+    col() = (fill(GEMB.CtoK, n), fill(0.05, n), fill(400.0, n), [0.5; zeros(n - 1)])
+
+    # Condensation at a melting surface: c kg enters water[1] at h_ice(0 °C) + LF.
+    T, dz, ρ, w = col()
+    c = 0.2
+    E = GEMB.apply_vapor_exchange!(T, dz, ρ, w, c, c, mp)
+    @test w[1] ≈ 0.7 rtol = 1e-14
+    @test dz[1] == 0.05
+    @test E ≈ c * (h_i0 + GEMB.LF) rtol = 1e-12
+    @test h_w ≈ h_i0 + GEMB.LF rtol = 1e-12
+
+    # Evaporation smaller than the pore water takes only water.
+    T, dz, ρ, w = col()
+    E = GEMB.apply_vapor_exchange!(T, dz, ρ, w, -0.3, -0.3, mp)
+    @test w[1] ≈ 0.2 rtol = 1e-14
+    @test dz[1] == 0.05 && T[1] == GEMB.CtoK
+    @test E ≈ -0.3 * h_w rtol = 1e-12
+
+    # Evaporation beyond the pore water takes the rest from ice, which costs the cell LF per kg
+    # on top of the LV the flux charged: the cell cools by LF·s/(M₁·c).
+    T, dz, ρ, w = col()
+    s = 0.4
+    M1 = 0.05 * 400.0
+    E = GEMB.apply_vapor_exchange!(T, dz, ρ, w, -(0.5 + s), -(0.5 + s), mp)
+    @test w[1] == 0.0
+    @test dz[1] * ρ[1] ≈ M1 - s rtol = 1e-12
+    @test (M1 - s) * GEMB.specific_enthalpy(mp, T[1]) ≈ M1 * h_i0 - s * (h_i0 + GEMB.LF) rtol = 1e-12
+    @test E ≈ -0.5 * h_w - s * (h_i0 + GEMB.LF) rtol = 1e-12
+
+    # Below the melting point the exchange is with ice at constant density.
+    T, dz, ρ, w = col()
+    T .= 260.0
+    E = GEMB.apply_vapor_exchange!(T, dz, ρ, w, -0.1, 0.0, mp)
+    @test dz[1] ≈ 0.05 - 0.1 / 400.0 rtol = 1e-12
+    @test w[1] == 0.5
+    @test E ≈ -0.1 * GEMB.specific_enthalpy(mp, 260.0) rtol = 1e-12
+
+    # The flux charged LS per kg exchanged with ice and LV per kg with water.
+    cfs = _make_core_cfs()
+    for T_s in (260.0, GEMB.CtoK)
+        _, lhf, L = GEMB.turbulent_heat_flux(T_s, 1.2, 1e-3, 1e-4, 1e-4, cfs)
+        @test L == (T_s < GEMB.CtoK ? GEMB.LS : GEMB.LV)
+    end
+    temperature = fill(GEMB.CtoK, 10)
+    _, _, _, lhf, _, ec, ec_liquid = GEMB.calculate_temperature(temperature, fill(0.08, 10),
+        fill(400.0, 10), 0.5, fill(0.5, 10), [800.0; zeros(9)],
+        _make_core_cfs(temperature_air=280.0, shortwave_downward=800.0), mp, true)
+    @test ec_liquid == ec
+    @test lhf * 3600.0 ≈ GEMB.LV * ec rtol = 1e-12
+end
+
+@testset "Condensation on a melting surface closes the column energy budget" begin
+    # Humid warm air over a melting, wet surface condenses onto it. `verbose = true` makes
+    # gemb_core check the column energy against the vapour enthalpy above.
+    temperature = fill(GEMB.CtoK, 10)
+    state = merge(_make_core_state(), (temperature=temperature, water=[0.3; zeros(9)]))
+    cfs = GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=280.0, pressure_air=100000.0,
+        wind_speed=8.0, shortwave_downward=0.0, longwave_downward=320.0, vapor_pressure=900.0,
+        temperature_air_mean=260.0, wind_speed_mean=5.0, precipitation_mean=200.0,
+        temperature_observation_height=2.0, wind_observation_height=2.0)
+    new_state, flux = GEMB.gemb_core(state, cfs, _make_core_mp(), true)
+    @test new_state.evaporation_condensation > 0.0
+    @test flux.heat_flux_latent > 0.0
+end

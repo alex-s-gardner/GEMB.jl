@@ -1,4 +1,59 @@
 """
+    apply_vapor_exchange!(temperature, dz, density, water, evaporation_condensation,
+                          evaporation_condensation_liquid, mp) -> E [J m-2]
+
+Add or remove the vapour mass of one timestep at the surface cell, in the phase whose latent
+heat the surface flux charged, and return the enthalpy the mass carried into the column.
+Positive masses are deposition or condensation, negative sublimation or evaporation.
+
+- The part exchanged at `LS`, `evaporation_condensation − evaporation_condensation_liquid`, is
+  ice: it changes `dz[1]` at constant density and carries `h_ice(T₁)` per kg.
+- The part exchanged at `LV`, `evaporation_condensation_liquid`, is liquid water. Condensate is
+  added to `water[1]` and evaporation takes `water[1]` first, each at the melt-point water
+  enthalpy. Any evaporation beyond `water[1]` comes from the ice of cell 1. The flux charged
+  only `LV` for that mass, so the remaining `LS − LV = LF` per kg is drawn from the cell's
+  enthalpy, and the mass leaves the column at `h_ice(T₁) + LF`.
+
+Throws if cell 1 would lose all its ice.
+"""
+function apply_vapor_exchange!(temperature::Vector{Float64}, dz::Vector{Float64},
+    density::Vector{Float64}, water::Vector{Float64}, evaporation_condensation::Float64,
+    evaporation_condensation_liquid::Float64, mp::ModelParameters)
+
+    h_ice = specific_enthalpy(mp, temperature[1])
+    h_water = specific_enthalpy_water(mp)
+    ice_change = evaporation_condensation - evaporation_condensation_liquid
+    E = ice_change * h_ice
+
+    if evaporation_condensation_liquid >= 0.0
+        water[1] += evaporation_condensation_liquid
+        E += evaporation_condensation_liquid * h_water
+    else
+        evaporated = -evaporation_condensation_liquid
+        from_water = min(evaporated, water[1])
+        water[1] -= from_water
+        E -= from_water * h_water
+        from_ice = evaporated - from_water
+        if from_ice > 0.0
+            M1 = dz[1] * density[1]
+            M1_new = M1 + ice_change - from_ice
+            # The cell keeps its enthalpy less the departing ice and the extra LF it needs.
+            H1_new = M1 * h_ice + ice_change * h_ice - from_ice * (h_ice + LF)
+            M1_new > 0.0 || error("apply_vapor_exchange!: evaporation of $(evaporated) kg m-2 " *
+                                  "exceeds the surface cell's water and ice")
+            temperature[1] = temperature_from_specific_enthalpy(mp, H1_new / M1_new)
+            ice_change -= from_ice
+            E -= from_ice * (h_ice + LF)
+        end
+    end
+
+    dz[1] += ice_change / density[1]
+    dz[1] > 0.0 || error("apply_vapor_exchange!: sublimation of $(-ice_change) kg m-2 " *
+                         "removes the whole surface cell")
+    return E
+end
+
+"""
     gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
               n_target=length(state.dz), z_target=sum(state.dz),
               thermal_workspace=ThermalWorkspace(), column_workspace=ColumnWorkspace())
@@ -63,21 +118,19 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     shortwave_net = sum(shortwave_flux)
 
     # 5. Calculate new temperature-depth profile and turbulent heat flux
-    temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation =
+    temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal,
+        evaporation_condensation, evaporation_condensation_liquid =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose, thermal_workspace)
 
-    # 6. Change in thickness of top cell due to evaporation/condensation.
-    #    Deposition (positive) is new mass at age 0, so it dilutes the surface cell's age;
-    #    sublimation (negative) removes a fraction of the cell and is age-neutral, which
+    # 6. Exchange the vapour mass with the surface cell, in the phase its latent heat implied.
+    #    Deposition and condensation (positive) are new mass at age 0, so they dilute the
+    #    surface cell's age; removal takes a fraction of the cell and is age-neutral, which
     #    `dilute_age` handles by returning the age unchanged for a non-positive input.
     S_surface = dz[1] * density[1] + water[1]
-    dz[1] = dz[1] + evaporation_condensation / density[1]
+    E_evaporation_condensation = apply_vapor_exchange!(temperature, dz, density, water,
+        evaporation_condensation, evaporation_condensation_liquid, mp)
     age[1] = dilute_age(age[1], S_surface, evaporation_condensation)
-
-    if verbose
-        E_evaporation_condensation = evaporation_condensation * specific_enthalpy(mp, temperature[1])
-    end
 
     # 7. Add snow/rain to top grid cell
     temperature, dz, density, water, grain_radius, grain_dendricity,
