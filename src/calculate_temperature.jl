@@ -12,7 +12,12 @@ implicit per `mp.thermal_solver`. Accounts for:
 
 Sub-time steps are determined by Von Neumann stability analysis.
 
-Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation)`.
+Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)`.
+
+`evaporation_condensation` [kg m-2, positive for deposition or condensation] is the vapour mass
+exchanged over the step. `evaporation_condensation_liquid` is the part exchanged in sub-steps
+whose latent heat was `LV` (a surface at the melting point), which is exchanged with liquid
+water; the rest, at `LS`, is exchanged with ice. See [`apply_vapor_exchange!`](@ref).
 
 `longwave_upward` [W m-2, positive upward] is emitted plus reflected longwave,
 `εσT_s⁴ + (1 − ε)·LW↓`, with ε the emissivity in force at each sub-step. The surface therefore
@@ -93,11 +98,12 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     # Scheme selected by dispatch on `mp.thermal_solver`'s type, so the call is resolved at
     # compile time. See `AbstractThermalSolver`.
     longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
-        heat_flux_basal_out, evaporation_condensation_out =
+        heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out =
         _thermal_solve!(mp.thermal_solver, temperature, dz, density, K, shortwave_flux,
             water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
 
-    return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, heat_flux_basal_out, evaporation_condensation_out
+    return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
+        heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out
 end
 
 """
@@ -131,8 +137,9 @@ Advance the column temperature over one forcing timestep with the explicit finit
 scheme, sub-stepped to the Von Neumann stability limit (see [`_max_safe_dt`](@ref)).
 
 `temperature` is updated in place. Returns the forcing-step averages
-`(longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation)`;
-the first four are W m-2, the last is kg m-2 accumulated over the step.
+`(longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal,
+evaporation_condensation, evaporation_condensation_liquid)`; the first four are W m-2, the last
+two kg m-2 accumulated over the step.
 
 `water_surface` and `grain_radius` are carried for the verbose diagnostic only.
 
@@ -170,6 +177,7 @@ function _thermal_solve!(solver::ExplicitThermal,
     # initialize cumulative quantities
     longwave_upward_cumulative = 0.0
     EC_cumulative = 0.0
+    EC_liquid_cumulative = 0.0
     lhf_cumulative = 0.0
     shf_cumulative = 0.0
     heat_flux_basal_cumulative = 0.0
@@ -331,8 +339,11 @@ function _thermal_solve!(solver::ExplicitThermal,
             temperature[1] = temperature_from_scaled_enthalpy(mp, H[1] * M_inv[1])
         end
 
-        # calculate cumulative evaporation (+)/condensation(-)
+        # calculate cumulative deposition or condensation (+) / sublimation or evaporation (-)
         EC_cumulative += evaporation_condensation
+        if latent_heat == LV
+            EC_liquid_cumulative += evaporation_condensation
+        end
 
         # Emissivity melt switch check. Offset by `T_MELT_SWITCH_TOLERANCE` (1e-4 K), not
         # the 1e-10 `T_TOLERANCE` used for branch boundaries elsewhere.
@@ -379,7 +390,8 @@ function _thermal_solve!(solver::ExplicitThermal,
     heat_flux_basal_out = heat_flux_basal_cumulative / cfs.dt  # J -> W/m2
     evaporation_condensation_out = EC_cumulative
 
-    return longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, heat_flux_basal_out, evaporation_condensation_out
+    return longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
+        heat_flux_basal_out, evaporation_condensation_out, EC_liquid_cumulative
 end
 
 """
@@ -472,7 +484,7 @@ tridiagonal system, solved by the Thomas algorithm. Unconditionally stable, so i
 stability sub-steps: [`_max_safe_dt`](@ref), [`_find_dt_divisor`](@ref), `mp.dt_divisors` and
 [`DT_MIN_WARN`](@ref) are all unused on this path, and a thin refrozen lens costs nothing.
 
-`temperature` is updated in place; the return is the [`AbstractThermalSolver`](@ref) 5-tuple.
+`temperature` is updated in place; the return is the [`AbstractThermalSolver`](@ref) 6-tuple.
 `water_surface` and `grain_radius` are carried for the verbose diagnostic only.
 
 ## The system
@@ -638,6 +650,7 @@ function _thermal_solve!(solver::ImplicitThermal,
     lhf_cumulative = 0.0
     heat_flux_basal_cumulative = 0.0
     EC_cumulative = 0.0
+    EC_liquid_cumulative = 0.0
 
     for _ in 1:n_sub
         if verbose
@@ -772,6 +785,9 @@ function _thermal_solve!(solver::ImplicitThermal,
         lhf_cumulative += heat_flux_latent * dt
         evaporation_condensation = heat_flux_latent / latent_heat * dt
         EC_cumulative += evaporation_condensation
+        if latent_heat == LV
+            EC_liquid_cumulative += evaporation_condensation
+        end
 
         # Reconciliation: one flux per face, `+F` below and `−F` above, so the column total
         # conserves to the last bit regardless of the solve residual.
@@ -830,7 +846,8 @@ function _thermal_solve!(solver::ImplicitThermal,
     heat_flux_basal_out = heat_flux_basal_cumulative / cfs.dt   # J -> W/m2
     evaporation_condensation_out = EC_cumulative
 
-    return longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out, heat_flux_basal_out, evaporation_condensation_out
+    return longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
+        heat_flux_basal_out, evaporation_condensation_out, EC_liquid_cumulative
 end
 
 """
