@@ -334,8 +334,10 @@ function _thermal_solve!(solver::ExplicitThermal,
         # net energy delivered to the surface cell this sub-step [J]
         Q_surface = (longwave_downward + longwave_upward) + thf
 
-        # Single fused pass: absorb this cell's source term, map it to its pre-diffusion
-        # temperature, then close out the *previous* cell, whose two faces are now both known.
+        # Single fused pass: map each cell to its start-of-sub-step temperature, absorb its
+        # source term, then close out the *previous* cell, whose two faces are now both known.
+        # The face fluxes use the start-of-sub-step temperatures (forward Euler), so a
+        # discrete steady state of sources and diffusion is preserved exactly.
         #
         # Diffusion is conservative and explicit. F_i is the energy crossing face i (between
         # cells i and i+1) into cell i, so cell i's net is F_i − F_{i-1}. Applying one flux per
@@ -351,13 +353,13 @@ function _thermal_solve!(solver::ExplicitThermal,
         # update one cell behind the source pass keeps it alive exactly long enough. Two
         # `M_inv` reads and one `A_face` read per cell, one pass, no second sweep.
         @inbounds begin
-            H[1] += Q_sw[1] + Q_surface
             T_pre_prev = _cell_temperature(mp, H[1], M_inv[1], density[1] * dz[1], water[1])
+            H[1] += Q_sw[1] + Q_surface
             F_prev = 0.0
             for i in 1:m-2
-                H[i+1] += Q_sw[i+1]
                 T_pre_i = _cell_temperature(mp, H[i+1], M_inv[i+1], density[i+1] * dz[i+1],
                     water[i+1])
+                H[i+1] += Q_sw[i+1]
                 F = A_face[i] * (T_pre_i - T_pre_prev)
                 H[i] += F - F_prev
                 F_prev = F
