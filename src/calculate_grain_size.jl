@@ -15,12 +15,12 @@ branches, and the sphericity caps, are the same on every setting.
 - `:Marbouty` — Marbouty (1980) everywhere. Its density factor `H` vanishes at
   `DENSITY_MARBOUTY_MAX`, so grain radius is frozen throughout the firn column below a few
   metres.
-- `:Arthern` (the default) — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`,
-  `GRAIN_GROWTH_EG`) at every density, dropping the temperature-gradient dependence
-  entirely.
-- `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it. Seasonal snow
-  keeps the temperature-gradient physics; firn grains keep growing, which matters because
-  `:ArthernB` densification goes as `1/r²`.
+- `:Arthern` — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`, `GRAIN_GROWTH_EG`) at every
+  density, dropping the temperature-gradient dependence entirely. Fitted to firn, it barely
+  coarsens dry surface snow.
+- `:hybrid` (the default) — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it.
+  Seasonal snow keeps the temperature-gradient physics; firn grains keep growing, which
+  matters because `:ArthernB` densification goes as `1/r²`.
 
 Runs unconditionally. Metamorphism is not contingent on model configuration — grains coarsen
 in a real snowpack whichever albedo scheme is selected — and `grain_radius` is read by four

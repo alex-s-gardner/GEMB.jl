@@ -195,8 +195,8 @@ end
 end
 
 @testset "Marbouty density limit" begin
-    # `:Marbouty` explicitly — this ceiling is that method's behaviour, and the
-    # `:Arthern` default has no density ceiling.
+    # `:Marbouty` explicitly — this ceiling is that method's behaviour; the `:hybrid` default
+    # hands over to Arthern growth above it.
     mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:Marbouty)
     cfs = _make_grain_cfs(dt=86400.0)
 
@@ -299,9 +299,9 @@ end
     r_arthern = _grow(:Arthern)
     r_hybrid = _grow(:hybrid)
 
-    # `:Arthern` is the default (it is what the Community Firn Model ships); `:Marbouty`
-    # stops dead at DENSITY_MARBOUTY_MAX, so it shows no growth in cells 3-5.
-    @test GEMB.ModelParameters().grain_growth_method === :Arthern
+    # `:hybrid` is the default; `:Marbouty` stops dead at DENSITY_MARBOUTY_MAX, so it shows no
+    # growth in cells 3-5.
+    @test GEMB.ModelParameters().grain_growth_method === :hybrid
     @test all(r_marbouty[1:2] .> 0.5)
     @test r_marbouty[3:5] == fill(0.5, 3)
 
@@ -329,4 +329,77 @@ end
         fill(0.5, 5), copy(gdn), fill(1.0, 5), cfs,
         GEMB.ModelParameters(grain_growth_method=m))[1] for m in (:Marbouty, :Arthern, :hybrid)]
     @test r_wet[1] == r_wet[2] == r_wet[3]
+end
+
+@testset "Grain growth closed forms" begin
+    dt = 86400.0 * 2
+    dt_d = 2.0
+    cfs = _make_grain_cfs(dt=dt)
+    mp = GEMB.ModelParameters()
+    ex(T) = exp(-6e3 / T)
+    d_of(gd, gs) = 0.1 * (gd / 0.99 + (1 - gd / 0.99) * (gs / 0.99 * 3 + (1 - gs / 0.99) * 4))
+    dz = [0.1, 0.1, 0.1]
+
+    # Dendritic, dry, gradient below 5 K/m.
+    T = fill(260.0, 3)
+    r, gd, gs = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.2, 3),
+        fill(0.8, 3), fill(0.2, 3), cfs, mp)
+    @test gd[2] ≈ 0.8 - 2e8 * ex(260.0) * dt_d rtol = 1e-12
+    @test gs[2] ≈ 0.2 + 1e9 * ex(260.0) * dt_d rtol = 1e-12
+    @test 2 * r[2] ≈ d_of(gd[2], gs[2]) rtol = 1e-12
+
+    # Dendritic, dry, gradient above 5 K/m: both fall by 2e8·e^(−6000/T)·|∇T|^0.4·dt.
+    T = [258.0, 260.0, 262.0]        # 20 K/m: 4 K across the 0.2 m between cells 1 and 3
+    r, gd, gs = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.2, 3),
+        fill(0.8, 3), fill(0.5, 3), cfs, mp)
+    Δ = 2e8 * ex(260.0) * 20.0^0.4 * dt_d
+    @test gd[2] ≈ 0.8 - Δ rtol = 1e-12
+    @test gs[2] ≈ 0.5 - Δ rtol = 1e-12
+
+    # Dendritic, wet: θ = 100·W/(ρ·dz) %, capped at 9; dendricity falls by θ³/16·dt.
+    W = 0.2
+    r, gd, gs = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), dz, fill(250.0, 3), fill(W, 3),
+        fill(0.2, 3), fill(0.8, 3), fill(0.2, 3), cfs, mp)
+    θ = 100 * W / (250.0 * 0.1)
+    @test gd[2] ≈ 0.8 - θ^3 / 16 * dt_d rtol = 1e-12
+    @test gs[2] ≈ 0.2 + θ^3 / 16 * dt_d rtol = 1e-12
+
+    # Brun (1989) wet growth: d³ grows by (6/π)(1.28e-8 + 4.22e-10·θ³)·dt [mm³ s⁻¹].
+    W = 1.5
+    d0 = 1.0
+    r, _, _ = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), dz, fill(300.0, 3), fill(W, 3),
+        fill(d0 / 2, 3), zeros(3), fill(1.0, 3), cfs, mp)
+    θ = 100 * W / (300.0 * 0.1)
+    @test 2 * r[2] ≈ (d0^3 + (6 / π) * (1.28e-8 + 4.22e-10 * θ^3) * dt)^(1 / 3) rtol = 1e-12
+
+    # Marbouty at −10 °C, ρ = 200, ∇T = 30 K/m: F = 0.8, H = 0.8, G = 0.29, Q = 0.016704 mm/d.
+    @test GEMB._marbouty_Q(GEMB.CtoK - 10.0, 200.0, 30.0) ≈ 0.8 * 0.8 * 0.29 * 0.09 rtol = 1e-12
+    T = [GEMB.CtoK - 13.0, GEMB.CtoK - 10.0, GEMB.CtoK - 7.0]   # 30 K/m
+    r, _, _ = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.5, 3),
+        zeros(3), fill(0.5, 3), cfs, GEMB.ModelParameters(grain_growth_method=:hybrid))
+    @test 2 * r[2] ≈ 1.0 + 0.016704 * dt_d rtol = 1e-9
+end
+
+@testset "Temperature gradient on a non-uniform grid" begin
+    # Linear T(z) through the cell centres: the stencil returns the gradient exactly at every
+    # cell, the two edge cells included.
+    dz = [0.02, 0.05, 0.11, 0.07, 0.3, 0.2]
+    zc = cumsum(dz) .- dz ./ 2
+    g = 13.7
+    T = 250.0 .+ g .* zc
+    for i in eachindex(dz)
+        @test GEMB._grain_gradient(T, dz, i, length(dz)) ≈ g rtol = 1e-12
+    end
+end
+
+@testset "Grain size caps are exact" begin
+    # Spherical grains cap at 2 mm diameter, non-spherical at 5 mm. Wet isothermal snow, so
+    # Brun growth drives both past their caps and the sphericity is left unchanged.
+    cfs = _make_grain_cfs(dt=86400.0 * 400)
+    for (gs, cap) in ((1.0, 2.0), (0.0, 5.0))
+        r, _, _ = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), fill(0.1, 3), fill(300.0, 3),
+            fill(3.0, 3), fill(cap / 2 - 0.01, 3), zeros(3), fill(gs, 3), cfs,
+            GEMB.ModelParameters())
+        @test all(2 .* r .== cap)
+    end
 end
