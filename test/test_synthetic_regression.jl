@@ -8,26 +8,27 @@
 # Two sites:
 #
 # - `test_1` from GEMB_ClimateForcing.jl (3-hourly, 1994-2025, 75-cycle spin-up on its
-#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 3.6 kg m-2 yr-1)
+#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 5.1 kg m-2 yr-1)
 #   is the small residual of the surface energy balance and all of it refreezes. Its runoff is
 #   exactly zero and its rain is 0.05% of precipitation, so it sees the surface energy balance
 #   and the radiation inputs but not the liquid-water paths. A change to `test_1` in
 #   GEMB_ClimateForcing.jl moves these values without anything in GEMB.jl changing.
 # - The maritime site of `synthetic_maritime_forcing.jl` (hourly, 4 years, no spin-up):
-#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1600 of melt, 700 of refreeze and
-#   2200 of runoff. It sees the rain, pore-water, refreeze, runoff and vapor-phase paths. The
-#   forcing is closed-form and lives in this repository.
+#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1350 of melt, 720 of refreeze and
+#   1940 of runoff, under a varying solar zenith angle and cloud optical thickness. It sees the
+#   rain, pore-water, refreeze, runoff and vapor-phase paths and the albedo's zenith and cloud
+#   terms. The forcing is closed-form and lives in this repository.
 #
-# The tolerances come from measured variability, on arm64 macOS:
+# The tolerances come from measured variability, on arm64 macOS with Julia 1.12.7:
 #
-# - Both sites are bit-for-bit reproducible run to run, and Julia 1.11.9 and 1.12.7 give
-#   bit-identical values at both.
-# - Raising every nonzero value of one forcing series by one ulp moves the pinned mass totals by
-#   at most 4e-12 kg m-2 at `test_1` and 1.5e-10 at the maritime site, and the mean albedo by at
-#   most 7e-16: neither site amplifies rounding differences.
-# - The response stays linear up to a relative perturbation of the whole temperature series
-#   of 1e-7 at `test_1`, and 1e-11 at the maritime site, where discrete events (cell merges,
-#   phase switches) begin to flip at 1e-9 and add at most 7e-4 kg m-2 there.
+# - Both sites are bit-for-bit reproducible run to run.
+# - Raising every value of the air-temperature series by one ulp moves the pinned mass totals
+#   by at most 5e-12 kg m-2 at `test_1` and 1.8e-10 at the maritime site, and the mean albedo
+#   by at most 7e-16: neither site amplifies rounding differences.
+# - A relative perturbation of the whole temperature series of 1e-9 moves the totals by at most
+#   6.7e-6 kg m-2 at `test_1` and 3.2e-4 at the maritime site, linearly there (100 times the
+#   response to 1e-11). At 1e-7, discrete events (new layers, merges, phase switches) flip at
+#   `test_1` and move its melt by 0.55 kg m-2.
 #
 # `mass_tol` is therefore max(1e-5 × total, 0.01 kg m-2) and the albedo tolerance 1e-5: more than
 # ten times the largest of these, while a change of 0.01 kg m-2 to a `test_1` total, or of 1e-5
@@ -65,9 +66,9 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    @test mean_albedo ≈ 0.870836 atol = ALBEDO_ATOL
-    @test total_melt ≈ 114.669238 atol = mass_tol(114.669238)
-    @test total_refreeze ≈ 119.610019 atol = mass_tol(119.610019)
+    @test mean_albedo ≈ 0.858890 atol = ALBEDO_ATOL
+    @test total_melt ≈ 163.159818 atol = mass_tol(163.159818)
+    @test total_refreeze ≈ 167.050487 atol = mass_tol(167.050487)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -82,17 +83,17 @@ end
     @test total(:runoff) > 0.5 * total(:precipitation)
     @test total(:refreeze) > 0.2 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.798615 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 6443.665400 atol = mass_tol(6443.665400)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.860099 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 5376.522423 atol = mass_tol(5376.522423)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2868.168168 atol = mass_tol(2868.168168)
-    @test total(:runoff) ≈ 8849.323336 atol = mass_tol(8849.323336)
-    @test total(:evaporation_condensation) ≈ 139.513451 atol = mass_tol(139.513451)
+    @test total(:refreeze) ≈ 2897.669569 atol = mass_tol(2897.669569)
+    @test total(:runoff) ≈ 7766.444010 atol = mass_tol(7766.444010)
+    @test total(:evaporation_condensation) ≈ 171.449914 atol = mass_tol(171.449914)
 end
 
 @testset "Synthetic regression: tolerance policy" begin
     # The window scales with the total and keeps a floor if a total goes to zero.
-    @test mass_tol(114.669238) == MASS_ATOL_FLOOR
-    @test mass_tol(6443.665400) ≈ 0.0644366540 rtol = 1e-12
+    @test mass_tol(163.159818) == MASS_ATOL_FLOOR
+    @test mass_tol(5376.522423) ≈ 0.05376522423 rtol = 1e-12
     @test mass_tol(0.0) == MASS_ATOL_FLOOR
 end
