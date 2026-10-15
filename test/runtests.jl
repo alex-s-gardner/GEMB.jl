@@ -93,7 +93,7 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     end
 
     @testset "Synthetic Regression" begin
-        # Full model validation with relaxed tolerances for cross-platform reproducibility
+        # Full-model regression pins at a cold site and a maritime site
         include("test_synthetic_regression.jl")
     end
 end

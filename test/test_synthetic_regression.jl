@@ -1,203 +1,98 @@
-# Full synthetic data regression test (self-consistency pin)
+# Full-model regression tests (self-consistency pins)
 #
-# The reference values below are GEMB.jl's own deterministic output, used to catch
-# *unintended* changes to the full-model result. They are bit-for-bit reproducible
-# across runs on a given platform; small cross-platform spread remains because the
-# 75-cycle spinup (~7.9M iterations) amplifies floating-point evaluation-order
-# differences (arm64 vs x86_64), so the tolerances are modest rather than 1e-12.
+# The reference values below are GEMB.jl's own deterministic output, used to catch *unintended*
+# changes to the full-model result. They are change detectors, not physics validations: an
+# intended change to the defaults or to a physics scheme moves them, and re-pinning them, with
+# the old and new values and the reason in the commit message, is part of making that change.
 #
-# Note this pin depends on the `test_1` forcing from GEMB_ClimateForcing.jl, so a change to
-# that site's parameters moves these numbers without anything in GEMB.jl changing. The most
-# recent re-pin (see the history above the assertions) was exactly that.
+# Two sites:
 #
-# This is a change detector, not a physics validation: an intended change to the
-# defaults or to a physics scheme is expected to move these numbers, and re-pinning
-# them is part of making such a change. Every re-pin is recorded below with what
-# moved it and by how much, so the history of the fingerprint is auditable.
+# - `test_1` from GEMB_ClimateForcing.jl (3-hourly, 1994-2025, 75-cycle spin-up on its
+#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 4.4 kg m-2 yr-1)
+#   is the small residual of the surface energy balance and all of it refreezes. Its runoff is
+#   exactly zero and its rain is 0.05% of precipitation, so it sees the surface energy balance
+#   and the radiation inputs but not the liquid-water paths. A change to `test_1` in
+#   GEMB_ClimateForcing.jl moves these values without anything in GEMB.jl changing.
+# - The maritime site of `synthetic_maritime_forcing.jl` (hourly, 4 years, no spin-up):
+#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1500 of melt, 700 of refreeze and
+#   2100 of runoff. It sees the rain, pore-water, refreeze, runoff and vapor-phase paths. The
+#   forcing is closed-form and lives in this repository.
+#
+# The tolerances come from measured variability, on arm64 macOS:
+#
+# - Both sites are bit-for-bit reproducible run to run, and Julia 1.11.9 and 1.12.7 give
+#   bit-identical values at both.
+# - Raising every nonzero value of one forcing series by one ulp moves the pinned mass totals by
+#   at most 4e-12 kg m-2 at `test_1` and 1.5e-10 at the maritime site, and the mean albedo by at
+#   most 7e-16: neither site amplifies rounding differences.
+# - The response stays linear up to a relative perturbation of the whole temperature series
+#   of 1e-7 at `test_1`, and 1e-11 at the maritime site, where discrete events (cell merges,
+#   phase switches) begin to flip at 1e-9 and add at most 7e-4 kg m-2 there.
+#
+# `mass_tol` is therefore max(1e-5 × total, 0.01 kg m-2) and the albedo tolerance 1e-5: more than
+# ten times the largest of these, while a change of 0.01 kg m-2 to a `test_1` total, or of 1e-5
+# relative to a maritime one, still fails.
 
 using GEMB: Statistics
 using GEMB_ClimateForcing
 
-@testset "Synthetic regression (self-consistency pin)" begin
-    # Generate 3-hourly synthetic climate forcing (returns DimStack)
+include("synthetic_maritime_forcing.jl")
+
+const MASS_RTOL = 1e-5
+const MASS_ATOL_FLOOR = 0.01    # kg m-2
+const ALBEDO_ATOL = 1e-5
+mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
+
+@testset "Synthetic regression: test_1 (cold accumulation site)" begin
     ds = simulate_climate_forcing("test_1", 3)
     cf = initialize_forcing(ds)
-
-    # Initialize model parameters
     mp = ModelParameters(output_frequency=:daily)
 
-    # Initialize profile. Both escape-hatch flags give the pure-ice initialization,
-    # and the deep column, that the reference values below were generated with.
+    # Both escape-hatch flags give the pure-ice initialization and the deep column the
+    # references were generated with.
     profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
-
-    # Create climatological forcing and spin up
     cf_climatology = GEMB.forcing_climatology(cf)
     mp_spinup = ModelParameters(output_frequency=:last)
-    profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup; simulation_years_maximum=75 * GEMB._years_per_cycle(cf_climatology))
-
-    # Run GEMB with spun-up profile
+    profile_spunup = gemb_spinup(profile, cf_climatology, mp_spinup;
+        simulation_years_maximum=75 * GEMB._years_per_cycle(cf_climatology))
     output = gemb(profile_spunup, cf, mp)
 
-    # The three pinned fields. `refreeze` replaced `runoff` when `test_1` moved to 2200 m:
-    # the site now retains all of its meltwater, so `runoff` is identically zero and pinning
-    # it would assert nothing. `refreeze` covers the same melt/percolation path with signal
-    # in it (145.7 kg m-2), which is the property the third pin was there for.
     mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
     total_refreeze = sum(parent(output[:refreeze]))
 
-    # Guard the substitution's premise: if a change ever puts runoff back at this site, the
-    # third pin is watching the wrong field and this fails rather than passing quietly.
+    # The site retains all of its meltwater; `refreeze` stands in for `runoff`. If runoff ever
+    # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    # Reference = deterministic output on arm64 (macOS); see the latest re-pin below for the
-    # x86_64 offset. Tolerances bracket
-    # the cross-platform FP evaluation-order spread amplified over the 75-cycle
-    # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt,
-    # against the ~10000 kg/m² totals of the time — i.e. ~0.49% — and the windows are
-    # set ~2.4x that. The mass windows are expressed relatively for exactly this
-    # reason, since the spread scales with the totals; see the note at the assertions.
-    #
-    # The spread widened from ~30 to ~51 kg/m² with the fixed-length grid: merge and
-    # split are threshold comparisons against the per-cell bands, so a 1-ulp band
-    # difference can flip a single merge and slightly change the deep discretization.
-    # This is evaluation-order sensitivity in the regridding, not a conservation
-    # problem — the per-timestep mass/energy checks run under `verbose=true` and the
-    # whole-run budget closes to ~1e-11 kg m-2 on both platforms.
-    # Re-centered when internal energy became the enthalpy integral ∫c_p dT rather than
-    # M·T·c_p. For the default :constant heat capacity the two are algebraically identical,
-    # so the shift is arithmetic reordering only (~1e-13 per operation) — but the 75-cycle
-    # spinup is not converged and amplifies it to ~0.3% here. The previous values
-    # (0.821798 / 11398.551015 / 5017.057989) still fell inside these atols; they are
-    # re-centered so the tolerance budget stays available for the cross-platform spread it
-    # was sized for rather than being half-consumed by this change.
-    # Re-centered again for two physics fixes, both of which change output by design:
-    # densification now compacts against mean *snowfall* rather than mean precipitation
-    # (`densification_accumulation = :accumulation`), and rain's sensible heat above the
-    # melting point is carried at the water heat capacity rather than the ice one
-    # (`rain_heat_capacity = :water`). Melt rises 48.7 kg m-2 (+0.43%) — the expected sign
-    # for the second, which adds real energy at a site where 3.2% of precipitation falls as
-    # rain. The previous values (0.821914 / 11368.809855 / 4997.438019) still fall inside
-    # these atols; re-centered so the tolerance budget stays available for the
-    # cross-platform spread it was sized for.
-    #
-    # Verified inert: with `densification_accumulation=:precipitation` and
-    # `rain_heat_capacity=:ice` the run reproduces the pre-fix result to the last bit on all
-    # three fields — 0.8219139818790556 / 11368.809854556823 / 4997.438018517874 — so the
-    # shift below is the two physics changes and nothing else. (The albedo reference had
-    # drifted to 0.822103 in transcription; melt and runoff were exact.)
-    #
-    # Re-pinned for v2.0.0, which changed four defaults on the recommendation of the two
-    # firn-model intercomparisons and the shipped configurations of the CFM and IMAU-FDM:
-    # `density_ice` 910 -> 917, `thermal_conductivity_method` :Sturm -> :Calonne2019,
-    # `water_irreducible_method` :constant -> :ColeouLesaffre, and `grain_growth_method`
-    # :Marbouty -> :Arthern. This is the first re-pin that moves the numbers by more than
-    # the tolerance, which is what the major version records. Melt falls 453.6 kg m-2
-    # (-4.0%) and runoff 255.1 (-5.1%); albedo moves 2e-5. The conductivity change is
-    # responsible for most of it — the higher firn conductivity conducts winter cold
-    # deeper, so the column enters the melt season colder and refreezes more of what melts
-    # (measured in isolation: melt -570, minimum column temperature +4.25 K). The atols
-    # are unchanged, since the cross-platform spread they were sized for has not moved.
-    #
-    # Re-centered for the thermal sub-step stability limit, which now comes from the scheme
-    # actually being solved — `dt ≤ ρᵢcᵢdzᵢ/(Gᵢ + Gᵢ₋₁)` over the harmonic-mean face
-    # conductances, excluding the Dirichlet bottom cell — rather than the textbook
-    # uniform-grid form `0.5·ρᵢcᵢdzᵢ²/Kᵢ`. On the graded grid the old form was not
-    # conservative (per-cell ratio 0.66–1.82); the correct limit is looser at the cell that
-    # binds, so mean sub-steps per timestep fall 40.6 → 29.4. Melt falls 14.6 kg m-2 (-0.13%)
-    # and runoff 8.7 (-0.18%); albedo moves 9e-5. The previous values (0.821926 /
-    # 10963.944470 / 4760.650556) still fall inside these atols; re-centered so the tolerance
-    # budget stays available for the cross-platform spread it was sized for. See
-    # `GEMB._max_safe_dt`.
-    #
-    # Re-pinned for the corrected unstable-branch integrated stability functions. Paulson's
-    # (1970) `Ψ` takes the *inverse* profile function as its argument, so the exponents are
-    # positive, not negative; the previous form also carried Högström's (1988) `0.95`
-    # `κ_H/κ_M` ratio inside the integral, which put `Ψ_h(0) = -0.0999` instead of 0 and left
-    # the fluxes discontinuous at neutral stability. Both branches now reproduce
-    # `Ψ(ζ) = ∫₀^ζ (1 - φ)/z dz` under numerical integration of their own published `φ`. The
-    # corrected `Ψ` is larger, so `coef` shrinks and unstable-side turbulent exchange
-    # strengthens: melt falls 576.4 kg m-2 (-5.3%) and runoff 283.8 (-6.0%), the expected sign
-    # (more turbulent cooling and more sublimation at a melting surface). Albedo moves 9e-4.
-    # This exceeds the atols, which is why it is a re-pin rather than a re-centering; the atols
-    # themselves are unchanged, the cross-platform spread they were sized for having not moved.
-    # See `GEMB._turbulent_heat_flux` and `GEMB.ZETA_UNSTABLE_MIN`.
-    # Re-pinned when the `test_1` synthetic site moved from 700 m to 2200 m elevation in
-    # GEMB_ClimateForcing.jl. This is a change to the *forcing*, not to GEMB's physics: at
-    # 700 m the site melted hard (332 kg m-2 yr-1, 3.9% of steps at or above freezing), and
-    # melt is convex in temperature, so `forcing_climatology` — which averages the 32 years
-    # into one — cancelled the warm excursions that carried it and produced a climatology
-    # with *zero* melt. The spinup therefore equilibrated a melt-free column (FAC ~4.06 m)
-    # and the transient run spent its whole length relaxing to the real attractor
-    # (FAC ~0.74 m), so the docs' diagnostic figure showed a 7 m elevation drift that was an
-    # artifact of the spinup/transient mismatch rather than a property of the site. At
-    # 2200 m melt survives averaging (12.5 kg m-2 yr-1) and a spun-up column holds its
-    # elevation: FAC drifts +0.17 m over 32 years against -5.57 m from a cold start.
-    #
-    # Every number below moves by far more than any tolerance, because it is a different
-    # climate: melt 10372.97 -> 397.22 kg m-2 (-96%), albedo 0.822755 -> 0.835208 (the colder,
-    # drier surface keeps finer grains), and runoff 4468.19 -> 0.0, which is why the third
-    # pin is now `refreeze`. Note the fingerprint is now a *colder* site than before, so it
-    # exercises the melt/refreeze path more lightly; `test_ablation_regime.jl` remains the
-    # melt-dominated end-to-end case.
-    #
-    # The mass tolerances became relative-with-a-floor as a consequence of this re-pin: an
-    # absolute window sized against ~10000 kg m-2 totals does not transfer to ~400. See the
-    # note at the assertions.
-    #
-    # Re-pinned when GEMB_ClimateForcing.jl changed how it derives `cloud_optical_thickness` from
-    # the shortwave: τ is inverted against the FAO-56 Annex 3 clear sky at each step's sun angle,
-    # pressure and vapor pressure (eqs. 3-17 to 3-20) instead of the sun-angle-independent
-    # 0.75 + 2e-5·z; where the zenith angle exceeds 80° it is taken from the preceding inverted
-    # step of the same daylight period (the following one at dawn); and it is capped at 30
-    # instead of 100. This is a change to the *forcing*: every other layer of `test_1` is
-    # bit-identical, and running GEMB on the new stack with the old τ layer substituted
-    # reproduces the previous result to the last bit. The synthetic sky is clear, so the old
-    # derivation's low-sun inflation (median τ 4.2 at 80–85°, 19.5 at 85–90° on the hourly
-    # series) is gone and median τ is 0.7–0.9 in every zenith band. Less cloud makes the surface
-    # darker:
-    # albedo falls 0.0115 (0.884995 -> 0.873476), melt rises 5.50 kg m-2 (135.70 -> 141.20) and
-    # refreeze 5.39 (140.32 -> 145.70), all on arm64. Of the albedo change, the cap alone
-    # accounts for -0.0006, the FAO clear sky for a further -0.0066 and the low-sun hold for the
-    # remaining -0.0043. These references are arm64 (macOS) output; the x86_64 values have not
-    # been re-measured, and before this re-pin they sat 1.5 kg m-2 below arm64 in melt and
-    # refreeze and 3e-5 below in albedo.
-    # The mass tolerances are `max(rtol·reference, floor)` rather than a bare `atol`, because
-    # the quantity they have to bracket — cross-platform FP evaluation-order spread amplified
-    # over the 75-cycle spinup — scales with the totals, while a fixed `atol` does not. The
-    # inherited `atol = 120.0` was sized against ~10000 kg m-2 totals, where it was 1.16%
-    # relative and 2.35x the measured arm64/x86_64 spread of ~51 kg m-2 (0.49%). Carried
-    # unchanged onto the ~400 kg m-2 totals this site produces, the same window is ~30% —
-    # loose enough to miss a real regression. The relative form keeps the ratio the pin was
-    # actually sized for: `MASS_RTOL = 0.012` is 2.4x the spread expressed as a fraction, so
-    # it stays correctly sized if a future re-pin moves these totals again in either
-    # direction.
-    #
-    # The floor is what a pure `rtol` would get wrong at the other end. `refreeze` is one
-    # substitution away from having been `runoff`, which this site drove to exactly zero;
-    # should a future change take either total near zero, `rtol·reference` collapses with it
-    # and the pin becomes unfalsifiable-by-arithmetic — asserting agreement to a window
-    # narrower than the FP noise it exists to tolerate. `MASS_ATOL_FLOOR = 2.0` kg m-2 holds a
-    # usable window there; it binds below ~167 kg m-2, which includes the current references
-    # (141.2 and 145.7 kg m-2, where `rtol·reference` would be 1.69 and 1.75 kg m-2).
-    MASS_RTOL = 0.012
-    MASS_ATOL_FLOOR = 2.0
-    mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
+    @test mean_albedo ≈ 0.873456 atol = ALBEDO_ATOL
+    @test total_melt ≈ 142.356508 atol = mass_tol(142.356508)
+    @test total_refreeze ≈ 146.697472 atol = mass_tol(146.697472)
+end
 
-    @test mean_albedo ≈ 0.873476 atol=3e-3      # ~0.34% relative
-    @test total_melt ≈ 141.198938 atol=mass_tol(141.198938)
-    @test total_refreeze ≈ 145.703078 atol=mass_tol(145.703078)
+@testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
+    cf = synthetic_maritime_forcing()
+    mp = ModelParameters(output_frequency=:daily)
+    profile = initialize_profile(mp, cf)
+    output = gemb(profile, cf, mp)
+    total(k) = sum(parent(output[k]))
 
-    # Pin the tolerance policy itself, so a later edit cannot quietly reintroduce the failure
-    # mode either half exists to prevent: a window that does not scale, or one that collapses
-    # to zero. These are assertions about the *test*, which is why they are cheap and here.
-    @test mass_tol(141.198938) == MASS_ATOL_FLOOR      # the floor binds at the current references
-    @test mass_tol(400.0) ≈ 4.8 atol=1e-12             # rtol binds above ~167 kg m-2
-    @test mass_tol(0.0) == MASS_ATOL_FLOOR            # floor binds if a total ever goes to 0
-    @test mass_tol(1e5) > MASS_ATOL_FLOOR             # and scales up with a larger total
+    # The premise of this site: rain and runoff are each a large part of the budget.
+    @test total(:rain) > 0.4 * total(:precipitation)
+    @test total(:runoff) > 0.5 * total(:precipitation)
+    @test total(:refreeze) > 0.2 * total(:precipitation)
 
-    # Still worth measuring rather than inferring: 0.012 is the *old* site's spread-to-window
-    # ratio carried across, not a spread measured at 2200 m. The references above are exact on
-    # x86_64, so an arm64 run gives the real figure for this site directly; if it comes in
-    # materially below 0.49%, this can tighten.
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.811681 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 6031.319200 atol = mass_tol(6031.319200)
+    @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
+    @test total(:refreeze) ≈ 2802.274961 atol = mass_tol(2802.274961)
+    @test total(:runoff) ≈ 8509.261661 atol = mass_tol(8509.261661)
+    @test total(:evaporation_condensation) ≈ 153.042657 atol = mass_tol(153.042657)
+end
+
+@testset "Synthetic regression: tolerance policy" begin
+    # The window scales with the total and keeps a floor if a total goes to zero.
+    @test mass_tol(142.356508) == MASS_ATOL_FLOOR
+    @test mass_tol(6031.319200) ≈ 0.0603131920 rtol = 1e-12
+    @test mass_tol(0.0) == MASS_ATOL_FLOOR
 end
