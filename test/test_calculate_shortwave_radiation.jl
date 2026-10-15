@@ -228,15 +228,15 @@ end
     # Deep, graded column so nothing is transmitted through the base. For each albedo method,
     # with and without subsurface absorption, the column absorbs exactly
     # (1 − α)(SW↓ − SW↓_d) + (1 − α_d)·SW↓_d with the albedos `calculate_albedo` returned —
-    # including over thin snow on ice, where those differ from the grain-size albedo.
+    # including over thin snow on ice and on firn, where those differ from the grain-size albedo.
     n = 400
     dz = fill(0.1, n)
     cfs = GEMB.ClimateForcingStep(; dt=3600.0, shortwave_downward=500.0,
         shortwave_downward_diffuse=200.0, solar_zenith_angle=40.0,
         cloud_optical_thickness=1.0, cloud_fraction=0.5)
     profiles = (collect(range(300.0, 917.0; length=n)),
-        [fill(350.0, 1); fill(917.0, n - 1)])
-    dz_profiles = (dz, [0.04; fill(0.1, n - 1)])
+        [fill(350.0, 1); fill(917.0, n - 1)], [fill(350.0, 1); fill(870.0, n - 1)])
+    dz_profiles = (dz, [0.04; fill(0.1, n - 1)], [0.01; fill(0.1, n - 1)])
     for method in (:GardnerSharp, :BrunLefebre, :GreuellKonzelmann), sub in (false, true),
         (density, dzp) in zip(profiles, dz_profiles)
         mp = GEMB.ModelParameters(albedo_method=method, shortwave_subsurface_absorption=sub,

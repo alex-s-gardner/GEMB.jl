@@ -22,21 +22,27 @@ Under `:GardnerSharp` the direct-beam albedo uses `cfs.solar_zenith_angle` [degr
 `albedo_diffuse`. A step with `SW↓ = 0` and the sun above the horizon is evaluated normally.
 Neither case changes the energy budget, since no shortwave is absorbed when `SW↓ = 0`.
 
-# Firn, ice, and thin snow over them
+# Firn, ice, and snow over them
 
 Under `:GardnerSharp` and `:BrunLefebre` the grain-size albedo describes semi-infinite snow.
-Where the column has a surface of firn or ice, or a thin snow layer over one, both returned
-albedos are replaced as follows ([`firn_ice_albedo`](@ref)):
+Where the column has a surface of firn or ice, or snow over one, the albedos are
+([`firn_ice_albedo`](@ref)):
 
-- **Exposed ice** (`density[1] ≥ mp.density_ice`): `mp.albedo_ice` exactly.
+- **Exposed ice** (`density[1] ≥ mp.density_ice`): `mp.albedo_ice` exactly, for both streams.
 - **Exposed firn** (`DENSITY_PORE_CLOSEOFF ≤ density[1] < mp.density_ice`): linear in density
-  from `mp.albedo_ice` at `mp.density_ice` to `ALBEDO_FIRN_MAX` (0.65) at pore close-off.
-- **Thin snow** (snow of total thickness `d ≤ ALBEDO_SNOW_DEPTH_THICK` = 0.1 m above the first
-  cell at or above pore close-off): linear in depth between the albedo of that underlying firn
-  or ice surface at `d = 0` and the semi-infinite snow albedo at `d = 0.1 m`.
-
-The depth blend is the only thin-snow mechanism. Gardner & Sharp's (2010) two-layer
-finite-depth term is not applied.
+  from `mp.albedo_ice` at `mp.density_ice` to `ALBEDO_FIRN_MAX` (0.65) at pore close-off, for
+  both streams.
+- **Snow over firn or ice, `:GardnerSharp`**: Gardner & Sharp (2010) eq. 13 (p. 11) for a snow
+  layer of depth `z` [m w.e.] over a semi-infinite layer. `z` is the matrix mass of the snow
+  cells above the first cell at or above pore close-off, divided by `DENSITY_WATER`; the lower
+  layer's albedo is `firn_ice_albedo` of that cell. See [`_albedo_gardner`](@ref). Eq. 13
+  keeps the zenith and cloud terms of eqs. 9–11, while exposed firn and ice carry none, so
+  with `SZA > 0` or `τ > 0` the albedo drops from the `z → 0` limit of eq. 13 to
+  `firn_ice_albedo` when the last snow cell goes.
+- **Thin snow over firn or ice, `:BrunLefebre`**: the MAR integrated albedo of Lefebre et al.
+  (2003, p. 3 ¶14), linear in the snow thickness `d` between the albedo of the firn or ice
+  surface at `d = 0` and the semi-infinite snow albedo at `d ≥ ALBEDO_SNOW_DEPTH_THICK`
+  (0.1 m).
 
 # References
 - Gardner, A. S. and Sharp, M. J. (2010). A review of snow and ice albedo and the development
@@ -63,34 +69,40 @@ function calculate_albedo(dz::Vector{Float64},
     if (mp.albedo_method == :None) || ((mp.albedo_density_threshold - density[1]) < D_TOLERANCE)
         albedo = mp.albedo_fixed
         albedo_diffuse = albedo
-    else
-        if mp.albedo_method == :GardnerSharp
+    elseif mp.albedo_method == :GreuellKonzelmann
+        albedo = mp.albedo_ice + (density[1] - mp.density_ice) *
+            (mp.albedo_snow - mp.albedo_ice) /
+            (density_fresh_snow - mp.density_ice) +
+            (0.05 * (cfs.cloud_fraction - 0.5))
+        albedo_diffuse = albedo
+
+    elseif (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
+        albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
+
+        if depth_snow == 0.0
+            # Exposed firn or ice.
+            albedo = albedo_under
+            albedo_diffuse = albedo_under
+
+        elseif mp.albedo_method == :GardnerSharp
+            # `z_we` is Inf when no firn or ice lies under the snow (semi-infinite snow).
+            z_we = mass_snow / DENSITY_WATER
             albedo_diffuse = _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness)
+                ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness, albedo_under, z_we)
             # With the sun at or below the horizon there is no direct beam; see the docstring.
             albedo = cfs.solar_zenith_angle < 90.0 ?
                      _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                         cfs.solar_zenith_angle, cfs.cloud_optical_thickness) :
+                         cfs.solar_zenith_angle, cfs.cloud_optical_thickness, albedo_under,
+                         z_we) :
                      albedo_diffuse
 
-        elseif mp.albedo_method == :BrunLefebre
+        else
             albedo = _albedo_brun_lefebre(grain_radius[1])
+            if depth_snow < ALBEDO_SNOW_DEPTH_THICK
+                albedo = albedo_under +
+                         (albedo - albedo_under) * (depth_snow / ALBEDO_SNOW_DEPTH_THICK)
+            end
             albedo_diffuse = albedo
-
-        elseif mp.albedo_method == :GreuellKonzelmann
-            albedo = mp.albedo_ice + (density[1] - mp.density_ice) *
-                (mp.albedo_snow - mp.albedo_ice) /
-                (density_fresh_snow - mp.density_ice) +
-                (0.05 * (cfs.cloud_fraction - 0.5))
-            albedo_diffuse = albedo
-        end
-
-        # The grain-size methods describe semi-infinite snow; replace them over firn, ice, or
-        # thin snow on either (see the docstring).
-        if (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
-            albedo_under, snow_weight = _underlying_surface(dz, density, mp)
-            albedo = albedo_under + (albedo - albedo_under) * snow_weight
-            albedo_diffuse = albedo_under + (albedo_diffuse - albedo_under) * snow_weight
         end
     end
 
@@ -123,27 +135,26 @@ or above `mp.density_ice`, and linear in density from there up to `ALBEDO_FIRN_M
 end
 
 """
-    _underlying_surface(dz, density, mp) -> (albedo_under, snow_weight)
+    _snow_over_firn_ice(dz, density, mp) -> (albedo_under, depth_snow, mass_snow)
 
-The firn, ice and thin-snow rules of [`calculate_albedo`](@ref) as a blend: the surface albedo
-is `albedo_under + (albedo_snow − albedo_under)·snow_weight`, with `albedo_snow` the
-semi-infinite snow albedo. `snow_weight` is 0 for exposed firn or ice, `depth/0.1 m` for thin
-snow over them, and 1 for deep snow (or a column with no firn), where `albedo_under` is unused.
+The snow above the first cell at or above `DENSITY_PORE_CLOSEOFF`: its thickness `depth_snow`
+[m] and matrix mass `mass_snow = Σ dz·density` [kg m-2], and `albedo_under`, the
+[`firn_ice_albedo`](@ref) of that firn or ice cell. Both amounts are 0 for exposed firn or ice.
+For a column with no firn or ice both are `Inf` and `albedo_under` is 0 (unused).
 """
-@inline function _underlying_surface(dz::Vector{Float64}, density::Vector{Float64},
+@inline function _snow_over_firn_ice(dz::Vector{Float64}, density::Vector{Float64},
     mp::ModelParameters)
 
-    density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return firn_ice_albedo(density[1], mp), 0.0
-
     depth_snow = 0.0
+    mass_snow = 0.0
     for i in eachindex(dz, density)
         if density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE
-            depth_snow >= ALBEDO_SNOW_DEPTH_THICK && return 0.0, 1.0
-            return firn_ice_albedo(density[i], mp), depth_snow / ALBEDO_SNOW_DEPTH_THICK
+            return firn_ice_albedo(density[i], mp), depth_snow, mass_snow
         end
         depth_snow += dz[i]
+        mass_snow += dz[i] * density[i]
     end
-    return 0.0, 1.0
+    return 0.0, Inf, Inf
 end
 
 # Spectral fractions of Lefebre et al. (2003) for 0.3–0.8, 0.8–1.5 and 1.5–2.8 µm; they sum to 1.
@@ -178,19 +189,44 @@ end
 
 """
     _albedo_gardner(grain_radius_surface, c, SZA, τ) -> α
+    _albedo_gardner(grain_radius_surface, c, SZA, τ, albedo_under, z_we) -> α
 
-Broadband albedo of semi-infinite snow from Gardner and Sharp (2010): pure-snow albedo from
-the specific surface area, plus the changes due to soot loading `c` [ppmw], solar zenith angle
-`SZA` [degrees, 0 ≤ SZA < 90] and cloud optical thickness `τ ≥ 0`. A zenith angle outside that
+Broadband albedo from Gardner and Sharp (2010, eqs. 7–12, pp. 10–11): the pure-snow albedo
+`α_S` from the specific surface area (eq. 7), plus the changes due to soot loading `c` [ppmw]
+(eq. 8, giving `α_c = α_S + dα_c`), solar zenith angle `SZA` [degrees, 0 ≤ SZA < 90] (eqs. 9–10)
+and cloud optical thickness `τ ≥ 0` (eq. 11), summed by eq. 12. A zenith angle outside that
 range throws: the zenith term is defined only for the sun above the horizon.
+
+The four-argument form is semi-infinite snow. The six-argument form is a snow layer `z_we`
+[m w.e.] deep over a semi-infinite layer of albedo `albedo_under`, by eq. 13 (p. 11 ¶51–52):
+`dα_c` is replaced in eqs. 8–12 by
+
+    dα′_c = (α_c^btm − α_S^top) + A·(α_c^top − α_c^btm),
+    A = min(1, 2.1·z^p),   p = 1.35·(1 − α_S^top) − 0.1·c^top − 0.13,
+
+with `α_c^btm = albedo_under` and the snow's `α_S`, `α_c` and `c` as the top layer. The zenith
+and cloud terms (eqs. 9 and 11) are then evaluated with `α_c′ = α_S + dα′_c`. As `z_we → 0`
+the result therefore tends to eqs. 9–12 with `α_c = albedo_under`, which equals
+`albedo_under` at `SZA = 0` and `τ = 0`.
+
+Where `A = 1`, from `z_we = 2.1^(−1/p)` upward, the result is the semi-infinite value exactly;
+`z_we = Inf` is semi-infinite snow. Gardner and Sharp fitted eq. 13 for snow over ice or old
+snow (p. 11 ¶52) with `z` 0.01–0.5 m w.e., `r_e` 0.05–1 mm, `c` 0–0.3 ppmw, `SZA` 0–75° and
+`τ` 0–20 (Table B2, p. 13). Below `z = 0.01` m w.e. the formula is extrapolated toward
+`A = 0`. Over that fitted range `p > 0`; for `p ≤ 0` (very fine or sooty snow, outside it) `A`
+is 1, which is the formula's value for every `z_we ≤ 1` m w.e.
 """
+_albedo_gardner(grain_radius_surface::Float64, c::Float64, SZA::Float64, t::Float64) =
+    _albedo_gardner(grain_radius_surface, c, SZA, t, 0.0, Inf)
+
 function _albedo_gardner(grain_radius_surface::Float64, c::Float64,
-    SZA::Float64, t::Float64)
+    SZA::Float64, t::Float64, albedo_under::Float64, z_we::Float64)
 
     (0.0 <= SZA < 90.0) ||
         throw(DomainError(SZA, "solar zenith angle must be in [0, 90) degrees for the " *
                                "Gardner-Sharp zenith term"))
     t >= 0.0 || throw(DomainError(t, "cloud optical thickness must be non-negative"))
+    z_we >= 0.0 || throw(DomainError(z_we, "snow depth in m w.e. must be non-negative"))
 
     # convert effective radius to specific surface area [cm2 g-1]
     S1 = 3.0 / (0.091 * grain_radius_surface)
@@ -205,6 +241,18 @@ function _albedo_gardner(grain_radius_surface::Float64, c::Float64,
     # change in pure snow albedo due to soot loading
     dac = max(0.04 - as,
         -(c^0.55) / (0.16 + 0.6 * S1^0.5 + (1.8 * c^0.6) * (S1^(-0.25))))
+
+    # finite snow depth over a lower layer of albedo `albedo_under` (eq. 13); at A = 1 the
+    # semi-infinite `dac` is kept as is
+    if z_we < Inf
+        (0.0 <= albedo_under <= 1.0) ||
+            throw(DomainError(albedo_under, "albedo of the layer under the snow must be in [0, 1]"))
+        p = 1.35 * (1 - as) - 0.1 * c - 0.13
+        A = p > 0.0 ? min(1.0, 2.1 * z_we^p) : 1.0
+        if A < 1.0
+            dac = (albedo_under - as) + A * ((as + dac) - albedo_under)
+        end
+    end
 
     # change in albedo due to solar zenith angle
     dasz = 0.53 * as * (1 - (as + dac)) * (1 - u)^1.2
