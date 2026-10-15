@@ -334,6 +334,84 @@ end
     end
 end
 
+# Murphy & Koop (2005) eqs. 7 (ice, p. 1542) and 10 (liquid water, p. 1552) evaluated in
+# 256-bit BigFloat from the paper's decimal coefficients.
+function _mk_ice_big(T)
+    T = big(T)
+    return exp(big"9.550426" - big"5723.265" / T + big"3.53068" * log(T) - big"0.00728332" * T)
+end
+function _mk_water_big(T)
+    T = big(T)
+    return exp(big"54.842763" - big"6763.22" / T - big"4.210" * log(T) + big"0.000367" * T +
+               tanh(big"0.0415" * (T - big"218.8")) *
+               (big"53.878" - big"1331.22" / T - big"9.44523" * log(T) + big"0.014025" * T))
+end
+
+@testset "Saturation vapor pressure over water" begin
+    setprecision(BigFloat, 256) do
+        # Eq. 10 against its BigFloat evaluation: supercooled, the melting point, above it.
+        for T in (240.0, GEMB.CtoK, 300.0)
+            @test GEMB.saturation_vapor_pressure_water(T) ≈ _mk_water_big(T) rtol = 1e-12
+        end
+    end
+    # Table C1 (p. 1561), "values recommended for checking computer codes", to half a unit in
+    # the last printed digit.
+    for (T, p, half_digit) in ((150.0, 1.562e-5, 0.0005e-5), (180.0, 0.011239, 0.0000005),
+                               (210.0, 1.2335, 0.00005), (240.0, 37.667, 0.0005),
+                               (273.15, 611.213, 0.0005), (273.16, 611.657, 0.0005),
+                               (300.0, 3536.8, 0.05))
+        @test abs(GEMB.saturation_vapor_pressure_water(T) - p) <= half_digit
+    end
+    # Table C1's ice column at the same two temperatures, for eq. 7.
+    @test abs(GEMB.saturation_vapor_pressure_ice(273.15) - 611.154) <= 0.0005
+    @test abs(GEMB.saturation_vapor_pressure_ice(240.0) - 27.272) <= 0.0005
+
+    # At the triple point both curves give the triple-point pressure 611.657 Pa (p. 1540;
+    # Table C1 lists 611.657 for both), so they agree to the paper's printed 1e-3 Pa.
+    e_w = GEMB.saturation_vapor_pressure_water(273.16)
+    e_i = GEMB.saturation_vapor_pressure_ice(273.16)
+    @test abs(e_w - 611.657) <= 0.0005
+    @test abs(e_i - 611.657) <= 0.0005
+    @test abs(e_w - e_i) < 0.001
+    # Below the triple point supercooled water has the higher vapor pressure (Fig. 9, p. 1553:
+    # p_liq − p_ice peaks near 27 Pa around 260 K and vanishes at the triple point).
+    for T in (250.0, 260.0, 270.0)
+        @test GEMB.saturation_vapor_pressure_water(T) > GEMB.saturation_vapor_pressure_ice(T)
+    end
+    # 273.15 K, the surface temperature at which the latent flux switches to the water curve.
+    @test GEMB.saturation_vapor_pressure_water(GEMB.CtoK) >
+          GEMB.saturation_vapor_pressure_ice(GEMB.CtoK)
+
+    # Eq. 10 is stated for 123 < T < 332 K.
+    for T in (123.0, 332.0, 100.0, 350.0, NaN)
+        @test_throws "valid for 123 < T < 332 K" GEMB.saturation_vapor_pressure_water(T)
+        @test_throws "valid for 123 < T < 332 K" GEMB.saturation_vapor_pressure_water_derivative(T)
+    end
+end
+
+@testset "Saturation vapor pressure derivatives" begin
+    # The analytic de_s/dT of both curves against a BigFloat central difference of the
+    # function itself (the generic method evaluated at 256 bits, step 1e-30 K, so the
+    # difference error is O(1e-60)).
+    setprecision(BigFloat, 256) do
+        h = big"1e-30"
+        cd(f, T) = (f(big(T) + h) - f(big(T) - h)) / (2h)
+        for T in (130.0, 200.0, 230.0, 250.0, 263.15, 270.0, 273.15, 273.16, 300.0, 330.0)
+            @test GEMB.saturation_vapor_pressure_water_derivative(T) ≈
+                  cd(GEMB.saturation_vapor_pressure_water, T) rtol = 1e-9
+        end
+        for T in (150.0, 200.0, 230.0, 250.0, 263.15, 270.0, 273.15)
+            @test GEMB.saturation_vapor_pressure_ice_derivative(T) ≈
+                  cd(GEMB.saturation_vapor_pressure_ice, T) rtol = 1e-9
+        end
+        # And against the derivative of the paper's decimal coefficients, not the code's.
+        for T in (250.0, GEMB.CtoK)
+            @test GEMB.saturation_vapor_pressure_water_derivative(T) ≈ cd(_mk_water_big, T) rtol = 1e-9
+            @test GEMB.saturation_vapor_pressure_ice_derivative(T) ≈ cd(_mk_ice_big, T) rtol = 1e-9
+        end
+    end
+end
+
 
 @testset "Stability table against the converged Monin-Obukhov solution" begin
     # Independent reference: bisection on z_w/L = Ri·F_m²/F_h with the published functions.

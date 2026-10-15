@@ -34,16 +34,35 @@ temperature, for a sub-freezing surface) and by [`blowing_snow_sublimation_rate`
 """
     saturation_vapor_pressure_water(T) -> e_s [Pa]
 
-Saturation vapour pressure over liquid water, Murray (1967),
-`610.78·exp(17.2693882·(T-273.16)/(T-35.86))` with `T` in kelvin. The above-freezing
-counterpart of [`saturation_vapor_pressure_ice`](@ref).
+Saturation vapor pressure over liquid water, supercooled below the triple point, Murphy &
+Koop (2005) eq. 10 (p. 1552), with `T` in kelvin:
+
+    ln(e_s) = 54.842763 − 6763.22/T − 4.210·ln(T) + 0.000367·T
+              + tanh(0.0415·(T − 218.8))·(53.878 − 1331.22/T − 9.44523·ln(T) + 0.014025·T)
+
+valid for 123 < T < 332 K; outside that range it throws a `DomainError`. Its Table C1
+(p. 1561) gives 611.213 Pa at 273.15 K and 611.657 Pa at the triple point, where it meets
+[`saturation_vapor_pressure_ice`](@ref) (eq. 7 of the same paper); below the triple point it
+lies above the ice curve.
+
+The latent-heat flux ([`turbulent_heat_flux`](@ref)) uses it only for a surface at the melting
+point, where the exchanging phase is liquid water; every colder surface exchanges vapor with
+ice.
 
 # References
-- Murray, F. W. (1967). On the computation of saturation vapor pressure.
-  *J. Appl. Meteorol.* 6, 203-204.
+- Murphy, D. M. and Koop, T. (2005). Review of the vapor pressures of ice and supercooled
+  water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565. Eq. 10.
 """
-@inline saturation_vapor_pressure_water(T::Real) =
-    610.78 * exp(17.2693882 * (T - CtoK - 0.01) / (T - 35.86))
+@inline function saturation_vapor_pressure_water(T::Real)
+    123 < T < 332 || _saturation_vapor_pressure_water_domain(T)
+    return exp(54.842763 - 6763.22 / T - 4.210 * log(T) + 0.000367 * T +
+               tanh(0.0415 * (T - 218.8)) *
+               (53.878 - 1331.22 / T - 9.44523 * log(T) + 0.014025 * T))
+end
+
+@noinline _saturation_vapor_pressure_water_domain(T) = throw(DomainError(T,
+    "Murphy & Koop (2005) eq. 10 for the vapor pressure over liquid water is valid for " *
+    "123 < T < 332 K"))
 
 """
     specific_humidity(vapor_pressure, pressure_air) -> q [kg kg-1]
@@ -284,8 +303,19 @@ Temperature derivative of [`saturation_vapor_pressure_ice`](@ref),
 """
     saturation_vapor_pressure_water_derivative(T) -> de_s/dT [Pa K-1]
 
-Temperature derivative of [`saturation_vapor_pressure_water`](@ref),
-`e_s·17.2693882·(273.16 − 35.86)/(T − 35.86)²`.
+Temperature derivative of [`saturation_vapor_pressure_water`](@ref), the analytic derivative
+of Murphy & Koop (2005) eq. 10: with `s = 0.0415·(T − 218.8)` and
+`g(T) = 53.878 − 1331.22/T − 9.44523·ln(T) + 0.014025·T`,
+
+    de_s/dT = e_s·(6763.22/T² − 4.210/T + 0.000367 + 0.0415·sech²(s)·g(T)
+                   + tanh(s)·(1331.22/T² − 9.44523/T + 0.014025))
+
+Valid over the same 123 < T < 332 K, and throws the same `DomainError` outside it.
 """
-@inline saturation_vapor_pressure_water_derivative(T::Real) =
-    saturation_vapor_pressure_water(T) * 17.2693882 * (CtoK + 0.01 - 35.86) / (T - 35.86)^2
+@inline function saturation_vapor_pressure_water_derivative(T::Real)
+    s = 0.0415 * (T - 218.8)
+    g = 53.878 - 1331.22 / T - 9.44523 * log(T) + 0.014025 * T
+    dlog_es = 6763.22 / T^2 - 4.210 / T + 0.000367 + 0.0415 * g / cosh(s)^2 +
+              tanh(s) * (1331.22 / T^2 - 9.44523 / T + 0.014025)
+    return saturation_vapor_pressure_water(T) * dlog_es
+end

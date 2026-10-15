@@ -363,26 +363,30 @@ end
     # is sampled discretely, so the meaningful test is that the jump shrinks
     # without bound as the sampling refines. A genuine discontinuity would hold its
     # size instead.
-    # Sample the first accumulating case at successively finer resolution and record
-    # both the balance reached there and how far its surface sits below ice.
-    function crossing_jump(n)
-        ps = collect(range(1.1, 1.4; length=n))
-        bs = [GEMB.initialize_climate_summary(make(p), mp).balance for p in ps]
-        i = findlast(<=(0.0), bs)
-        (i === nothing || i == length(ps)) && return nothing
-        ρ_above = collect(GEMB.initialize_profile(mp, make(ps[i+1]))[:density])[1]
-        return (balance=bs[i+1], gap=mp.density_ice - ρ_above)
+    # Bisect on snowfall for the sign change of `b`, and at five bisection depths record
+    # the balance at the accumulating end of the bracket and how far its surface sits
+    # below ice. The accumulating end only moves toward the crossing, so its balance
+    # cannot grow.
+    bisection_balance(p) = GEMB.initialize_climate_summary(make(p), mp).balance
+    p_lo, p_hi = 1.1, 1.4
+    @test bisection_balance(p_lo) <= 0.0 < bisection_balance(p_hi)
+    steps = NamedTuple{(:balance, :gap),Tuple{Float64,Float64}}[]
+    for k in 1:14
+        p_mid = (p_lo + p_hi) / 2
+        bisection_balance(p_mid) <= 0.0 ? (p_lo = p_mid) : (p_hi = p_mid)
+        if k in (2, 5, 8, 11, 14)
+            ρ_above = collect(GEMB.initialize_profile(mp, make(p_hi))[:density])[1]
+            push!(steps, (balance=bisection_balance(p_hi), gap=mp.density_ice - ρ_above))
+        end
     end
-
-    steps = filter(!isnothing, [crossing_jump(n) for n in (17, 33, 65, 129, 257)])
     @test length(steps) == 5
 
     # Refining drives the sampled balance toward zero...
     @test issorted([s.balance for s in steps]; rev=true)
     @test steps[end].balance < 0.1 * steps[1].balance
     # ...and the surface density closes onto ice as it does, with no floor. Measured:
-    # b = 6.3 -> 1.7 -> 1.7 -> 0.58 -> 0.005 kg m-2 yr-1 gives a gap below ice of
-    # 498 -> 321 -> 321 -> 134 -> 0 kg m-3. No refinement widens it, so the
+    # b = 0.42 -> 0.42 -> 0.42 -> 0.021 -> 0.001 kg m-2 yr-1 gives a gap below ice of
+    # 108 -> 108 -> 108 -> 0.04 -> 0 kg m-3. No refinement widens it, so the
     # ablation column (exactly ice) is the `b -> 0+` limit of the firn column rather
     # than a separate branch — the claim that lets the scheme drop the threshold.
     gaps = [s.gap for s in steps]

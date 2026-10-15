@@ -92,14 +92,14 @@ water at it.
 
     # Latent Heat Flux [W m-2]
     if T_surface >= CtoK - T_TOLERANCE
-        # Liquid water surface
+        # Surface at the melting point: vapor is exchanged with liquid water.
         latent_heat = LV
-        # Saturation Vapor Pressure (Murray 1967)
+        # Saturation vapor pressure over water (Murphy & Koop 2005, eq. 10)
         eS = saturation_vapor_pressure_water(T_surface)
     else
-        # Ice surface
+        # Surface below the melting point: vapor is exchanged with ice.
         latent_heat = LS
-        # Saturation Vapor Pressure (Murray 1967)
+        # Saturation vapor pressure over ice (Murphy & Koop 2005, eq. 7)
         eS = saturation_vapor_pressure_ice(T_surface)
     end
 
