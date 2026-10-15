@@ -342,6 +342,8 @@ Works cited in the per-field notes below. Each option's own physics is documente
 equation numbers, on the function named in that field's comment — this list resolves the
 author-year mentions to full entries in one place.
 
+- Anderson, E. A. (1976). A point energy and mass balance model of a snow cover. NOAA
+  Technical Report NWS 19. (`destructive_metamorphism`)
 - Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
   In situ measurements of Antarctic snow compaction compared with predictions of models.
   *J. Geophys. Res.* 115, F03011. (`densification_method`, `grain_growth_method`)
@@ -384,11 +386,14 @@ author-year mentions to full entries in one place.
   (`thermal_conductivity_method = :Marchenko2019`)
 - Pahaut, E. (1975). *La métamorphose des cristaux de neige*. Monographies de la Météorologie
   Nationale 96, Météo-France. (`new_snow_method = :Pahaut`)
+- Schneider, A. M., Zender, C. S., and Price, S. F. (2022). More realistic intermediate depth
+  dry firn densification in the Energy Exascale Earth System Model (E3SM). *J. Adv. Model.
+  Earth Syst.* 14, e2021MS002542. (`destructive_metamorphism_density`)
 - Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
   seasonal snow. *J. Glaciol.* 43, 26-41. (`thermal_conductivity_method = :Sturm`)
 - van Kampenhout, L., et al. (2017). Improving the representation of polar snow and firn in
   the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
-  (`new_snow_method = :vanKampenhout2017`)
+  (`new_snow_method = :vanKampenhout2017`, `destructive_metamorphism`)
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
   sheet. *The Cryosphere* 14, 3785-3810. (`thermal_conductivity_method`,
@@ -417,6 +422,17 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
     # (the default) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
+    # Whether `densification_method = :Crocus`/`:CrocusPure` adds the Anderson (1976)
+    # destructive-metamorphism settling of fresh snow to the overburden strain rate, with the
+    # coefficients of van Kampenhout et al. (2017) eq. 5 and the density taper of Schneider et
+    # al. (2022) eq. 3. The rate is a strain rate summed with the viscous one, so the switch is
+    # rejected with any other densification scheme. `false` (the default) leaves output
+    # bit-identical. See `destructive_metamorphism_rate`.
+    destructive_metamorphism::Bool = false
+    # Density [kg m-3] above which destructive metamorphism tapers exponentially, `ρ_dm`.
+    # 175 is the CLM5 value of van Kampenhout et al. (2017, p. 2587). Read only when
+    # `destructive_metamorphism` is set.
+    destructive_metamorphism_density::Float64 = DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT
     # Fresh-snow density parameterization. The default `:Constant350` is a constant 350 kg m-3,
     # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Constant150` and
     # `:Constant315` are the other bare constants. `:Fausto` is the Fausto et al.
@@ -431,8 +447,9 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017,
     # eqs. 2-4): a temperature term plus a 10 m wind term, evaluated at the instantaneous
     # timestep, with the default fresh-grain properties. It is a deposition density, so it
-    # needs a settling scheme (`densification_method = :Crocus`) to reach observed
-    # near-surface densities. See `fresh_snow_density`.
+    # needs a settling scheme (`densification_method = :Crocus` with
+    # `destructive_metamorphism = true`) to reach observed near-surface densities. See
+    # `fresh_snow_density`.
     new_snow_method::Symbol = :Constant350
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the

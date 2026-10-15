@@ -64,6 +64,17 @@ Two departures from the published law:
 The paper's `c_η = 250` and its `f2` are used, where the Community Firn Model hardcodes
 `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
 
+**`destructive_metamorphism`** [default `false`] adds the destructive-metamorphism settling
+of fresh snow (Anderson, 1976) to the `:Crocus`/`:CrocusPure` strain rate, as CLM5 does:
+`r = c3·c2·c1·exp(−c4·(T_frz − T))` with `c3 = 2.777×10⁻⁶ s⁻¹`, `c4 = 0.04 K⁻¹`, `c2 = 2`
+when the cell holds liquid water (van Kampenhout et al., 2017, eq. 5, p. 2587), and
+`c1 = exp(−0.046·(ρ − ρ_dm))` above `ρ_dm = destructive_metamorphism_density`, default
+175 kg m⁻³ (Schneider et al., 2022, eq. 3, p. 3). The two strain rates are summed and the step
+is `D·exp(−(σ/η + r)·dt)`. Cells `:Crocus` hands to `:GSFC2020` do not get the term, which is
+below 3.2×10⁻⁶ of its fresh-snow value there. The switch is rejected with any other
+densification scheme. At −10 °C it takes dry snow below 175 kg m⁻³ to that density at
+0.67 % h⁻¹; above it the rate falls by `e` every 21.7 kg m⁻³.
+
 **`:Barnola1991`** is Herron and Langway (1980) stage 1 below 550 kg m⁻³ and Barnola et al.
 (1991) pressure sintering above, `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` with
 `A₀ = 2.54e4 MPa⁻³ s⁻¹` and `Q = 60 kJ mol⁻¹`. It is the only scheme here that treats the
@@ -181,7 +192,8 @@ published 50 kg m⁻³ floor is retained; it binds below about −10 °C in calm
 term is defined on the 10 m wind: the forcing wind is carried from `wind_observation_height`
 to 10 m through a neutral log profile over the surface roughness the turbulent fluxes use.
 The formula spans 50–436 kg m⁻³. It is a deposition density, not a near-surface density, so
-it needs a settling scheme: with `densification_method = :Crocus` the snow settles within
+it needs a settling scheme: with `densification_method = :Crocus` and
+`destructive_metamorphism = true` the snow settles within
 days, while with an accumulation-driven scheme the top metre stays near the deposition density
 for years. It keeps the default fresh-grain properties.
 

@@ -22,6 +22,13 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.densification_accumulation in (:accumulation, :precipitation) "densification_accumulation must be accumulation or precipitation"
     @assert mp.mean_temperature_method in (:arithmetic, :arrhenius) "mean_temperature_method must be arithmetic or arrhenius"
 
+    # Destructive metamorphism is a strain rate summed with the viscous one, so it exists only
+    # under the two schemes that form a strain rate from a viscosity.
+    if mp.destructive_metamorphism
+        @assert mp.densification_method in (:Crocus, :CrocusPure) "destructive_metamorphism=true requires densification_method :Crocus or :CrocusPure (it is added to their viscous strain rate); got :$(mp.densification_method)"
+    end
+    @assert 50 <= mp.destructive_metamorphism_density <= 450 "destructive_metamorphism_density must be in [50, 450] kg m-3 (got $(mp.destructive_metamorphism_density))"
+
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
         :Ant_RACMO_GS_SW0, :Ant_Ligtenberg, :Gre_ERA5_GS_SW0,

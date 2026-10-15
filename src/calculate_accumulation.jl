@@ -53,9 +53,9 @@ Methods:
   speed, which is `wind_speed` carried from `wind_observation_height` to 10 m by
   [`wind_speed_10m`](@ref) over roughness `z0`. It keeps GEMB's default fresh-grain
   properties. It is a deposition density (50-436 kg m-3), so its near-surface density
-  depends on the settling scheme: pair it with `densification_method = :Crocus`. Under an
-  accumulation-driven densification scheme the snow stays near its deposition density for
-  years.
+  depends on the settling scheme: pair it with `densification_method = :Crocus` and
+  `destructive_metamorphism = true`. Under an accumulation-driven densification scheme the
+  snow stays near its deposition density for years.
 
 `wind_observation_height` [m] and `z0` [m] are read only by `:vanKampenhout2017`. Their
 defaults treat `wind_speed` as a 10 m wind over dry snow.

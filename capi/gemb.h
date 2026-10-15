@@ -32,8 +32,8 @@ extern "C" {
 /* --- Array sizes. ------------------------------------------------------------------------- */
 
 #define GEMB_N_OPTIONS  15
-#define GEMB_N_NUMERIC  25
-#define GEMB_N_FLAGS     3
+#define GEMB_N_NUMERIC  26
+#define GEMB_N_FLAGS     4
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
 
@@ -171,12 +171,14 @@ extern "C" {
 #define GEMB_NUM_SURFACE_SLOPE                     22
 #define GEMB_NUM_DRIFT_RATE                        23
 #define GEMB_NUM_THERMAL_EXPLICIT_SAFETY_FACTOR    24
+#define GEMB_NUM_DESTRUCTIVE_METAMORPHISM_DENSITY  25
 
 /* --- flags[] indices. Nonzero is true. ----------------------------------------------- */
 
 #define GEMB_FLAG_SHORTWAVE_SUBSURFACE_ABSORPTION  0
 #define GEMB_FLAG_OUTPUT_VISCOSITY                 1
 #define GEMB_FLAG_BLOWING_SNOW_SUBLIMATION         2
+#define GEMB_FLAG_DESTRUCTIVE_METAMORPHISM         3
 
 /* --- forcing[] indices. --------------------------------------------------------------- */
 

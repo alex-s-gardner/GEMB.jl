@@ -140,6 +140,7 @@ const NUMERIC_FIELDS = (
     :surface_slope,
     :drift_rate,
     :thermal_explicit_safety_factor,
+    :destructive_metamorphism_density,
 )
 
 const N_NUMERIC = length(NUMERIC_FIELDS)
@@ -149,6 +150,7 @@ const FLAG_FIELDS = (
     :shortwave_subsurface_absorption,
     :output_viscosity,
     :blowing_snow_sublimation,
+    :destructive_metamorphism,
 )
 
 const N_FLAGS = length(FLAG_FIELDS)
@@ -233,9 +235,11 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         surface_slope=numeric[23],
         drift_rate=numeric[24],
         thermal_explicit_safety_factor=numeric[25],
+        destructive_metamorphism_density=numeric[26],
         shortwave_subsurface_absorption=f(1),
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),
+        destructive_metamorphism=f(4),
         dt_divisors=GEMB.fast_divisors(round(Int, dt * 10000)) ./ 10000,
     )
 end

@@ -129,6 +129,16 @@ const DENSITY_NEW_SNOW_VK17_C2 = -0.0333      # [kg m-3 K-2]
 const DENSITY_NEW_SNOW_VK17_W = 266.861       # wind term: W·(½(1 + tanh(U/U_s)))^n [kg m-3]
 const DENSITY_NEW_SNOW_VK17_U_SCALE = 5.0     # U_s [m s-1]
 const DENSITY_NEW_SNOW_VK17_W_EXPONENT = 8.8  # n [-]
+# Destructive-metamorphism settling of fresh snow, Anderson (1976) in the form of van
+# Kampenhout et al. (2017) eq. 5, p. 2587, with the density taper of Schneider et al. (2022)
+# eq. 3, p. 3: strain rate `c3·c2·c1·exp(-c4·(T_frz - T))`, `c1 = exp(-c5·(ρ - ρ_dm))` above
+# `ρ_dm`. Read by `destructive_metamorphism_rate`.
+const DESTRUCTIVE_METAMORPHISM_C3 = 2.777e-6   # [s-1], vK17 p. 2587 (Schneider: 2.78e-6)
+const DESTRUCTIVE_METAMORPHISM_C4 = 0.04       # [K-1], both papers
+const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-3)
+const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
+const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 175.0  # ρ_dm [kg m-3], vK17 p. 2587
+
 # Standard 10 m reference height of wind speed [m]: the height eq. 4 of van Kampenhout et al.
 # (2017) and eqs. 3-4 of Keenan et al. (2021) define their wind at.
 const WIND_HEIGHT_10M = 10.0

@@ -30,6 +30,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Density" begin
         include("test_calculate_density.jl")
     end
+    @testset "Destructive Metamorphism" begin
+        include("test_destructive_metamorphism.jl")
+    end
     @testset "Accumulation" begin
         include("test_calculate_accumulation.jl")
     end
