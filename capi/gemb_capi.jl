@@ -107,7 +107,7 @@ const OPTION_VALUES = (
     (:thickness, :density),
     (:instantaneous, :ZuoOerlemans, :Darcy),
     (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann),
-    (:none, :Crocus),
+    (:none, :Crocus, :Keenan2021),
 )
 
 const N_OPTIONS = length(OPTION_FIELDS)
@@ -141,6 +141,7 @@ const NUMERIC_FIELDS = (
     :drift_rate,
     :thermal_explicit_safety_factor,
     :destructive_metamorphism_density,
+    :drift_fetch_length,
 )
 
 const N_NUMERIC = length(NUMERIC_FIELDS)
@@ -236,6 +237,7 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         drift_rate=numeric[24],
         thermal_explicit_safety_factor=numeric[25],
         destructive_metamorphism_density=numeric[26],
+        drift_fetch_length=numeric[27],
         shortwave_subsurface_absorption=f(1),
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),

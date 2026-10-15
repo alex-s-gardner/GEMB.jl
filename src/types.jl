@@ -376,6 +376,10 @@ author-year mentions to full entries in one place.
 - Gregory, S. A., Albert, M. R., and Baker, I. (2014). Impact of physical properties and
   accumulation rate on pore close-off in layered firn. *The Cryosphere* 8, 91-105.
   (`impermeable_density`)
+- Keenan, E., Wever, N., Dattler, M., Lenaerts, J. T. M., Medley, B., Kuipers Munneke, P.,
+  and Reijmer, C. (2021). Physics-based SNOWPACK model improves representation of
+  near-surface Antarctic snow and firn density. *The Cryosphere* 15, 1065-1085.
+  (`blowing_snow_method = :Keenan2021`, `drift_fetch_length`)
 - Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
   *Geosci. Model Dev.* 19, 6273-6334. (`blowing_snow_method`, `blowing_snow_sublimation`,
   `new_snow_method = :Pahaut`)
@@ -621,8 +625,17 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # Independent of `drift_rate`, which is a prescribed mass sink rather than a scheme, and of
     # `blowing_snow_sublimation`, which is the only part that removes mass. This mirrors
     # SURFEX's two independent namelist flags (`OSNOWDRIFT`, `OSNOWDRIFT_SUBLIM`). See
-    # `apply_blowing_snow!`.
+    # `apply_blowing_snow!`. `:Keenan2021` is the SNOWPACK erosion-redeposition scheme of
+    # Keenan et al. (2021) eqs. 3-4: above the erosion threshold, a saltation mass flux is
+    # eroded from the top of the column and redeposited in place at a wind-dependent density
+    # `361·log10(U₁₀) + 33`. It replaces the `:Crocus` compaction rather than adding to it, and
+    # is also mass-conserving. See `apply_redeposition!`.
     blowing_snow_method::Symbol = :none
+    # Fetch length L [m] of the `blowing_snow_method = :Keenan2021` saltation flux (Keenan et
+    # al., 2021, eq. 3): the eroded mass per step is the saltation transport divided by L.
+    # 10 m is the paper's choice; it is a tuning parameter, inversely proportional to the
+    # reworked mass. Read only under `:Keenan2021`. See `apply_redeposition!`.
+    drift_fetch_length::Float64 = DRIFT_FETCH_LENGTH_DEFAULT
     # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
     # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
     # path this removes mass from the surface cell and consumes latent heat, so it appears in

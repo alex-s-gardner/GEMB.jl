@@ -380,6 +380,22 @@ uses instantaneous liquid water rather than "has ever been wet", which leaves
 refrozen-but-now-dry layers more driftable; and melt-style thickness bookkeeping is not
 applied, the compaction being density-only.
 
+**`blowing_snow_method = :Keenan2021`** is the SNOWPACK erosion–redeposition scheme of
+Keenan et al. (2021, eqs. 3–4, pp. 1067–1068). When the 5 m gust speed exceeds the drift
+threshold of the surface cell, a saltation mass flux
+`Φ = 0.0014·ρ_a·u*·(u* − u*_t)·(u* + 7.6·u*_t + 205)/L` is eroded from the top of the column
+(`L = drift_fetch_length`, 10 m; `u* = κ·U₁₀/ln(10/0.002)`) and redeposited at
+`ρ_rd = 361·log₁₀(U₁₀) + 33`, never lowering a cell's density; erosion stops at the first wet
+or non-drifting cell. The reworked mass stays in its own cell, so mass, temperature, water and
+age are unchanged and no cell is created. Dendritic cells take Wever et al.'s (2023, Table 1)
+high-wind microstructure in proportion to the reworked mass. It replaces the `:Crocus`
+compaction (both represent the packing of wind-transported snow) and cannot be combined with
+`blowing_snow_sublimation`. Departures from SNOWPACK: the threshold comes from the Crocus
+mobility index, because GEMB carries no bond radius or coordination number for Lehning and
+Fierz (2008) eq. 2; `u*` is neutral; `ρ_a` is the forcing air density rather than the
+1.1 kg m⁻³ Keenan et al. quote. The redeposited density reaches 394 kg m⁻³ at 10 m s⁻¹, above
+the 350 kg m⁻³ ceiling of the `:Crocus` compaction.
+
 **`blowing_snow_sublimation`** [default `false`] sublimates the suspended fraction after
 Gordon et al. (2006) as Crocus implements it (eqs. 67–68), read only under
 `blowing_snow_method = :Crocus`. Off is Crocus's own default. This is the only part of the

@@ -139,6 +139,11 @@ const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-
 const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
 const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 175.0  # ρ_dm [kg m-3], vK17 p. 2587
 
+# Fetch length L [m] of the Keenan et al. (2021) saltation flux, eq. 3, p. 1067: the
+# horizontal scale over which the saltation transport is eroded from the surface. Keenan et
+# al. choose 10 m as the scale of sastrugi and barchan dunes and call it a tuning parameter.
+const DRIFT_FETCH_LENGTH_DEFAULT = 10.0
+
 # Standard 10 m reference height of wind speed [m]: the height eq. 4 of van Kampenhout et al.
 # (2017) and eqs. 3-4 of Keenan et al. (2021) define their wind at.
 const WIND_HEIGHT_10M = 10.0

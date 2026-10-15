@@ -32,7 +32,7 @@ extern "C" {
 /* --- Array sizes. ------------------------------------------------------------------------- */
 
 #define GEMB_N_OPTIONS  15
-#define GEMB_N_NUMERIC  26
+#define GEMB_N_NUMERIC  27
 #define GEMB_N_FLAGS     4
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
@@ -143,6 +143,7 @@ extern "C" {
 /* blowing_snow_method */
 #define GEMB_BLOWING_SNOW_NONE    1
 #define GEMB_BLOWING_SNOW_CROCUS  2
+#define GEMB_BLOWING_SNOW_KEENAN2021  3
 
 /* --- numeric[] indices. --------------------------------------------------------------- */
 
@@ -172,6 +173,7 @@ extern "C" {
 #define GEMB_NUM_DRIFT_RATE                        23
 #define GEMB_NUM_THERMAL_EXPLICIT_SAFETY_FACTOR    24
 #define GEMB_NUM_DESTRUCTIVE_METAMORPHISM_DENSITY  25
+#define GEMB_NUM_DRIFT_FETCH_LENGTH                26
 
 /* --- flags[] indices. Nonzero is true. ----------------------------------------------- */
 
