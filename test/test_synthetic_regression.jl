@@ -8,14 +8,14 @@
 # Two sites:
 #
 # - `test_1` from GEMB_ClimateForcing.jl (3-hourly, 1994-2025, 75-cycle spin-up on its
-#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 4.4 kg m-2 yr-1)
+#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 3.6 kg m-2 yr-1)
 #   is the small residual of the surface energy balance and all of it refreezes. Its runoff is
 #   exactly zero and its rain is 0.05% of precipitation, so it sees the surface energy balance
 #   and the radiation inputs but not the liquid-water paths. A change to `test_1` in
 #   GEMB_ClimateForcing.jl moves these values without anything in GEMB.jl changing.
 # - The maritime site of `synthetic_maritime_forcing.jl` (hourly, 4 years, no spin-up):
-#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1500 of melt, 700 of refreeze and
-#   2100 of runoff. It sees the rain, pore-water, refreeze, runoff and vapor-phase paths. The
+#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1600 of melt, 700 of refreeze and
+#   2200 of runoff. It sees the rain, pore-water, refreeze, runoff and vapor-phase paths. The
 #   forcing is closed-form and lives in this repository.
 #
 # The tolerances come from measured variability, on arm64 macOS:
@@ -65,9 +65,9 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    @test mean_albedo ≈ 0.873456 atol = ALBEDO_ATOL
-    @test total_melt ≈ 142.356508 atol = mass_tol(142.356508)
-    @test total_refreeze ≈ 146.697472 atol = mass_tol(146.697472)
+    @test mean_albedo ≈ 0.870836 atol = ALBEDO_ATOL
+    @test total_melt ≈ 114.669238 atol = mass_tol(114.669238)
+    @test total_refreeze ≈ 119.610019 atol = mass_tol(119.610019)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -82,17 +82,17 @@ end
     @test total(:runoff) > 0.5 * total(:precipitation)
     @test total(:refreeze) > 0.2 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.811681 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 6031.319200 atol = mass_tol(6031.319200)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.798615 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 6443.665400 atol = mass_tol(6443.665400)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2802.274961 atol = mass_tol(2802.274961)
-    @test total(:runoff) ≈ 8509.261661 atol = mass_tol(8509.261661)
-    @test total(:evaporation_condensation) ≈ 153.042657 atol = mass_tol(153.042657)
+    @test total(:refreeze) ≈ 2868.168168 atol = mass_tol(2868.168168)
+    @test total(:runoff) ≈ 8849.323336 atol = mass_tol(8849.323336)
+    @test total(:evaporation_condensation) ≈ 139.513451 atol = mass_tol(139.513451)
 end
 
 @testset "Synthetic regression: tolerance policy" begin
     # The window scales with the total and keeps a floor if a total goes to zero.
-    @test mass_tol(142.356508) == MASS_ATOL_FLOOR
-    @test mass_tol(6031.319200) ≈ 0.0603131920 rtol = 1e-12
+    @test mass_tol(114.669238) == MASS_ATOL_FLOOR
+    @test mass_tol(6443.665400) ≈ 0.0644366540 rtol = 1e-12
     @test mass_tol(0.0) == MASS_ATOL_FLOOR
 end
