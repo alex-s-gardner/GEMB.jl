@@ -180,6 +180,14 @@ these densities with. `fresh_snow_density` takes instantaneous air temperature a
 speed where they are available and the climatological means in the steady-state march, so the
 initial guess is well defined at every setting.
 
+Snowfall deeper than `column_dzmin` forms a new top cell of fresh snow. Thinner snowfall
+merges into the top cell, conserving mass and enthalpy, and mixes its grain state by mass
+with weight `f = P/(M + P)` on the fresh-snow values. Sphericity is always mass-weighted. A
+dendritic cell, or a cell receiving at least its own mass, also mass-weights dendricity and
+takes the dendritic radius of the result; a non-dendritic cell receiving less stays
+non-dendritic and mass-weights its radius. A trace snowfall therefore moves the surface grain
+state, and the albedo read from it, by `O(f)`.
+
 ## Thermal physics
 
 **Heat capacity.** `heat_capacity_method = :CuffeyPaterson`, the default, is

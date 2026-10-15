@@ -93,11 +93,25 @@ end
 Add precipitation and deposition to the model column.
 
 Precipitation is classified as snow or rain based on `mp.rain_temperature_threshold`.
-Snow is added as a new layer (if depth > dzmin) or merged into the top cell. A merged
-snowfall sets the top cell's dendricity, sphericity and grain radius to those of fresh snow
-whatever its amount, so even a trace snowfall resets the grain state, and hence the albedo, of
-the whole top cell. This is a known limitation: a mass-weighted or optical-depth rule would
-let a trace leave older surface grains showing.
+Snow deeper than `mp.column_dzmin` becomes a new top cell with fresh-snow properties. Thinner
+snow of mass `P` merges into the top cell, of matrix mass `M = dz[1]·density[1]`:
+
+- thickness grows by `P/ρ_new` and density becomes `(M + P)/dz[1]` (mass conserved);
+- temperature is the enthalpy-weighted mix of the cell and the snow at the air temperature
+  ([`mix_temperature`](@ref); energy conserved);
+- age is diluted by the age-0 snow ([`dilute_age`](@ref));
+- grain properties are mass-weighted with weight `f = P/(M + P)` on the fresh-snow values:
+  sphericity `(1 − f)·s + f·s_new` always. A dendritic cell (dendricity > `GDN_TOLERANCE`),
+  or any cell receiving at least its own mass (`f ≥ 1/2`), takes dendricity
+  `(1 − f)·d + f·d_new` and the radius [`dendritic_grain_radius`](@ref) of the mixed
+  dendricity and sphericity, since a dendritic radius is not independent state. A
+  non-dendritic cell receiving less than its own mass stays non-dendritic (dendricity 0) and
+  takes radius `(1 − f)·r + f·r_new`. Without that class rule any trace would make an old
+  cell dendritic, and [`calculate_grain_size`](@ref) would re-derive its radius as a fresh-snow
+  value of at most 0.2 mm on the next step.
+
+A trace snowfall therefore changes the top cell's grain state by `O(f)`, and `P = 0` changes
+nothing.
 Rain is added to the pore water of the top cell, `water[1]`, at the melt-point water enthalpy,
 and its sensible heat above the melting point, `P·(h_w(T_air) − h_w(0 °C))`, is added to the
 cell's ice matrix. The cell's density and thickness are unchanged. In a cold cell the rain
@@ -200,9 +214,17 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
                 age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
 
-                grain_dendricity[1] = dfall
-                grain_sphericity[1] = sfall
-                grain_radius[1] = max(0.1 * (grain_dendricity[1] / 0.99 + (1.0 - 1.0 * grain_dendricity[1] / 0.99) * (grain_sphericity[1] / 0.99 * 3.0 + (1.0 - grain_sphericity[1] / 0.99) * 4.0)) / 2, GDN_TOLERANCE)
+                # Mass-weighted grain properties; see the docstring for the dendritic class.
+                f = cfs.precipitation / M_surface_new
+                grain_sphericity[1] = (1 - f) * grain_sphericity[1] + f * sfall
+                if (grain_dendricity[1] > GDN_TOLERANCE) || (f >= 0.5)
+                    grain_dendricity[1] = (1 - f) * grain_dendricity[1] + f * dfall
+                    grain_radius[1] = dendritic_grain_radius(grain_dendricity[1],
+                        grain_sphericity[1])
+                else
+                    grain_dendricity[1] = 0.0
+                    grain_radius[1] = (1 - f) * grain_radius[1] + f * refall
+                end
             end
 
         else

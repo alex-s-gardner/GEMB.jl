@@ -115,9 +115,9 @@ Effective grain radius of dendritic snow diagnosed from its dendricity and spher
 et al. (1992) as GEMB carries it: grain *size* (diameter) is not independent state while
 `dendricity > 0`, so any scheme that changes `(δ, S)` must re-derive the radius.
 
-Three inline copies of this expression predate the helper —
-[`calculate_grain_size`](@ref) (the dendritic branch), and two in
-[`calculate_accumulation`](@ref) (fresh snow). They are left in place because they floor at
+Two inline copies of this expression predate the helper —
+[`calculate_grain_size`](@ref) (the dendritic branch), and the wind-dependent fresh-snow radius
+in [`calculate_accumulation`](@ref). They are left in place because they floor at
 `GDN_TOLERANCE` on the radius where this floors at `GDN_TOLERANCE*2` on the diameter, and the
 two differ in the degenerate branch only; unifying them is not bit-identical. New callers
 should use this.
