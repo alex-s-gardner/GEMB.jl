@@ -231,14 +231,17 @@ end
     # including over thin snow on ice and on firn, where those differ from the grain-size albedo.
     n = 400
     dz = fill(0.1, n)
-    cfs = GEMB.ClimateForcingStep(; dt=3600.0, shortwave_downward=500.0,
-        shortwave_downward_diffuse=200.0, solar_zenith_angle=40.0,
-        cloud_optical_thickness=1.0, cloud_fraction=0.5)
     profiles = (collect(range(300.0, 917.0; length=n)),
-        [fill(350.0, 1); fill(917.0, n - 1)], [fill(350.0, 1); fill(870.0, n - 1)])
-    dz_profiles = (dz, [0.04; fill(0.1, n - 1)], [0.01; fill(0.1, n - 1)])
+        [fill(350.0, 1); fill(917.0, n - 1)], [fill(350.0, 1); fill(870.0, n - 1)],
+        [fill(350.0, 1); fill(917.0, n - 1)])
+    dz_profiles = (dz, [0.04; fill(0.1, n - 1)], [0.01; fill(0.1, n - 1)],
+        [1e-5; fill(0.1, n - 1)])
     for method in (:GardnerSharp, :BrunLefebre, :GreuellKonzelmann), sub in (false, true),
-        (density, dzp) in zip(profiles, dz_profiles)
+        (density, dzp) in zip(profiles, dz_profiles),
+        (sza, τ) in ((40.0, 1.0), (0.0, 0.0), (60.0, 0.0), (75.0, 10.0))
+        cfs = GEMB.ClimateForcingStep(; dt=3600.0, shortwave_downward=500.0,
+            shortwave_downward_diffuse=200.0, solar_zenith_angle=sza,
+            cloud_optical_thickness=τ, cloud_fraction=0.5)
         mp = GEMB.ModelParameters(albedo_method=method, shortwave_subsurface_absorption=sub,
             albedo_ice=0.35)
         grain_radius = fill(0.5, n)

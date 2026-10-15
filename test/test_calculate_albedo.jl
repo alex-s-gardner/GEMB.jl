@@ -256,9 +256,24 @@ end
     @test_throws "must be in [0, 1]" GEMB._albedo_gardner(0.5, 0.0, 0.0, 0.0, 1.3, 0.01)
 end
 
+# The lower-layer albedo y for which the z → 0 limit of `_gs2010_two_layer` (eqs. 9–12 with
+# α_c = y) equals `α_exposed`, by BigFloat bisection on [0, 1]; `nothing` when even y = 0 gives
+# more than `α_exposed`.
+function _gs2010_lower_albedo(r, c, sza, τ, α_exposed)
+    g(y) = _gs2010_two_layer(r, c, sza, τ, y, 0).α - big(α_exposed)
+    lo, hi = big"0", big"1"
+    g(lo) > 0 && return nothing
+    for _ in 1:300
+        mid = (lo + hi) / 2
+        g(mid) > 0 ? (hi = mid) : (lo = mid)
+    end
+    return (lo + hi) / 2
+end
+
 @testset "Gardner-Sharp eq. 13 over firn and over ice in calculate_albedo" begin
     # Two snow cells of different density over a firn or ice cell: z is the summed snow mass
-    # in m w.e., and the lower layer is the exposed-surface albedo of that cell.
+    # in m w.e., and the lower layer's albedo is the one for which eqs. 9–12 at this geometry
+    # return the exposed-surface albedo of that cell.
     mp = GEMB.ModelParameters(albedo_ice=0.30)
     n = 30
     r = 0.4
@@ -269,12 +284,19 @@ end
         z = (0.012 * 320.0 + 0.008 * 410.0) / 1000
         # Firn ramp from albedo_ice at 917 to 0.65 at 830 kg m-3, written out.
         α_under = ρ_under >= 917.0 ? 0.30 : 0.30 + (0.65 - 0.30) * (917.0 - ρ_under) / (917.0 - 830.0)
+        y = _gs2010_lower_albedo(r, 0.0, sza, τ, α_under)
+        y_d = _gs2010_lower_albedo(r, 0.0, 50.0, τ, α_under)
         cfs = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=sza,
             cloud_optical_thickness=τ)
         α, α_d = GEMB.calculate_albedo(dz, density, grain_radius, cfs, mp)
-        @test _gs2010_two_layer(r, 0.0, sza, τ, α_under, z).A < 1
-        @test α ≈ Float64(_gs2010_two_layer(r, 0.0, sza, τ, α_under, z).α) rtol = 1e-12
-        @test α_d ≈ Float64(_gs2010_two_layer(r, 0.0, 50.0, τ, α_under, z).α) rtol = 1e-12
+        @test _gs2010_two_layer(r, 0.0, sza, τ, y, z).A < 1
+        @test α ≈ Float64(_gs2010_two_layer(r, 0.0, sza, τ, y, z).α) rtol = 1e-12
+        @test α_d ≈ Float64(_gs2010_two_layer(r, 0.0, 50.0, τ, y_d, z).α) rtol = 1e-12
+        # At SZA 0 and τ 0 the lower layer is the exposed albedo itself.
+        if sza == 0 && τ == 0
+            @test y == big(α_under)
+            @test α === GEMB._albedo_gardner(r, 0.0, 0.0, 0.0, α_under, z)
+        end
         # The term is active: the thin layer is darker than semi-infinite snow.
         @test α < GEMB._albedo_gardner(r, 0.0, sza, τ)
     end
@@ -286,7 +308,80 @@ end
     cfs = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=95.0, cloud_optical_thickness=3.0)
     α, α_d = GEMB.calculate_albedo(dz, density, grain_radius, cfs, mp)
     @test α === α_d
-    @test α_d ≈ Float64(_gs2010_two_layer(0.5, 0.0, 50.0, 3.0, 0.30, 0.0035).α) rtol = 1e-12
+    y = _gs2010_lower_albedo(0.5, 0.0, 50.0, 3.0, 0.30)
+    @test α_d ≈ Float64(_gs2010_two_layer(0.5, 0.0, 50.0, 3.0, y, 0.0035).α) rtol = 1e-12
+end
+
+@testset "Gardner-Sharp eq. 13: continuous at snow exposure" begin
+    # The lower-layer albedo is chosen so that the z → 0 limit is the exposed albedo for every
+    # geometry. Reference roots: BigFloat bisection on the paper's equations.
+    for r in (0.05, 0.5, 1.5), sza in (0.0, 60.0, 75.0), τ in (0.0, 10.0), c in (0.0, 0.2),
+        α_x in (0.30, 0.48, 0.62)
+        y_ref = _gs2010_lower_albedo(r, c, sza, τ, α_x)
+        as, _, u = GEMB._gardner_terms(r, c, sza, τ, 0.0)
+        if y_ref === nothing
+            # Fresh snow at 75° under clear sky: the zenith term alone exceeds 0.30.
+            @test (r, sza, τ, α_x) == (0.05, 75.0, 0.0, 0.30)
+            @test_throws "no lower-layer albedo" GEMB._gardner_lower_albedo(α_x, as, u, τ)
+            continue
+        end
+        y = GEMB._gardner_lower_albedo(α_x, as, u, τ)
+        @test y ≈ Float64(y_ref) rtol = 1e-12 atol = 1e-15
+        # The limit returns the exposed albedo to rounding: within two units in the last place.
+        α0 = GEMB._albedo_gardner_over(r, c, sza, τ, α_x, 0.0)
+        @test abs(α0 - α_x) <= 2 * eps(α_x)
+        @test abs(GEMB._albedo_gardner_over(r, c, sza, τ, α_x, 1e-300) - α_x) <= 1e-12
+        # At finite depth, eq. 13 with that lower layer, z^p from the exposed albedo.
+        for z in (1e-9, 1e-4, 0.003)
+            ref = _gs2010_two_layer(r, c, sza, τ, y_ref, z)
+            ref.A < 1 || continue
+            @test GEMB._albedo_gardner_over(r, c, sza, τ, α_x, z) ≈ Float64(ref.α) rtol = 1e-12
+        end
+        # Monotonic in z and the semi-infinite value once A = 1.
+        αs = [GEMB._albedo_gardner_over(r, c, sza, τ, α_x, z) for z in [0.0; 10.0 .^ (-8:0.25:0)]]
+        α_inf = GEMB._albedo_gardner(r, c, sza, τ)
+        @test issorted(αs) || issorted(αs; rev=true)
+        @test αs[end] === α_inf
+        @test GEMB._albedo_gardner_over(r, c, sza, τ, α_x, Inf) === α_inf
+        # At SZA 0 and τ 0 nothing changes from eq. 13 with the exposed albedo as lower layer.
+        if sza == 0 && τ == 0
+            @test y === α_x
+            for z in (1e-6, 0.003, 0.1)
+                @test GEMB._albedo_gardner_over(r, c, 0.0, 0.0, α_x, z) ===
+                      GEMB._albedo_gardner(r, c, 0.0, 0.0, α_x, z)
+            end
+        end
+    end
+
+    # Through `calculate_albedo`: snow of 1e-300 m w.e. over ice or firn against the exposed
+    # surface, both streams.
+    mp = GEMB.ModelParameters(albedo_ice=0.30)
+    n = 30
+    for ρ_under in (870.0, mp.density_ice), (sza, τ) in ((0.0, 0.0), (60.0, 0.0), (75.0, 10.0))
+        cfs = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=sza,
+            cloud_optical_thickness=τ)
+        exposed = GEMB.calculate_albedo(fill(0.05, n), fill(ρ_under, n),
+            fill(GEMB.GRAIN_RADIUS_ICE, n), cfs, mp)
+        @test exposed[1] === exposed[2] === GEMB.firn_ice_albedo(ρ_under, mp)
+        dz = [1e-300 * 1000 / 350.0; fill(0.05, n - 1)]
+        density = [350.0; fill(ρ_under, n - 1)]
+        α, α_d = GEMB.calculate_albedo(dz, density, [0.5; fill(GEMB.GRAIN_RADIUS_ICE, n - 1)],
+            cfs, mp)
+        @test abs(α - exposed[1]) <= 1e-12
+        @test abs(α_d - exposed[2]) <= 1e-12
+    end
+
+    # Fail fast where eqs. 9–12 cannot reach the exposed albedo: fresh snow over ice of albedo
+    # 0.20 with the sun 80° from zenith under clear sky (the zenith term alone exceeds 0.20). The
+    # root is needed only where A < 1, which for fresh snow means very little of it.
+    as, _, u = GEMB._gardner_terms(0.05, 0.0, 80.0, 0.0, 0.0)
+    @test 0.53 * as * (1 - u)^1.2 > 0.20
+    @test_throws "no lower-layer albedo in [0, 1]" GEMB._albedo_gardner_over(0.05, 0.0, 80.0, 0.0,
+        0.20, 1e-9)
+    @test GEMB._albedo_gardner_over(0.05, 0.0, 80.0, 0.0, 0.20, 0.001) ===
+          GEMB._albedo_gardner(0.05, 0.0, 80.0, 0.0)
+    @test _gs2010_lower_albedo(0.05, 0.0, 80.0, 0.0, 0.20) === nothing
+    @test_throws "must be in [0, 1]" GEMB._gardner_lower_albedo(1.2, as, u, 0.0)
 end
 
 @testset "Gardner-Sharp: deep snow is semi-infinite" begin
