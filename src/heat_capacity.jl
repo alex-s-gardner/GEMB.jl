@@ -11,10 +11,12 @@
 Specific heat capacity of the ice matrix at temperature `T` [K], per
 `mp.heat_capacity_method`:
 
-- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value). The default.
-- `:CuffeyPaterson` — Cuffey and Paterson (2010) eq. 9.1, `c_p = 152.5 + 7.122·T`. Gives
-  2097.9 at the melting point but only 1862 at 240 K and 1648 at 210 K, so the constant
-  value over-permits refreezing in cold firn by +12.6% and +27.5% respectively.
+- `:CuffeyPaterson` (the default) — Cuffey and Paterson (2010) eq. 9.1, p. 400,
+  `c_p = 152.5 + 7.122·T`. Gives 2097.9 at the melting point but only 1862 at 240 K and 1648
+  at 210 K.
+- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value) at every
+  temperature. Against eq. 9.1 it over-permits refreezing in cold firn by +12.9% at 240 K and
+  +27.5% at 210 K.
 
 Applies to snow, firn, and ice alike: the load-bearing matrix is ice, and pore air and
 pore water contribute nothing to this term.
@@ -449,7 +451,7 @@ Temperature of mass `M` [kg] at temperature `T` [K] after absorbing `Q` joules:
 `h⁻¹(h(T) + Q/M)`.
 
 For constant `c_p` this is evaluated as `Q/M/c + T` rather than via an `h`/`h⁻¹` round-trip,
-so the default path is bit-identical to the reference arithmetic. Returns `T` unchanged when
+so the `:constant` path is bit-identical to the reference arithmetic. Returns `T` unchanged when
 `M <= 0`.
 """
 @inline function add_energy_temperature(mp::ModelParameters, T::Real, M::Real, Q::Real)

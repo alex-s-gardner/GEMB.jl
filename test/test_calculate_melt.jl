@@ -21,6 +21,11 @@ function _melt_mp()
         water_irreducible_method=:constant)
 end
 
+# Enthalpy of the ice matrix above `T1` at `T2` [J kg-1] under the default
+# `heat_capacity_method = :CuffeyPaterson`: Cuffey & Paterson (2010) eq. 9.1, c = 152.5 + 7.122·T,
+# integrated, which is (T2 − T1) times c at the midpoint.
+_cp_dh(T1, T2) = (T2 - T1) * (152.5 + 7.122 * (T1 + T2) / 2)
+
 @testset "Cold dry snow - no change" begin
     temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
     mp = _melt_mp()
@@ -117,20 +122,19 @@ end
     rain = 0.0
     verbose = false
 
-    # Huge excess energy at surface
-    temperature[1] = GEMB.CtoK + 500.0
+    # A surface cell 200 K above the melting point holds 5.62e5 J kg-1 of excess enthalpy,
+    # more than LF, so it melts out and passes the surplus down; the surplus is less than the
+    # 40 kg cell below can absorb by warming to 0 °C and melting.
+    temperature[1] = GEMB.CtoK + 200.0
+    M1 = dz[1] * density[1]
 
-    (t_out, _, d_out, _, _, _, _, _, _, _, _, _) =
+    (t_out, _, d_out, _, _, _, _, _, m_tot, _, _, _) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, mp, verbose)
 
-    if length(d_out) < 5
-        # Top cell melted completely away
-        @test true
-    else
-        # Excess heat should have warmed underlying layer
-        @test t_out[2] > 260.0
-    end
+    @test length(d_out) == 4
+    @test t_out[1] > 260.0
+    @test m_tot > M1
 end
 
 @testset "Water squeezing" begin
@@ -155,7 +159,7 @@ end
 
 @testset "Melt total does not depend on rain" begin
     # Rain arrives as pore water, so melt counts only ice melted by the excess enthalpy:
-    # a cell at 280 K melts c·M·(280 − 273.15)/LF, whatever water it holds.
+    # a cell at 280 K melts M·(h(280) − h(273.15))/LF, whatever water it holds.
     temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
     mp = _melt_mp()
     temperature[1] = 280.0
@@ -166,7 +170,7 @@ end
             GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), water_in,
                 copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age),
                 mp, true)
-        @test m_tot ≈ mp.heat_capacity_ice * M1 * (280.0 - GEMB.CtoK) / GEMB.LF rtol = 1e-12
+        @test m_tot ≈ M1 * _cp_dh(GEMB.CtoK, 280.0) / GEMB.LF rtol = 1e-12
     end
 end
 
@@ -622,10 +626,16 @@ end
 end
 
 @testset "Melt from the excess enthalpy" begin
-    # A cell of mass M raised ΔT above 0 °C melts c·M·ΔT/LF. Raised by LF/c + δ, it melts out
-    # entirely and the cell below receives c·M·δ.
+    # A cell of mass M raised ΔT above 0 °C melts M·Δh(ΔT)/LF, with Δh the enthalpy above the
+    # melting point. Raised by x_full + δ, where Δh(x_full) = LF, it melts out entirely and
+    # the cell below receives M·(Δh(x_full + δ) − LF).
     mp = _melt_mp()
-    c = mp.heat_capacity_ice
+    Δh(x) = _cp_dh(GEMB.CtoK, GEMB.CtoK + x)
+    # Positive root of (b/2)x² + (a + b·CtoK)x − LF = 0 for eq. 9.1, in BigFloat.
+    a, b = big"152.5", big"7.122"
+    A = a + b * big(GEMB.CtoK)
+    x_full = Float64(2 * big(GEMB.LF) / (A + sqrt(A^2 + 2 * b * big(GEMB.LF))))
+    @test Δh(x_full) ≈ GEMB.LF rtol = 1e-14
     n = 6
     T = fill(GEMB.CtoK, n)
     dz = fill(0.1, n)
@@ -635,15 +645,15 @@ end
     T[1] = GEMB.CtoK + ΔT
     out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
         fill(0.5, n), zeros(n), mp, true)
-    @test out[9] ≈ c * M * ΔT / GEMB.LF rtol = 1e-12
+    @test out[9] ≈ M * Δh(ΔT) / GEMB.LF rtol = 1e-12
 
     δ = 3.0
-    T2 = copy(T); T2[1] = GEMB.CtoK + GEMB.LF / c + δ
+    T2 = copy(T); T2[1] = GEMB.CtoK + x_full + δ
     out = GEMB.calculate_melt(T2, copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
         fill(0.5, n), zeros(n), mp, true)
     @test length(out[2]) == n - 1                     # cell 1 melted out and was removed
-    # Cell 2, at 0 °C, received c·M·δ and melted c·M·δ/LF of itself.
-    @test out[9] ≈ M + c * M * δ / GEMB.LF rtol = 1e-12
+    # Cell 2, at 0 °C, received M·(Δh(x_full + δ) − LF) and melted that over LF of itself.
+    @test out[9] ≈ M + M * (Δh(x_full + δ) - GEMB.LF) / GEMB.LF rtol = 1e-12
 end
 
 @testset "Percolation into cold firn" begin
@@ -659,7 +669,7 @@ end
     W = 4.0
     water = zeros(n); water[1] = W
     W_irr = (mp.density_ice - 400.0) * 0.07 * 0.1
-    cold2 = mp.heat_capacity_ice * 400.0 * 0.1 * 5.0 / GEMB.LF
+    cold2 = 400.0 * 0.1 * _cp_dh(GEMB.CtoK - 5.0, GEMB.CtoK) / GEMB.LF
     out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), water, fill(0.5, n), zeros(n),
         fill(0.5, n), zeros(n), mp, true)
     @test out[12] ≈ min(W - W_irr, cold2, (mp.density_ice - 400.0) * 0.1) rtol = 1e-12

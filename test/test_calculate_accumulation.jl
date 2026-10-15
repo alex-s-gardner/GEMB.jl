@@ -165,11 +165,17 @@ end
                           grain_dendricity, grain_sphericity, age))
 
     cfs = _make_accum_cfs(precipitation=10.0, temperature_air=275.0, wind_speed=0.0)
-    for (rain_heat_capacity, c_rain) in ((:water, GEMB.HEAT_CAPACITY_WATER),
-                                         (:ice, 2102.0))
+    # Matrix heat capacity, and its chord between two temperatures: 2102 under `:constant`;
+    # Cuffey & Paterson (2010) eq. 9.1, c = 152.5 + 7.122·T, whose enthalpy change between
+    # T1 and T2 is (T2 − T1) times c at the midpoint, under `:CuffeyPaterson`.
+    c_matrix(hcm, T) = hcm === :constant ? 2102.0 : 152.5 + 7.122 * T
+    c_chord(hcm, T1, T2) = c_matrix(hcm, (T1 + T2) / 2)
+    for hcm in (:CuffeyPaterson, :constant), rain_heat_capacity in (:water, :ice)
+        c_rain = rain_heat_capacity === :water ? GEMB.HEAT_CAPACITY_WATER :
+                 c_matrix(hcm, GEMB.CtoK)
         mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05,
             density_ice=917.0, rain_temperature_threshold=273.15,
-            rain_heat_capacity=rain_heat_capacity)
+            rain_heat_capacity=rain_heat_capacity, heat_capacity_method=hcm)
         (t_out, dz_out, d_out, w_out, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
             map(copy, pristine)..., cfs, mp, true)
         @test ra_out == 10.0
@@ -177,7 +183,7 @@ end
         @test d_out[1] == 400.0
         @test dz_out[1] == 0.1
         M1 = 400.0 * 0.1
-        @test M1 * mp.heat_capacity_ice * (t_out[1] - 260.0) ≈
+        @test M1 * c_chord(hcm, 260.0, t_out[1]) * (t_out[1] - 260.0) ≈
               10.0 * c_rain * (275.0 - GEMB.CtoK) rtol = 1e-12
     end
 end
@@ -213,7 +219,9 @@ end
 
 @testset "Rain on cold snow refreezes and is counted" begin
     # 2 kg of rain at 274.15 K on 17.5 kg of snow at -10 °C. The rain's sensible heat warms
-    # the cell, and the remaining cold content refreezes [c·M·10 − P·c_w·1]/LF of the rain.
+    # the cell, and the remaining cold content refreezes [c·M·10 − P·c_w·1]/LF of the rain,
+    # with c the chord heat capacity between 263.15 and 273.15 K: under the default
+    # `:CuffeyPaterson`, Cuffey & Paterson (2010) eq. 9.1 at the midpoint, 152.5 + 7.122·268.15.
     n = 10
     t_vec = fill(GEMB.CtoK - 10.0, n)
     dz = fill(0.05, n)
@@ -228,7 +236,7 @@ end
     w_before = sum(out[4])
     t2, dz2, ρ2, w2, _, _, _, _, melt, _, runoff, refreeze, _ =
         GEMB.calculate_melt(out[1:8]..., mp, true)
-    c = mp.heat_capacity_ice
+    c = 152.5 + 7.122 * (GEMB.CtoK - 5.0)
     expected = (c * M * 10.0 - 2.0 * GEMB.HEAT_CAPACITY_WATER * 1.0) / GEMB.LF
     @test refreeze ≈ expected rtol = 1e-9
     @test melt == 0.0

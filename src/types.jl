@@ -457,12 +457,13 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
 
     # --- Heat Capacity ---
     # Specific heat capacity of the load-bearing ice matrix, applied to snow, firn, and ice
-    # alike (pore air and pore water contribute nothing to this term). `:constant` (the default)
-    # uses `heat_capacity_ice` at every temperature, matching the Community Firn Model's
-    # `enthalpyDiff` melt path, which sets `c_firn = CP_I = 2097`. `:CuffeyPaterson` makes it
-    # temperature-dependent (`152.5 + 7.122·T`, as IMAU-FDM uses throughout) and ignores
-    # `heat_capacity_ice`. See `heat_capacity`.
-    heat_capacity_method::Symbol = :constant
+    # alike (pore air and pore water contribute nothing to this term). `:CuffeyPaterson` (the
+    # default) is Cuffey & Paterson (2010) eq. 9.1, p. 400, `152.5 + 7.122·T`, which IMAU-FDM
+    # also uses throughout; it ignores `heat_capacity_ice`. `:constant` uses
+    # `heat_capacity_ice` at every temperature, matching the Community Firn Model's
+    # `enthalpyDiff` melt path, which sets `c_firn = CP_I = 2097`; the default 2102 is 7.5%
+    # above eq. 9.1 at 253.15 K and 21% above it at 223.15 K. See `heat_capacity`.
+    heat_capacity_method::Symbol = :CuffeyPaterson
     heat_capacity_ice::Float64 = HEAT_CAPACITY_ICE_DEFAULT
     # Heat capacity carrying the *sensible* heat of above-freezing liquid entering the column,
     # which only rain is. `:water` (the default) uses `HEAT_CAPACITY_WATER`; `:ice` uses the

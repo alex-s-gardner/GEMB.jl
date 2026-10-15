@@ -537,8 +537,8 @@ so the two schemes discretize identical conductances and differ only in time int
 `c_i` is the [`chord_heat_capacity`](@ref) between the old and new temperatures — an exact
 identity for `h = aT + (b/2)T²`, not a linearization. This is what lets enthalpy stay the
 conserved quantity while the system solved is linear in temperature. It also makes the system
-mildly nonlinear under `:CuffeyPaterson`, resolved by the same iteration as the surface row; under
-the default `:constant` it is a true constant and the iteration only sees the surface.
+mildly nonlinear under the default `:CuffeyPaterson`, resolved by the same iteration as the surface
+row; under `:constant` it is a true constant and the iteration only sees the surface.
 
 `M_i·c_i > 0` always, so the matrix is an irreducibly diagonally dominant M-matrix: non-singular,
 **no pivoting required**, and `A⁻¹ ≥ 0`, which is the discrete maximum principle — the solve
@@ -603,7 +603,7 @@ stiffest cell — the property the explicit path lacks.
 ## Static condensation: Newton on a scalar, not on the column
 
 The nonlinearity is confined to row 1 — the surface energy balance. Rows `2 … n` are linear in
-the iterate under the default `:constant` heat capacity, so re-eliminating them once per Newton
+the iterate for a given set of chord heat capacities, so re-eliminating them once per Newton
 iteration would be wasted work. Instead the interior is condensed **bottom-up, once per sub-step**,
 each row reduced to an affine function of the cell above it (`T_i = rhs[i] + sup[i]·T_{i-1}`).
 Newton then iterates on a single scalar equation in `T_1`, at O(1) per iteration, and one forward

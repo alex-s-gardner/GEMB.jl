@@ -617,14 +617,14 @@ end
     @test t_out[end] === temperature[end]
 
     # The explicit limit really has collapsed on this column, so the contrast is real:
-    # measured 3.98 s with the lens against 903 s without it, a factor of 227 in sub-step
+    # measured 3.79 s with the lens against 832 s without it, a factor of 219 in sub-step
     # count for one thin cell. The implicit run above took `n_sub` from
     # `THERMAL_IMPLICIT_DT_TARGET` alone and never saw either number.
     K = GEMB.thermal_conductivity(temperature, density, mp)
     dz_no_lens = [0.02 * 1.08^(i - 1) for i in 1:n]
     dt_lens = GEMB._max_safe_dt(temperature, dz, density, K, mp)
     dt_no_lens = GEMB._max_safe_dt(temperature, dz_no_lens, density, K, mp)
-    @test dt_lens ≈ 3.979 atol = 0.01
+    @test dt_lens ≈ 3.791 atol = 0.01
     @test dt_no_lens / dt_lens > 200.0
 end
 
@@ -950,7 +950,8 @@ end
             @test lw_up ≈ ε * GEMB.SB * T0^4 + (1 - ε) * lw_down rtol = 1e-12
             @test shf == 0.0 && lhf == 0.0
             @test all(t_out[2:end] .== T0)
-            @test M1 * mp.heat_capacity_ice * (T0 - t_out[1]) ≈ 100.0 * dt rtol = 1e-9
+            @test M1 * (GEMB.specific_enthalpy(mp, T0) - GEMB.specific_enthalpy(mp, t_out[1])) ≈
+                  100.0 * dt rtol = 1e-9
             out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n),
                 zeros(n), fill(0.5, n), zeros(n), mp, true)
             @test out[1][1] ≈ T0 atol = 1e-6
@@ -981,16 +982,23 @@ end
 end
 
 @testset "Wet-cell temperature map" begin
-    mp = GEMB.ModelParameters()
-    M, W = 40.0, 2.0
-    h0 = GEMB.specific_enthalpy(mp, GEMB.CtoK)
-    H_lo = (M + W) * h0
-    H_hi = H_lo + W * GEMB.LF
-    @test GEMB._wet_cell_temperature(mp, H_hi, M, W) ≈ GEMB.CtoK rtol = 1e-15
-    @test GEMB._wet_cell_temperature(mp, 0.5 * (H_lo + H_hi), M, W) == GEMB.CtoK
-    @test GEMB._wet_cell_temperature(mp, H_lo, M, W) == GEMB.CtoK
-    @test GEMB._wet_cell_temperature(mp, H_hi + M * 2102.0, M, W) ≈ GEMB.CtoK + 1.0 rtol = 1e-12
-    @test GEMB._wet_cell_temperature(mp, H_lo - (M + W) * 2102.0, M, W) ≈ GEMB.CtoK - 1.0 rtol = 1e-12
+    for hcm in (:CuffeyPaterson, :constant)
+        mp = GEMB.ModelParameters(heat_capacity_method=hcm)
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        M, W = 40.0, 2.0
+        H_lo = (M + W) * h(GEMB.CtoK)
+        H_hi = H_lo + W * GEMB.LF
+        @test GEMB._wet_cell_temperature(mp, H_hi, M, W) ≈ GEMB.CtoK rtol = 1e-15
+        @test GEMB._wet_cell_temperature(mp, 0.5 * (H_lo + H_hi), M, W) == GEMB.CtoK
+        @test GEMB._wet_cell_temperature(mp, H_lo, M, W) == GEMB.CtoK
+        # One kelvin above the plateau warms the matrix alone; one below cools matrix and
+        # frozen water together.
+        @test GEMB._wet_cell_temperature(mp, H_hi + M * (h(GEMB.CtoK + 1.0) - h(GEMB.CtoK)),
+            M, W) ≈ GEMB.CtoK + 1.0 rtol = 1e-12
+        @test GEMB._wet_cell_temperature(mp,
+            H_lo - (M + W) * (h(GEMB.CtoK) - h(GEMB.CtoK - 1.0)), M, W) ≈
+              GEMB.CtoK - 1.0 rtol = 1e-12
+    end
 end
 
 @testset "Explicit surface flux converges in the sub-step" begin
@@ -1071,8 +1079,10 @@ _quiet_cfs(dt, T_s) = GEMB.ClimateForcingStep(dt, T_s, 100000.0, 0.0, 0.0, 0.0, 
     F = 100.0
     t_end = 6 * 3600.0
     for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        # The closed form needs a constant heat capacity.
         mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
             thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            heat_capacity_method=:constant,
             dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
         k = GEMB.thermal_conductivity(fill(T0, n), fill(ρ, n), mp)[1]
         κ = k / (ρ * mp.heat_capacity_ice)
@@ -1116,7 +1126,7 @@ end
 
 @testset "Melting-point clamp on the surface flux" begin
     # A surface cell above 273.15 K sees the surface fluxes of a 273.15 K surface, and its
-    # excess enthalpy is exactly what it received: M₁·c·(T₁ − 273.15) = Q·dt.
+    # excess enthalpy is exactly what it received: M₁·(h(T₁) − h(273.15)) = Q·dt.
     n = 2
     dz = [0.05, 50.0]
     ρ = 400.0
@@ -1141,6 +1151,7 @@ end
         @test shf ≈ shf_0 rtol = 1e-12
         @test lhf ≈ lhf_0 rtol = 1e-12
         Q = sw[1] + lw_down - lw_up + shf + lhf + basal
-        @test ρ * dz[1] * mp.heat_capacity_ice * (T[1] - GEMB.CtoK) ≈ Q * 3600.0 rtol = 1e-9
+        @test ρ * dz[1] * (GEMB.specific_enthalpy(mp, T[1]) - GEMB.specific_enthalpy(mp, GEMB.CtoK)) ≈
+              Q * 3600.0 rtol = 1e-9
     end
 end

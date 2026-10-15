@@ -182,11 +182,12 @@ initial guess is well defined at every setting.
 
 ## Thermal physics
 
-**Heat capacity.** `heat_capacity_method = :constant` holds `heat_capacity_ice`
-(2102 J kg⁻¹ K⁻¹, the value at the melting point), matching the Community Firn Model's
-melt-enabled path. `:CuffeyPaterson` is `c_p(T) = 152.5 + 7.122·T` (Cuffey and Paterson,
-2010, eq. 9.1); the constant form overstates the cold content of firn at 240 K by 12.9% and
-at 210 K by 27.5%.
+**Heat capacity.** `heat_capacity_method = :CuffeyPaterson`, the default, is
+`c_p(T) = 152.5 + 7.122·T` (Cuffey and Paterson, 2010, eq. 9.1, p. 400), which reproduces
+their Table 9.1 (2097 and 1741 J kg⁻¹ K⁻¹ at 0 and −50 °C). `:constant` holds
+`heat_capacity_ice` (2102 J kg⁻¹ K⁻¹, the value at the melting point) at every temperature,
+matching the Community Firn Model's melt-enabled path; it overstates the cold content of firn
+at 240 K by 12.9% and at 210 K by 27.5%.
 
 **Internal energy is the enthalpy integral `∫c_p dT`**, not `M·T·c_p`. The latter is valid
 only for constant `c_p`; under `:CuffeyPaterson` it overstates enthalpy by `(b/2)T²`, which

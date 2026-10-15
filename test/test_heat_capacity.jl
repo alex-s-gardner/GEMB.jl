@@ -18,6 +18,10 @@ _hc_cp() = GEMB.ModelParameters(heat_capacity_method=:CuffeyPaterson)
     @test GEMB.heat_capacity(cp, GEMB.CtoK) ≈ 2097.87 atol = 0.01
     @test GEMB.heat_capacity(cp, 240.0) ≈ 1861.78 atol = 0.01
     @test GEMB.heat_capacity(cp, 210.0) ≈ 1648.12 atol = 0.01
+    # Cuffey & Paterson (2010) Table 9.1, p. 400, tabulates 2097 at 0 °C and 1741 at −50 °C,
+    # which eq. 9.1 reproduces to within the table's 1 J kg-1 K-1 rounding.
+    @test GEMB.heat_capacity(cp, GEMB.CtoK) ≈ 2097.0 atol = 1.0
+    @test GEMB.heat_capacity(cp, GEMB.CtoK - 50.0) ≈ 1741.0 atol = 1.0
 
     # `heat_capacity_ice` is ignored under :CuffeyPaterson.
     cp_alt = GEMB.ModelParameters(heat_capacity_method=:CuffeyPaterson, heat_capacity_ice=1600.0)
@@ -31,7 +35,7 @@ end
 
 @testset "specific_enthalpy" begin
     mp = _hc_const()
-    # Exact equality, not approximate: this is what keeps the default path
+    # Exact equality, not approximate: this is what keeps the `:constant` path
     # bit-identical to the MATLAB `M*T*C_ICE` accounting.
     for T in (180.0, 213.7, 250.0, GEMB.CtoK)
         @test GEMB.specific_enthalpy(mp, T) == mp.heat_capacity_ice * T
@@ -209,9 +213,10 @@ end
     @test_throws AssertionError initialize_parameters(heat_capacity_method=:Bogus)
     @test_throws AssertionError initialize_parameters(heat_capacity_ice=1000.0)
     @test_throws AssertionError initialize_parameters(heat_capacity_ice=3000.0)
-    @test initialize_parameters(heat_capacity_method=:CuffeyPaterson).heat_capacity_method ===
-        :CuffeyPaterson
-    @test initialize_parameters().heat_capacity_method === :constant
+    @test initialize_parameters(heat_capacity_method=:constant).heat_capacity_method ===
+        :constant
+    @test initialize_parameters().heat_capacity_method === :CuffeyPaterson
+    @test GEMB.ModelParameters().heat_capacity_method === :CuffeyPaterson
     @test initialize_parameters().heat_capacity_ice == GEMB.HEAT_CAPACITY_ICE_DEFAULT
 end
 

@@ -335,7 +335,7 @@ refreezes nothing.
     accumulation::Real, T_mean::Real, mp::ModelParameters)
     available = Float64(melt) + Float64(rainfall)
     capacity = if mp.heat_capacity_method === :constant
-        # Grouped as the reference groups it, so the default path is bit-identical.
+        # Grouped as the reference groups it, so the `:constant` path is bit-identical.
         mp.heat_capacity_ice * max(CtoK - Float64(T_mean), 0.0) * Float64(accumulation) / LF
     else
         cold_content_mass(mp, min(Float64(T_mean), CtoK), Float64(accumulation))
