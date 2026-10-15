@@ -93,25 +93,31 @@ end
 Add precipitation and deposition to the model column.
 
 Precipitation is classified as snow or rain based on `mp.rain_temperature_threshold`.
-Snow deeper than `mp.column_dzmin` becomes a new top cell with fresh-snow properties. Thinner
-snow of mass `P` merges into the top cell, of matrix mass `M = dz[1]·density[1]`:
 
-- thickness grows by `P/ρ_new` and density becomes `(M + P)/dz[1]` (mass conserved);
-- temperature is the enthalpy-weighted mix of the cell and the snow at the air temperature
-  ([`mix_temperature`](@ref); energy conserved);
-- age is diluted by the age-0 snow ([`dilute_age`](@ref));
-- grain properties are mass-weighted with weight `f = P/(M + P)` on the fresh-snow values:
-  sphericity `(1 − f)·s + f·s_new` always. A dendritic cell (dendricity > `GDN_TOLERANCE`),
-  or any cell receiving at least its own mass (`f ≥ 1/2`), takes dendricity
-  `(1 − f)·d + f·d_new` and the radius [`dendritic_grain_radius`](@ref) of the mixed
-  dendricity and sphericity, since a dendritic radius is not independent state. A
-  non-dendritic cell receiving less than its own mass stays non-dendritic (dendricity 0) and
-  takes radius `(1 − f)·r + f·r_new`. Without that class rule any trace would make an old
-  cell dendritic, and [`calculate_grain_size`](@ref) would re-derive its radius as a fresh-snow
-  value of at most 0.2 mm on the next step.
+Snowfall follows the layering of Crocus (Vionnet et al., 2012, p. 778; Lafaysse et al., 2026,
+eq. 11, p. 6278): it joins the top cell only when that cell is similar snow, and otherwise
+forms a layer of its own. Snow of mass `P` and depth `z = P/ρ_new` becomes a new top cell with
+fresh-snow properties when `z > mp.column_dzmin`, or when `P` is at least
+[`snow_layer_min_mass`](@ref)`(cfs.dt)` and it is distinct from the top cell ([`snow_layers_distinct`](@ref) at the [`snow_layer_distance`](@ref)
+between the fresh snow and the top cell). Over firn or ice the distance is infinite, so such
+snow always forms its own cell. The new cell may be thinner than `mp.column_dzmin`;
+[`manage_layer_thickness`](@ref) keeps it while it stays distinct from the cell below and holds
+at least that mass.
 
-A trace snowfall therefore changes the top cell's grain state by `O(f)`, and `P = 0` changes
-nothing.
+Otherwise the snow merges into the top cell, of matrix mass `M = dz[1]·density[1]`, whether
+that is snow, firn or ice: thickness grows by `P/ρ_new` and density becomes `(M + P)/dz[1]`
+(mass conserved); temperature is the enthalpy-weighted mix of the cell and the snow at the air
+temperature ([`mix_temperature`](@ref); energy conserved); age is diluted by the age-0 snow
+([`dilute_age`](@ref)); and the grain state is mixed by mass ([`mix_grains`](@ref), weight
+`f = P/(M + P)` on the fresh snow). Snowfall below the minimum mass onto firn or ice
+therefore lowers the cell's density, so repeated light snowfall builds up snow there.
+
+`P = 0` changes nothing. A trace snowfall merges, being below the minimum mass. It moves
+the grain state by `O(f)`, and not at all where the mixed values round back to the cell's own
+(5e-324 kg m-2 on any cell), and the density by `O(f)` (at most an ulp for 5e-324 kg m-2). The
+surface albedo, a function of the top cell's grain radius and density and of the snow mass
+above firn or ice, therefore moves by `O(f)` at most.
+
 Rain is added to the pore water of the top cell, `water[1]`, at the melt-point water enthalpy,
 and its sensible heat above the melting point, `P·(h_w(T_air) − h_w(0 °C))`, is added to the
 cell's ice matrix. The cell's density and thickness are unchanged. In a cold cell the rain
@@ -119,12 +125,12 @@ refreezes in [`calculate_melt`](@ref), where it is counted as refreeze; in a cel
 melting point its sensible heat melts ice there.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-age, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when snow depth > dzmin; the
-extra cell is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s count
-controller.
+age, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when the snow forms its own
+cell; the extra cell is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s
+count controller.
 
-This is the model's principal age source. All three paths add mass at age 0: a fresh cell is
-set to 0 outright, and the two merge-into-cell-1 paths dilute `age[1]` (the mean age of the
+This is the model's principal age source. Every path adds mass at age 0: a fresh cell is
+set to 0 outright, and the merge-into-cell-1 paths dilute `age[1]` (the mean age of the
 cell's matrix and pore water together) by the arriving mass via [`dilute_age`](@ref).
 
 Albedo is absent: it is diagnosed from the column at the top of the *next* timestep (see
@@ -185,46 +191,39 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             sfall = gsp_new_snow
             refall = re_new_snow
 
-            # if snow depth is greater than specified min dz, new cell created
-            if z_snow > mp.column_dzmin + D_TOLERANCE
+            # Fresh snow forms its own top cell when it is deeper than `column_dzmin`, or when
+            # it holds at least `snow_layer_min_mass` and is distinct from the top cell
+            # (always so over firn or ice); see the docstring.
+            D = snow_layer_distance(dfall, sfall, refall, false, 0.0, density_new_snow,
+                grain_dendricity[1], grain_sphericity[1], grain_radius[1],
+                water[1] > WATER_TOLERANCE, age[1], density[1])
+            if (z_snow > mp.column_dzmin + D_TOLERANCE) ||
+               ((cfs.precipitation >= snow_layer_min_mass(cfs.dt)) &&
+                snow_layers_distinct(z_snow, D, mp))
                 cols = column_state(temperature, dz, density, water, grain_radius,
                     grain_dendricity, grain_sphericity, age)
                 open_slot!(cols, 1)
-                @inbounds begin
-                    temperature[1] = cfs.temperature_air
-                    dz[1] = z_snow
-                    density[1] = density_new_snow
-                    water[1] = 0.0
-                    grain_radius[1] = refall
-                    grain_dendricity[1] = dfall
-                    grain_sphericity[1] = sfall
-                    # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
-                    # its age.
-                    age[1] = 0.0
-                end
+                temperature[1] = cfs.temperature_air
+                dz[1] = z_snow
+                density[1] = density_new_snow
+                water[1] = 0.0
+                grain_radius[1] = refall
+                grain_dendricity[1] = dfall
+                grain_sphericity[1] = sfall
+                # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
+                # its age.
+                age[1] = 0.0
             else
-                # if snow depth is less than specified minimum dz
-                M_surface_new = M_surface + cfs.precipitation
-                dz[1] = dz[1] + cfs.precipitation / density_new_snow
-                density[1] = M_surface_new / dz[1]
-
-                # adjust temperature (assume precipitation is same temp as air)
+                # Merged into the top cell (adjust temperature: precipitation is at the air
+                # temperature).
                 temperature[1] = mix_temperature(mp, cfs.temperature_air, cfs.precipitation,
                     temperature[1], M_surface)
-
                 age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
-
-                # Mass-weighted grain properties; see the docstring for the dendritic class.
-                f = cfs.precipitation / M_surface_new
-                grain_sphericity[1] = (1 - f) * grain_sphericity[1] + f * sfall
-                if (grain_dendricity[1] > GDN_TOLERANCE) || (f >= 0.5)
-                    grain_dendricity[1] = (1 - f) * grain_dendricity[1] + f * dfall
-                    grain_radius[1] = dendritic_grain_radius(grain_dendricity[1],
-                        grain_sphericity[1])
-                else
-                    grain_dendricity[1] = 0.0
-                    grain_radius[1] = (1 - f) * grain_radius[1] + f * refall
-                end
+                dz[1] = dz[1] + cfs.precipitation / density_new_snow
+                density[1] = (M_surface + cfs.precipitation) / dz[1]
+                grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(
+                    grain_dendricity[1], grain_sphericity[1], grain_radius[1], M_surface,
+                    dfall, sfall, refall, cfs.precipitation)
             end
 
         else

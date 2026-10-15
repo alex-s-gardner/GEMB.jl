@@ -1155,3 +1155,35 @@ end
               Q * 3600.0 rtol = 1e-9
     end
 end
+
+@testset "A surface cell of the minimum snow-layer mass, both solvers" begin
+    # Layer management can leave fresh snow as a surface cell holding as little as
+    # `snow_layer_min_mass(dt)`, 1 kg m-2 at this 3-hour step (2.9 mm at 350 kg m-3). Over a 3-hour step under 15 m s-1 of air 20 K colder, and
+    # under sun absorbed in that cell, both solvers close the energy budget (verbose), the
+    # explicit sub-step resolves the surface relaxation (the hour-mean turbulent flux at the
+    # default safety factor agrees within 2% with a 16x smaller factor) and the two solvers
+    # agree.
+    n = 40
+    dz = [GEMB.snow_layer_min_mass(10800.0) / 350.0; [0.025 * 1.1^(i - 1) for i in 1:n-1]]
+    density = [350.0; fill(380.0, n - 1)]
+    T0 = fill(260.0, n)
+    grain_radius = [0.05; fill(0.5, n - 1)]
+    divisors = Float64.(GEMB.fast_divisors(108000000)) ./ 10000
+    for (Ta, sw1) in ((240.0, 0.0), (268.0, 150.0))
+        cfs = GEMB.ClimateForcingStep(10800.0, Ta, 80000.0, 0.0, 15.0, 0.0, 200.0, 30.0,
+            250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        sw = [sw1; zeros(n - 1)]
+        res = map(((GEMB.ExplicitThermal(), GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR),
+                   (GEMB.ExplicitThermal(), 0.05), (GEMB.ImplicitThermal(), 0.8))) do (solver, sf)
+            mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+                thermal_explicit_safety_factor=sf, dt_divisors=divisors)
+            t, _, shf, lhf, = GEMB.calculate_temperature(copy(T0), dz, density, 0.0,
+                grain_radius, sw, cfs, mp, true)
+            @test all(isfinite, t)
+            (t[1], shf + lhf)
+        end
+        @test res[1][2] ≈ res[2][2] rtol = 0.02
+        @test res[1][2] ≈ res[3][2] rtol = 0.02
+        @test res[1][1] ≈ res[3][1] atol = 0.5
+    end
+end

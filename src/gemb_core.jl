@@ -182,7 +182,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_sphericity, age, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, mp, verbose;
-            n_target=n_target, workspace=column_workspace)
+            dt=cfs.dt, n_target=n_target, workspace=column_workspace)
 
     # 10. Allow non-melt densification
     densification_from_compaction = sum(dz)

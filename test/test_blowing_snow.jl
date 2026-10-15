@@ -543,9 +543,22 @@ end
         # column has been reworked. This is the property that lets the compaction path stay
         # out of the budgets entirely.
         @test all(iszero, out[:blowing_snow])
-        # The near-surface density rises toward the wind-slab value.
-        @test sum(view(parent(out[:density]), 1, :)) >
-              sum(view(parent(out0[:density]), 1, :))
+        # The near-surface density rises toward the wind-slab value: the density of the top
+        # 0.5 m, summed over the monthly outputs. Not cell 1 alone, which is often a thin layer
+        # of the latest snowfall whose density that snowfall sets.
+        function top_density(o, z_max)
+            dz, ρ = parent(o[:dz]), parent(o[:density])
+            map(axes(dz, 2)) do j
+                z = m = h = 0.0
+                for i in axes(dz, 1)
+                    z >= z_max && break
+                    t = min(dz[i, j], z_max - z)
+                    m += t * ρ[i, j]; h += t; z += dz[i, j]
+                end
+                m / h
+            end
+        end
+        @test sum(top_density(out, 0.5)) > sum(top_density(out0, 0.5))
         # And both grid invariants hold, as they must for any step that changes `dz`.
         @test size(out[:dz], 1) == n_cells
         for i in axes(out[:dz], 2)

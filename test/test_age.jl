@@ -198,7 +198,7 @@ end
 
     (_, dz_out, _, _, _, _, _, age_out, _) = GEMB.manage_layer_thickness(
         fill(260.0, n), dz, fill(400.0, n), zeros(n),
-        fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), mp, true)
+        fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), mp, true; dt=86400.0)
 
     @test length(age_out) == n
     # Every output age is a mass-weighted mean of inputs, so it lies within the input range.

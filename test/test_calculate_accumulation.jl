@@ -2,9 +2,9 @@
 
 # Helper to create a ClimateForcingStep for accumulation tests
 function _make_accum_cfs(; precipitation=0.0, temperature_air=270.0, wind_speed=5.0,
-    precipitation_mean=200.0, temperature_air_mean=260.0, wind_speed_mean=5.0)
+    precipitation_mean=200.0, temperature_air_mean=260.0, wind_speed_mean=5.0, dt=86400.0)
     return GEMB.ClimateForcingStep(
-        86400.0,          # dt [s]
+        dt,               # dt [s]
         temperature_air,  # temperature_air
         80000.0,          # pressure_air
         precipitation,    # precipitation
@@ -102,14 +102,15 @@ end
 end
 
 @testset "Small snow event (merge with top layer)" begin
+    # The top cell has the fresh-snow grain state, so the snow is similar and merges.
     n = 5
     t_vec = 260.0 * ones(n)
     dz = 0.1 * ones(n)
     density = 400.0 * ones(n)
     water = zeros(n)
-    grain_radius = 0.5 * ones(n)
-    grain_dendricity = 0.5 * ones(n)
-    grain_sphericity = 0.5 * ones(n)
+    grain_radius = GEMB.RE_NEW_SNOW * ones(n)
+    grain_dendricity = GEMB.GDN_NEW_SNOW * ones(n)
+    grain_sphericity = GEMB.GSP_NEW_SNOW * ones(n)
     age = zeros(n)
 
     density_snow = 150.0
@@ -523,94 +524,247 @@ end
     @test GEMB.validate_parameters(mp_pahaut) === nothing
 end
 
-# Snowfall merged into cell 1 mixes the grain state by mass (see `calculate_accumulation`):
-# weight f = P/(M + P) on the fresh-snow values. `_brun_dendritic_radius` is the Brun et al.
-# (1992) dendritic grain diameter, halved, as GEMB carries it.
+
+# Snow layering after Crocus (see `calculate_accumulation` and `snow_layer_distance`).
+# `_brun_dendritic_radius` is the Brun et al. (1992) dendritic grain diameter, halved, as GEMB
+# carries it; `_crocus_distance` is Lafaysse et al. (2026) eq. 7 with d_opt = 2r [m].
 _brun_dendritic_radius(d, s) = 0.1 * (d / 0.99 + (1 - d / 0.99) * (3s / 0.99 + 4(1 - s / 0.99))) / 2
+_crocus_distance(d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) = abs(a1 - a2) < 300 ?
+    50 * (abs(d1 - d2) + abs(s1 - s2) + 2000 * abs(2r1 / 1000 - 2r2 / 1000) + (w1 != w2)) : 200.0
+# Mass-weighted r^0.07 (Gardner & Sharp 2010 eq. 7 conserved), in BigFloat.
+_albedo_mean_radius(r1, M1, r2, M2) =
+    Float64(((big(M1) * big(r1)^big"0.07" + big(M2) * big(r2)^big"0.07") / (big(M1) + big(M2)))^(1 / big"0.07"))
 
-# Cell 1 of a 5-cell column: 0.05 m at 350 kg m-3 (17.5 kg m-2), 260 K, dry.
-function _merge_column(; r=1.0, gdn=0.0, gsp=0.8, dz1=0.05, age=10.0)
-    n = 5
-    return (fill(260.0, n), [dz1; fill(0.05, n - 1)], fill(350.0, n), zeros(n), fill(r, n),
-        fill(gdn, n), fill(gsp, n), fill(age, n))
+# A column of `n` cells: cell 1 as given, cells 2… 0.05 m of old snow (350 kg m-3, r 1 mm,
+# sphericity 0.8, non-dendritic, 100 days old) over ice from cell 6.
+function _layer_column(; dz1=0.05, ρ1=350.0, r1=1.0, d1=0.0, s1=0.8, age1=100.0, T1=260.0,
+    w1=0.0, n=10, ρ_ice=917.0)
+    ρ = [ρ1; fill(350.0, 4); fill(ρ_ice, n - 5)]
+    return ([T1; fill(260.0, n - 1)], [dz1; fill(0.05, n - 1)], ρ, [w1; zeros(n - 1)],
+        [r1; fill(1.0, 4); fill(GEMB.GRAIN_RADIUS_ICE, n - 5)], [d1; zeros(n - 1)],
+        [s1; fill(0.8, n - 1)], [age1; fill(100.0, n - 1)])
 end
 
-@testset "Trace snowfall mixes the surface grain state by mass" begin
-    mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05)
-    cfs = _make_accum_cfs(precipitation=0.01, temperature_air=250.0, wind_speed=0.0)
-    out = GEMB.calculate_accumulation(_merge_column()..., cfs, mp, true)
-    @test length(out[2]) == 5                                        # merged, no new cell
-    # 0.01 kg on 17.5 kg of non-dendritic 1 mm grains: the cell stays non-dendritic.
-    @test out[5][1] ≈ (17.5 * 1.0 + 0.01 * GEMB.RE_NEW_SNOW) / 17.51 rtol = 1e-14
-    @test out[7][1] ≈ (17.5 * 0.8 + 0.01 * GEMB.GSP_NEW_SNOW) / 17.51 rtol = 1e-14
-    @test out[6][1] == 0.0
-    @test out[5][2] == 1.0 && out[6][2] == 0.0 && out[7][2] == 0.8   # cell 2 untouched
-    @test out[8][1] ≈ 10.0 * 17.5 / 17.51 rtol = 1e-14               # age-0 snow dilutes age
+@testset "Snow layer distance and distinctness (Crocus eq. 7, 11)" begin
+    mp = GEMB.ModelParameters()
+    for (d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) in (
+        (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.8, 1.0, false, 100.0),
+        (1.0, 0.5, 0.05, false, 0.0, 0.98, 0.55, 0.0611, true, 0.25),
+        (0.0, 0.3, 0.2, true, 10.0, 0.0, 0.3, 0.2, true, 20.0),
+        (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.5, 0.06, false, 3.0),     # fine non-dendritic
+        (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.9, 0.4, false, 400.0))
+        D = GEMB.snow_layer_distance(d1, s1, r1, w1, a1, 300.0, d2, s2, r2, w2, a2, 400.0)
+        @test D ≈ _crocus_distance(d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) rtol = 1e-14
+        @test D == GEMB.snow_layer_distance(d2, s2, r2, w2, a2, 400.0, d1, s1, r1, w1, a1, 300.0)
+    end
+    @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
+        1.0, 0.5, 0.05, false, 0.0, 300.0) == 0
+    # Firn or ice on either side: never aggregated.
+    for ρ in (GEMB.DENSITY_PORE_CLOSEOFF, 870.0, 917.0)
+        @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
+            1.0, 0.5, 0.05, false, 0.0, ρ) == Inf
+        @test GEMB.snow_layers_distinct(1e-9, Inf, mp)
+    end
+    # z < 5·z*/D aggregates, z* = column_dztop.
+    @test GEMB.snow_layers_distinct(0.01, 5 * mp.column_dztop / 0.01, mp)
+    @test !GEMB.snow_layers_distinct(0.01, prevfloat(5 * mp.column_dztop / 0.01), mp)
+    @test !GEMB.snow_layers_distinct(0.02, 0.0, mp)
+end
 
-    # The next grain step grows the mixed radius; it does not re-derive a fresh-snow one.
-    cfs_dry = _make_accum_cfs(precipitation=0.0, temperature_air=250.0)
-    r_mixed = out[5][1]
-    gr, gd, _ = GEMB.calculate_grain_size(out[1], out[2], out[3], out[4], copy(out[5]),
-        copy(out[6]), copy(out[7]), cfs_dry, mp)
-    @test gd[1] == 0.0
-    @test gr[1] >= r_mixed
-
-    # A dendritic cell mixes dendricity and sphericity, and its radius follows them.
-    P = 2.0
-    out = GEMB.calculate_accumulation(_merge_column(r=0.08, gdn=0.6, gsp=0.4)...,
-        _make_accum_cfs(precipitation=P, temperature_air=250.0, wind_speed=0.0), mp, true)
-    d = (17.5 * 0.6 + P * GEMB.GDN_NEW_SNOW) / (17.5 + P)
-    s = (17.5 * 0.4 + P * GEMB.GSP_NEW_SNOW) / (17.5 + P)
+@testset "Snowfall onto similar fresh snow merges by mass" begin
+    # Top cell: 3-hour-old fresh snow, 0.02 m at 150 kg m-3 (3 kg m-2); 2 kg m-2 more at
+    # 150 kg m-3 is 0.0133 m, under column_dzmin 0.05 m and not distinct from it.
+    mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05,
+        heat_capacity_method=:constant)
+    d1, s1 = 0.98, 0.52
+    r1 = _brun_dendritic_radius(d1, s1)
+    col = _layer_column(dz1=0.02, ρ1=150.0, r1=r1, d1=d1, s1=s1, age1=0.125, T1=262.0)
+    before = deepcopy(col)
+    P, Ta = 2.0, 255.0
+    D = _crocus_distance(GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW, GEMB.RE_NEW_SNOW, false, 0.0,
+        d1, s1, r1, false, 0.125)
+    @test D * (P / 150.0) < 5 * mp.column_dztop
+    out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=P,
+        temperature_air=Ta, wind_speed=0.0), mp, true)
+    M = 0.02 * 150.0
+    f = P / (M + P)
+    @test length(out[2]) == 10
+    @test out[2][1] ≈ 0.02 + P / 150.0 rtol = 1e-14
+    @test out[3][1] ≈ (M + P) / (0.02 + P / 150.0) rtol = 1e-14
+    @test out[1][1] ≈ (M * 262.0 + P * Ta) / (M + P) rtol = 1e-14       # c·T, :constant
+    @test out[8][1] ≈ 0.125 * M / (M + P) rtol = 1e-14
+    d = (M * d1 + P * GEMB.GDN_NEW_SNOW) / (M + P)
+    s = (M * s1 + P * GEMB.GSP_NEW_SNOW) / (M + P)
     @test out[6][1] ≈ d rtol = 1e-14
     @test out[7][1] ≈ s rtol = 1e-14
     @test out[5][1] ≈ _brun_dendritic_radius(d, s) rtol = 1e-14
-
-    # A non-dendritic cell receiving at least its own mass becomes dendritic. 4 kg on 3.5 kg.
-    P = 4.0
-    out = GEMB.calculate_accumulation(_merge_column(dz1=0.01)...,
-        _make_accum_cfs(precipitation=P, temperature_air=250.0, wind_speed=0.0), mp, true)
-    @test length(out[2]) == 5
-    d = P * GEMB.GDN_NEW_SNOW / (3.5 + P)
-    s = (3.5 * 0.8 + P * GEMB.GSP_NEW_SNOW) / (3.5 + P)
-    @test out[6][1] ≈ d rtol = 1e-14
-    @test out[7][1] ≈ s rtol = 1e-14
-    @test out[5][1] ≈ _brun_dendritic_radius(d, s) rtol = 1e-14
-end
-
-@testset "Infinitesimal and zero snowfall leave the column unchanged" begin
-    mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05)
-    # A dendritic cell's radius is its Brun radius, as `calculate_grain_size` leaves it.
-    for P in (5e-324, 0.0), (gdn, r) in ((0.0, 1.0), (0.6, _brun_dendritic_radius(0.6, 0.4)))
-        col = _merge_column(; r, gdn, gsp=0.4)
-        before = deepcopy(col)
-        out = GEMB.calculate_accumulation(col..., _make_accum_cfs(precipitation=P,
-            temperature_air=250.0, wind_speed=0.0), mp, true)
-        for k in (1, 2, 3, 5, 6, 7, 8)     # T, dz, ρ, r, dendricity, sphericity, age
-            @test length(out[k]) == 5
-            @test all(isapprox.(out[k], before[k]; rtol=1e-12))
-        end
-        if P == 0
-            @test all(out[k] == before[k] for k in 1:8)
-        end
+    for k in 1:8
+        @test out[k][2:end] == before[k][2:end]                          # cells 2… untouched
     end
 end
 
-@testset "Merged snowfall conserves mass and energy" begin
+@testset "Snowfall onto dissimilar snow, firn or ice forms its own cell" begin
+    # 2 kg m-2 at 350 kg m-3 is 5.7 mm: above the 3-hour minimum mass, below column_dzmin.
+    mp = GEMB.ModelParameters(new_snow_method=:Constant350)
+    P, Ta = 2.0, 258.0
+    z = P / 350.0
+    @test GEMB.snow_layer_min_mass(10800.0) <= P && z < mp.column_dzmin
+    # Old coarse snow; fine-grained non-dendritic snow (dissimilar through dendricity alone);
+    # firn; ice.
+    for (ρ1, r1, s1) in ((350.0, 1.0, 0.8), (350.0, 0.06, 0.5), (870.0, 1.5, 0.9),
+        (917.0, GEMB.GRAIN_RADIUS_ICE, 0.9))
+        col = _layer_column(; ρ1, r1, s1)
+        before = deepcopy(col)
+        out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=P,
+            temperature_air=Ta, wind_speed=0.0), mp, true)
+        @test length(out[2]) == 11
+        @test (out[1][1], out[2][1], out[3][1], out[4][1]) == (Ta, z, 350.0, 0.0)
+        @test (out[5][1], out[6][1], out[7][1], out[8][1]) ==
+              (GEMB.RE_NEW_SNOW, GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW, 0.0)
+        for k in 1:8
+            @test out[k][2:end] == before[k]                                # old cell untouched
+        end
+        # Layer management keeps the thin cell (distinct, at least the minimum thickness) and
+        # leaves the old cell as it was.
+        lay = GEMB.manage_layer_thickness(out[1:8]..., mp, true; dt=10800.0, n_target=11)
+        for k in 1:8
+            @test lay[k][1] == out[k][1]
+            @test lay[k][2] == before[k][1]
+        end
+    end
+    # Below the minimum mass dissimilar snow merges by mass, into snow, firn or ice alike:
+    # repeated light snowfall onto ice lowers its density until it is snow.
+    P = 0.5
+    @test P < GEMB.snow_layer_min_mass(10800.0)
+    for (ρ1, r1) in ((350.0, 1.0), (870.0, 1.5), (917.0, 1.5))
+        out = GEMB.calculate_accumulation(_layer_column(; ρ1, r1)...,
+            _make_accum_cfs(dt=10800.0, precipitation=P, temperature_air=Ta, wind_speed=0.0), mp, true)
+        M = 0.05 * ρ1
+        @test length(out[2]) == 10
+        @test out[2][1] ≈ 0.05 + P / 350.0 rtol = 1e-14
+        @test out[3][1] ≈ (M + P) / (0.05 + P / 350.0) rtol = 1e-14
+        @test out[6][1] == 0.0
+        @test out[7][1] ≈ (M * 0.8 + P * GEMB.GSP_NEW_SNOW) / (M + P) rtol = 1e-14
+        @test out[5][1] ≈ _albedo_mean_radius(r1, M, GEMB.RE_NEW_SNOW, P) rtol = 1e-13
+    end
+end
+
+@testset "Repeated small snowfalls onto an old surface accumulate into a fresh layer" begin
+    # Four 3-hourly snowfalls of 2 kg m-2 (5.7 mm each at 350 kg m-3) onto old non-dendritic
+    # snow of 1 mm grains, with a grain-growth step and layer management between them. The
+    # first forms a fresh layer, the others join it; the old cell is never touched.
+    mp = GEMB.ModelParameters(new_snow_method=:Constant350)
+    col = _layer_column()
+    n = length(col[2])
+    cfs_dry = GEMB.ClimateForcingStep(; dt=10800.0, temperature_air=258.0)
+    for k in 1:4
+        # The old cell as it stands before this snowfall (the grain steps age it).
+        old_top = [c[k == 1 ? 1 : 2] for c in col]
+        out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=2.0,
+            temperature_air=258.0, wind_speed=0.0), mp, true)
+        out = GEMB.manage_layer_thickness(out[1:8]..., mp, true; dt=10800.0, n_target=n + 1)
+        col = collect(out[1:8])
+        @test length(col[2]) == n + 1
+        @test [c[2] for c in col] == old_top
+        r, d, s = GEMB.calculate_grain_size(col[1], col[2], col[3], col[4], col[5], col[6],
+            col[7], cfs_dry, mp)
+        col[5], col[6], col[7] = r, d, s
+    end
+    @test col[2][1] * col[3][1] ≈ 8.0 rtol = 1e-13
+    @test col[6][1] > 0.9                        # still dendritic fresh snow
+    @test col[5][1] < 0.06
+    # The albedo is that of the fresh layer, not of the old surface.
+    cfs = GEMB.ClimateForcingStep(; dt=10800.0, solar_zenith_angle=50.0)
+    @test GEMB.calculate_albedo(col[2], col[3], col[5], cfs, mp)[1] ==
+          GEMB._albedo_gardner(col[5][1], 0.0, 50.0, 0.0)
+end
+
+@testset "Trace and zero snowfall leave the surface albedo unchanged" begin
+    # Old snow, a thin fresh layer over old snow, a thin snow layer over ice, firn and ice.
+    mp = GEMB.ModelParameters(albedo_ice=0.35)
+    cfs_alb = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=60.0,
+        cloud_optical_thickness=2.0)
+    columns = (_layer_column(), _layer_column(dz1=0.008, ρ1=300.0, r1=0.05, d1=1.0, s1=0.5),
+        (c = _layer_column(dz1=0.006, ρ1=300.0, r1=0.3, s1=0.6); c[3][2:end] .= 917.0; c),
+        _layer_column(ρ1=870.0, r1=1.5), _layer_column(ρ1=917.0, r1=GEMB.GRAIN_RADIUS_ICE))
+    for col in columns, P in (5e-324, 0.0)
+        before = deepcopy(col)
+        α0 = GEMB.calculate_albedo(col[2], col[3], col[5], cfs_alb, mp)
+        out = GEMB.calculate_accumulation(deepcopy(col)..., _make_accum_cfs(dt=10800.0, precipitation=P,
+            temperature_air=250.0, wind_speed=0.0), mp, true)
+        @test length(out[2]) == 10
+        α1 = GEMB.calculate_albedo(out[2], out[3], out[5], cfs_alb, mp)
+        @test abs(α1[1] - α0[1]) <= 1e-12
+        @test abs(α1[2] - α0[2]) <= 1e-12
+        # Every field: grain state bit for bit, the rest to rounding.
+        @test (out[5], out[6], out[7]) == (before[5], before[6], before[7])
+        for k in (1, 2, 3, 8)
+            @test all(isapprox.(out[k], before[k]; rtol=1e-15))
+        end
+        P == 0 && @test all(out[k] == before[k] for k in 1:8)
+    end
+end
+
+@testset "Snowfall conserves mass and energy on every path" begin
     # Column mass and enthalpy gain exactly P and P·h(T_air), with h written from Cuffey &
-    # Paterson (2010) eq. 9.1 integrated (c = 152.5 + 7.122 T), or c·T under :constant.
-    for method in (:CuffeyPaterson, :constant), P in (0.01, 2.0, 8.0)
-        mp = GEMB.ModelParameters(new_snow_method=:Constant350, column_dzmin=0.05,
-            heat_capacity_method=method)
+    # Paterson (2010) eq. 9.1 integrated (c = 152.5 + 7.122 T), or c·T under :constant. P
+    # spans a merge below the minimum thickness, a thin new cell and a full new cell; the top
+    # cell is old snow, fresh snow, or ice.
+    for method in (:CuffeyPaterson, :constant), P in (0.01, 1.0, 2.0, 8.0, 20.0),
+        top in (:old, :fresh, :ice)
+        mp = GEMB.ModelParameters(new_snow_method=:Constant350, heat_capacity_method=method)
         h(T) = method === :constant ? mp.heat_capacity_ice * T : 152.5 * T + 7.122 * T^2 / 2
-        col = _merge_column(dz1=0.04)
-        col[1] .= [262.0, 261.0, 259.0, 258.0, 257.0]
+        col = top === :old ? _layer_column(dz1=0.04) :
+              top === :fresh ? _layer_column(dz1=0.04, r1=0.05, d1=1.0, s1=0.5, age1=0.1) :
+              _layer_column(dz1=0.04, ρ1=917.0, r1=GEMB.GRAIN_RADIUS_ICE)
+        col[1][1:5] .= [262.0, 261.0, 259.0, 258.0, 257.0]
         mass(c) = sum(c[2] .* c[3])
         enth(c) = sum(c[2] .* c[3] .* h.(c[1]))
         M0, E0 = mass(col), enth(col)
-        out = GEMB.calculate_accumulation(deepcopy(col)..., _make_accum_cfs(precipitation=P,
+        out = GEMB.calculate_accumulation(deepcopy(col)..., _make_accum_cfs(dt=10800.0, precipitation=P,
             temperature_air=248.0, wind_speed=0.0), mp, true)
-        @test length(out[2]) == 5
         @test mass(out) ≈ M0 + P rtol = 1e-14
         @test enth(out) ≈ E0 + P * h(248.0) rtol = 1e-13
+    end
+end
+
+@testset "Snow layering closes the budgets over a multi-event run" begin
+    # Twenty hourly days over bare ice: snowfalls of a trace, sub-minimum, thin-layer and
+    # full-cell size, separated by warm sunny spells that melt the snow back to ice. `verbose`
+    # makes `gemb_core` check mass and energy every step and `gemb` the whole-run mass budget;
+    # a violation throws. Both thermal solvers, both heat-capacity methods.
+    nh = 20 * 24
+    time = DateTime(2001, 7, 1) .+ Hour.(0:nh-1)
+    hour = [Dates.hour(t) for t in time]
+    day = [(Dates.value(t - time[1]) ÷ 86_400_000) for t in time]
+    cold = [d % 5 < 2 for d in day]                        # 2 cold, snowy days in every 5
+    P = zeros(nh)
+    for (i, d) in pairs(day)
+        cold[i] || continue
+        h = hour[i]
+        P[i] = h == 3 ? 5e-324 : h == 6 ? 0.5 : h in (9, 10) ? 2.0 : h == 15 ? 12.0 :
+               h in (18, 19, 20) ? 0.3 : 0.0
+    end
+    T = [c ? 263.0 : 276.0 + 3 * sin(2π * (h - 9) / 24) for (c, h) in zip(cold, hour)]
+    sza = [clamp(40.0 + 45.0 * abs(h - 12) / 12, 0.0, 95.0) for h in hour]
+    sw = [s < 90 ? 600.0 * cosd(s) : 0.0 for s in sza]
+    cf = initialize_forcing(time, T, fill(85000.0, nh), P, fill(4.0, nh), sw,
+        fill(290.0, nh), fill(500.0, nh); temperature_air_mean=268.0, wind_speed_mean=4.0,
+        precipitation_mean=sum(P) * 365 / 20, temperature_observation_height=2.0,
+        wind_observation_height=10.0, solar_zenith_angle=sza, cloud_optical_thickness=1.0,
+        shortwave_downward_diffuse=0.3 .* sw)
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()),
+        hc in (:CuffeyPaterson, :constant)
+        mp = ModelParameters(output_frequency=:all, thermal_solver=solver,
+            heat_capacity_method=hc, albedo_ice=0.40)
+        profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+        out = gemb(profile, cf, mp; verbose=true)
+        dz1 = parent(out[:dz])[1, :]
+        ρ1 = parent(out[:density])[1, :]
+        # The thin-layer path ran: snow cells over ice thinner than column_dzmin.
+        @test any((dz1 .< mp.column_dzmin) .& (ρ1 .< GEMB.DENSITY_PORE_CLOSEOFF))
+        @test all((dz1 .* ρ1 .>= GEMB.snow_layer_min_mass(3600.0) * (1 - 1e-12)) .||
+                  (ρ1 .>= GEMB.DENSITY_PORE_CLOSEOFF) .|| (dz1 .>= mp.column_dzmin))
+        @test sum(parent(out[:melt])) > 0
     end
 end
