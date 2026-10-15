@@ -41,7 +41,7 @@ using GEMB_ClimateForcing
     # The three pinned fields. `refreeze` replaced `runoff` when `test_1` moved to 2200 m:
     # the site now retains all of its meltwater, so `runoff` is identically zero and pinning
     # it would assert nothing. `refreeze` covers the same melt/percolation path with signal
-    # in it (141.9 kg m-2), which is the property the third pin was there for.
+    # in it (145.7 kg m-2), which is the property the third pin was there for.
     mean_albedo = Statistics.mean(parent(output[:albedo_broadband]))
     total_melt = sum(parent(output[:melt]))
     total_refreeze = sum(parent(output[:refreeze]))
@@ -50,7 +50,8 @@ using GEMB_ClimateForcing
     # third pin is watching the wrong field and this fails rather than passing quietly.
     @test sum(parent(output[:runoff])) == 0.0
 
-    # Reference = deterministic output on x86_64 (Linux). Tolerances bracket
+    # Reference = deterministic output on arm64 (macOS); see the latest re-pin below for the
+    # x86_64 offset. Tolerances bracket
     # the cross-platform FP evaluation-order spread amplified over the 75-cycle
     # spinup (~7.9M iterations): measured x86_64 CI vs arm64 is ~51 kg/m² for melt,
     # against the ~10000 kg/m² totals of the time — i.e. ~0.49% — and the windows are
@@ -143,6 +144,24 @@ using GEMB_ClimateForcing
     # The mass tolerances became relative-with-a-floor as a consequence of this re-pin: an
     # absolute window sized against ~10000 kg m-2 totals does not transfer to ~400. See the
     # note at the assertions.
+    #
+    # Re-pinned when GEMB_ClimateForcing.jl changed how it derives `cloud_optical_thickness` from
+    # the shortwave: τ is inverted against the FAO-56 Annex 3 clear sky at each step's sun angle,
+    # pressure and vapor pressure (eqs. 3-17 to 3-20) instead of the sun-angle-independent
+    # 0.75 + 2e-5·z; where the zenith angle exceeds 80° it is taken from the preceding inverted
+    # step of the same daylight period (the following one at dawn); and it is capped at 30
+    # instead of 100. This is a change to the *forcing*: every other layer of `test_1` is
+    # bit-identical, and running GEMB on the new stack with the old τ layer substituted
+    # reproduces the previous result to the last bit. The synthetic sky is clear, so the old
+    # derivation's low-sun inflation (median τ 4.2 at 80–85°, 19.5 at 85–90° on the hourly
+    # series) is gone and median τ is 0.7–0.9 in every zenith band. Less cloud makes the surface
+    # darker:
+    # albedo falls 0.0115 (0.884995 -> 0.873476), melt rises 5.50 kg m-2 (135.70 -> 141.20) and
+    # refreeze 5.39 (140.32 -> 145.70), all on arm64. Of the albedo change, the cap alone
+    # accounts for -0.0006, the FAO clear sky for a further -0.0066 and the low-sun hold for the
+    # remaining -0.0043. These references are arm64 (macOS) output; the x86_64 values have not
+    # been re-measured, and before this re-pin they sat 1.5 kg m-2 below arm64 in melt and
+    # refreeze and 3e-5 below in albedo.
     # The mass tolerances are `max(rtol·reference, floor)` rather than a bare `atol`, because
     # the quantity they have to bracket — cross-platform FP evaluation-order spread amplified
     # over the 75-cycle spinup — scales with the totals, while a fixed `atol` does not. The
@@ -160,19 +179,19 @@ using GEMB_ClimateForcing
     # and the pin becomes unfalsifiable-by-arithmetic — asserting agreement to a window
     # narrower than the FP noise it exists to tolerate. `MASS_ATOL_FLOOR = 2.0` kg m-2 holds a
     # usable window there; it binds below ~167 kg m-2, which includes the current references
-    # (137.2 and 141.9 kg m-2, where `rtol·reference` would be 1.65 and 1.70 kg m-2).
+    # (141.2 and 145.7 kg m-2, where `rtol·reference` would be 1.69 and 1.75 kg m-2).
     MASS_RTOL = 0.012
     MASS_ATOL_FLOOR = 2.0
     mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
 
-    @test mean_albedo ≈ 0.884967 atol=3e-3      # ~0.34% relative
-    @test total_melt ≈ 137.240467 atol=mass_tol(137.240467)
-    @test total_refreeze ≈ 141.858233 atol=mass_tol(141.858233)
+    @test mean_albedo ≈ 0.873476 atol=3e-3      # ~0.34% relative
+    @test total_melt ≈ 141.198938 atol=mass_tol(141.198938)
+    @test total_refreeze ≈ 145.703078 atol=mass_tol(145.703078)
 
     # Pin the tolerance policy itself, so a later edit cannot quietly reintroduce the failure
     # mode either half exists to prevent: a window that does not scale, or one that collapses
     # to zero. These are assertions about the *test*, which is why they are cheap and here.
-    @test mass_tol(137.240467) == MASS_ATOL_FLOOR      # the floor binds at the current references
+    @test mass_tol(141.198938) == MASS_ATOL_FLOOR      # the floor binds at the current references
     @test mass_tol(400.0) ≈ 4.8 atol=1e-12             # rtol binds above ~167 kg m-2
     @test mass_tol(0.0) == MASS_ATOL_FLOOR            # floor binds if a total ever goes to 0
     @test mass_tol(1e5) > MASS_ATOL_FLOOR             # and scales up with a larger total
