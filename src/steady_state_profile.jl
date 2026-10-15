@@ -84,7 +84,9 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
 
     # Surface values: true fresh snow, matching calculate_accumulation.
     ρ0 = clamp(fresh_snow_density(mp, cs.temperature_air_mean, cs.accumulation_effective,
-                                  cs.wind_speed_mean), 1.0, ρi)
+                                  cs.wind_speed_mean;
+                                  wind_observation_height=cs.wind_observation_height),
+               1.0, ρi)
 
     # ---------------------------------------------------------------------
     # Net ablation (or no burial at all): nothing is ever buried, so the column

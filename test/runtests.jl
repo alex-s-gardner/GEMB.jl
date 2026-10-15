@@ -33,6 +33,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Accumulation" begin
         include("test_calculate_accumulation.jl")
     end
+    @testset "Fresh Snow: van Kampenhout 2017" begin
+        include("test_fresh_snow_vankampenhout.jl")
+    end
     @testset "Melt" begin
         include("test_calculate_melt.jl")
     end

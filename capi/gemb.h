@@ -94,6 +94,7 @@ extern "C" {
 #define GEMB_NEW_SNOW_PAHAUT           6
 #define GEMB_NEW_SNOW_KASPERS          7
 #define GEMB_NEW_SNOW_KUIPERSMUNNEKE   8
+#define GEMB_NEW_SNOW_VANKAMPENHOUT2017 9
 
 /* emissivity_method */
 #define GEMB_EMISSIVITY_UNIFORM                    1

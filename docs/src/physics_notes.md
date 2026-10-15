@@ -164,6 +164,7 @@ all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growt
 | `:FaustoFit` | `362.1 + 2.78·(T_air − 273.15)`, the regression itself, clamped to `[1, ρᵢ]` since it reaches zero near 143 K |
 | `:Pahaut` | `max(50, 109 + 6·(T_air − 273.15) + 26·√U)` |
 | `:Kaspers`, `:KuipersMunneke` | Temperature-dependent polar fits |
+| `:vanKampenhout2017` | `ρ_T(T_air) + 266.861·(½(1 + tanh(U₁₀/5)))^8.8`, van Kampenhout et al. (2017) eqs. 2–4 |
 
 `:Pahaut` is Pahaut (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35. It is
 the only option fitted to alpine seasonal snow rather than to a polar ice sheet, and it is
@@ -173,6 +174,16 @@ wind-packed than the katabatic-scoured surfaces the Greenland and Antarctic fits
 regressed on. Prefer it for temperate and mid-latitude glaciers, where the polar fits
 overestimate fresh-snow density, suppressing new-snow albedo and speeding its burial. The
 published 50 kg m⁻³ floor is retained; it binds below about −10 °C in calm air.
+
+`:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017, p. 2587).
+`ρ_T` is Anderson (1976) between −15 and +2 °C, constant at 169.16 kg m⁻³ above +2 °C, and
+`−3.8328·ΔT − 0.0333·ΔT²` at or below −15 °C, so it rises again in very cold air. The wind
+term is defined on the 10 m wind: the forcing wind is carried from `wind_observation_height`
+to 10 m through a neutral log profile over the surface roughness the turbulent fluxes use.
+The formula spans 50–436 kg m⁻³. It is a deposition density, not a near-surface density, so
+it needs a settling scheme: with `densification_method = :Crocus` the snow settles within
+days, while with an accumulation-driven scheme the top metre stays near the deposition density
+for years. It keeps the default fresh-grain properties.
 
 `:Fausto`, `:FaustoFit` and `:Pahaut` also select the Crocus (Vionnet et al., 2012)
 wind-dependent fresh-grain dendricity and sphericity, those being what Crocus itself pairs

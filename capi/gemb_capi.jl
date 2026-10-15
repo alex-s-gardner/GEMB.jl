@@ -97,7 +97,7 @@ const OPTION_VALUES = (
     (:accumulation, :precipitation),
     (:arithmetic, :arrhenius),
     (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit, :Pahaut, :Kaspers,
-     :KuipersMunneke),
+     :KuipersMunneke, :vanKampenhout2017),
     (:uniform, :grain_radius_threshold, :grain_radius_w_threshold),
     (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019),
     (:constant, :CuffeyPaterson),

@@ -386,6 +386,9 @@ author-year mentions to full entries in one place.
   Nationale 96, Météo-France. (`new_snow_method = :Pahaut`)
 - Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
   seasonal snow. *J. Glaciol.* 43, 26-41. (`thermal_conductivity_method = :Sturm`)
+- van Kampenhout, L., et al. (2017). Improving the representation of polar snow and firn in
+  the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
+  (`new_snow_method = :vanKampenhout2017`)
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
   sheet. *The Cryosphere* 14, 3785-3810. (`thermal_conductivity_method`,
@@ -425,7 +428,11 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `:Pahaut` is the alpine-seasonal-snow alternative to those polar fits — Pahaut (1975) as
     # Crocus implements it, temperature- and wind-dependent at the instantaneous timestep, and
     # much lighter over the same range. Prefer it for temperate and mid-latitude glaciers.
-    # See `fresh_snow_density`.
+    # `:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017,
+    # eqs. 2-4): a temperature term plus a 10 m wind term, evaluated at the instantaneous
+    # timestep, with the default fresh-grain properties. It is a deposition density, so it
+    # needs a settling scheme (`densification_method = :Crocus`) to reach observed
+    # near-surface densities. See `fresh_snow_density`.
     new_snow_method::Symbol = :Constant350
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
