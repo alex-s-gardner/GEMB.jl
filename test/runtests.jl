@@ -96,6 +96,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Redeposition: Keenan 2021" begin
         include("test_redeposition.jl")
     end
+    @testset "Fresh-Snow Options: Whole Model" begin
+        include("test_fresh_snow_design.jl")
+    end
 
     @testset "Hydrology" begin
         include("test_hydrology.jl")
