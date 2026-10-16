@@ -179,8 +179,9 @@ Snowfall follows the layering of Crocus (Vionnet et al., 2012, p. 778; Lafaysse 
 eq. 11, p. 6278): it joins the top cell only when that cell is similar snow, and otherwise
 forms a layer of its own. Snow of mass `P` and depth `z = P/ρ_new` becomes a new top cell with
 fresh-snow properties when `z > mp.column_dzmin`, or when `P` is at least
-[`snow_layer_min_mass`](@ref)`(cfs.dt)` and it is distinct from the top cell ([`snow_layers_distinct`](@ref) at the [`snow_layer_distance`](@ref)
-between the fresh snow and the top cell). Over firn or ice the distance is infinite, so such
+[`snow_layer_min_mass`](@ref)`(cfs.dt)` and it is distinct from the top cell
+([`snow_layers_distinct`](@ref) at the [`snow_layer_distance`](@ref) `D(n, 1)` of the top cell
+and the fresh snow). Over firn or ice the distance is infinite, so such
 snow always forms its own cell. The new cell may be thinner than `mp.column_dzmin`;
 [`manage_layer_thickness`](@ref) keeps it while it stays distinct from the cell below and holds
 at least that mass.
@@ -277,10 +278,11 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
             # Fresh snow forms its own top cell when it is deeper than `column_dzmin`, or when
             # it holds at least `snow_layer_min_mass` and is distinct from the top cell
-            # (always so over firn or ice); see the docstring.
-            D = snow_layer_distance(dfall, sfall, refall, false, 0.0, density_new_snow,
-                grain_dendricity[1], grain_sphericity[1], grain_radius[1],
-                water[1] > WATER_TOLERANCE, age[1], density[1])
+            # (always so over firn or ice); see the docstring. D(n, 1) takes the top cell as
+            # the upper layer and the new snow as the lower.
+            D = snow_layer_distance(grain_dendricity[1], grain_sphericity[1], grain_radius[1],
+                water[1] > WATER_TOLERANCE, age[1], density[1],
+                dfall, sfall, refall, false, 0.0, density_new_snow)
             if (z_snow > mp.column_dzmin + D_TOLERANCE) ||
                ((cfs.precipitation >= snow_layer_min_mass(cfs.dt)) &&
                 snow_layers_distinct(z_snow, D, mp))

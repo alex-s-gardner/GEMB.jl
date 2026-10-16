@@ -527,10 +527,23 @@ end
 
 # Snow layering after Crocus (see `calculate_accumulation` and `snow_layer_distance`).
 # `_brun_dendritic_radius` is the Brun et al. (1992) dendritic grain diameter, halved, as GEMB
-# carries it; `_crocus_distance` is Lafaysse et al. (2026) eq. 7 with d_opt = 2r [m].
+# carries it. `_crocus_optical_diameter` and `_crocus_distance` are Lafaysse et al. (2026)
+# eqs. D1/D5 (pp. 6306–6307) and eqs. 7–8 (p. 6277) in BigFloat, with layer i above layer j = i+1,
+# present wetness for δ_h, and GEMB's effective radius r [mm] as half the Brun grain size.
 _brun_dendritic_radius(d, s) = 0.1 * (d / 0.99 + (1 - d / 0.99) * (3s / 0.99 + 4(1 - s / 0.99))) / 2
-_crocus_distance(d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) = abs(a1 - a2) < 300 ?
-    50 * (abs(d1 - d2) + abs(s1 - s2) + 2000 * abs(2r1 / 1000 - 2r2 / 1000) + (w1 != w2)) : 200.0
+function _crocus_optical_diameter(δ, S, r)
+    δ, S, r = big.((δ, S, r))
+    δ > 0 && return big"1e-4" * (δ + (1 - δ) * (4 - S))            # eq. D1
+    g = 2r / 1000                                                  # Brun grain size [m]
+    return g * S + (1 - S) * (big"4e-4" + g) / 2                   # eq. D5
+end
+function _crocus_distance(δi, Si, ri, wi, Ai, δj, Sj, rj, wj, Aj)
+    big(Ai) - big(Aj) < 300 || return big"200"                     # eq. 7, second line
+    δ_h = wi != wj ? 1 : 0                                         # eq. 8
+    return 50 * (abs(big(Sj) - big(Si)) +
+                 2000 * abs(_crocus_optical_diameter(δj, Sj, rj) - _crocus_optical_diameter(δi, Si, ri)) +
+                 δ_h)
+end
 # Mass-weighted r^0.07 (Gardner & Sharp 2010 eq. 7 conserved), in BigFloat.
 _albedo_mean_radius(r1, M1, r2, M2) =
     Float64(((big(M1) * big(r1)^big"0.07" + big(M2) * big(r2)^big"0.07") / (big(M1) + big(M2)))^(1 / big"0.07"))
@@ -545,24 +558,85 @@ function _layer_column(; dz1=0.05, ρ1=350.0, r1=1.0, d1=0.0, s1=0.8, age1=100.0
         [s1; fill(0.8, n - 1)], [age1; fill(100.0, n - 1)])
 end
 
-@testset "Snow layer distance and distinctness (Crocus eq. 7, 11)" begin
+@testset "Optical diameter (Crocus eqs. D1, D5)" begin
+    # Dendritic, eq. D1: 1e-4·(δ + (1 − δ)(4 − S)) m; fresh snow (δ = 1) is 1e-4 m whatever S.
+    for (δ, S) in ((1.0, 0.5), (1.0, 0.9), (0.98, 0.55), (0.5, 0.3), (1e-6, 0.7))
+        @test GEMB.optical_diameter(δ, S, 123.0) ≈ Float64(_crocus_optical_diameter(δ, S, 0)) rtol = 1e-15
+    end
+    @test GEMB.optical_diameter(1.0, 0.5, 0.05) == 1e-4
+    # 0.5, 0.3: 1e-4·(0.5 + 0.5·3.7) = 2.35e-4 m; δ → 0⁺ tends to 1e-4·(4 − S).
+    @test GEMB.optical_diameter(0.5, 0.3, 0.0) ≈ 2.35e-4 rtol = 1e-15
+    @test GEMB.optical_diameter(1e-9, 0.3, 0.0) ≈ 3.7e-4 rtol = 1e-8
+    # Non-dendritic, eq. D5 with Brun grain size g = 2r: g at S = 1, (4e-4 + g)/2 at S = 0.
+    for (S, r) in ((0.0, 0.5), (0.3, 0.06), (0.5, 0.2), (0.8, 1.0), (1.0, 1.5))
+        @test GEMB.optical_diameter(0.0, S, r) ≈ Float64(_crocus_optical_diameter(0, S, r)) rtol = 1e-15
+    end
+    @test GEMB.optical_diameter(0.0, 1.0, 1.5) ≈ 3e-3 rtol = 1e-15
+    @test GEMB.optical_diameter(0.0, 0.0, 0.5) ≈ 7e-4 rtol = 1e-15            # (4e-4 + 1e-3)/2
+    # r 1 mm, S 0.8: 2e-3·0.8 + 0.2·(4e-4 + 2e-3)/2 = 1.84e-3 m.
+    @test GEMB.optical_diameter(0.0, 0.8, 1.0) ≈ 1.84e-3 rtol = 1e-15
+    # Dendricity at or below GDN_TOLERANCE is non-dendritic, as in calculate_grain_size.
+    @test GEMB.optical_diameter(GEMB.GDN_TOLERANCE, 0.5, 0.2) == GEMB.optical_diameter(0.0, 0.5, 0.2)
+    # Eq. D1 is discontinuous at δ = 0: at the Brun transition size g = 1e-4·(4 − S) (r half of
+    # it in mm), eq. D5 gives more than the dendritic limit 1e-4·(4 − S).
+    S = 0.5
+    @test GEMB.optical_diameter(0.0, S, 0.5 * 0.1 * (4 - S)) ≈ 3.625e-4 rtol = 1e-14
+end
+
+@testset "Snow layer distance and distinctness (Crocus eqs. 7, 8, 11)" begin
     mp = GEMB.ModelParameters()
-    for (d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) in (
+    # Upper layer i first, lower layer i+1 second, against the BigFloat reference.
+    for (di, si, ri, wi, ai, dj, sj, rj, wj, aj) in (
         (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.8, 1.0, false, 100.0),
-        (1.0, 0.5, 0.05, false, 0.0, 0.98, 0.55, 0.0611, true, 0.25),
+        (0.98, 0.55, 0.0611, true, 0.25, 1.0, 0.5, 0.05, false, 0.0),
         (0.0, 0.3, 0.2, true, 10.0, 0.0, 0.3, 0.2, true, 20.0),
         (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.5, 0.06, false, 3.0),     # fine non-dendritic
-        (1.0, 0.5, 0.05, false, 0.0, 0.0, 0.9, 0.4, false, 400.0))
-        D = GEMB.snow_layer_distance(d1, s1, r1, w1, a1, 300.0, d2, s2, r2, w2, a2, 400.0)
-        @test D ≈ _crocus_distance(d1, s1, r1, w1, a1, d2, s2, r2, w2, a2) rtol = 1e-14
-        @test D == GEMB.snow_layer_distance(d2, s2, r2, w2, a2, 400.0, d1, s1, r1, w1, a1, 300.0)
+        (0.6, 0.4, 0.09, false, 30.0, 0.0, 0.9, 0.4, false, 400.0),
+        (0.0, 0.9, 0.4, false, 400.0, 1.0, 0.5, 0.05, false, 0.0))     # ≥ 300 d older on top
+        D = GEMB.snow_layer_distance(di, si, ri, wi, ai, 300.0, dj, sj, rj, wj, aj, 400.0)
+        @test D ≈ Float64(_crocus_distance(di, si, ri, wi, ai, dj, sj, rj, wj, aj)) rtol = 1e-14
     end
+    # Hand values. Fresh snow (d 1e-4 m, S 0.5) over old snow (1.84e-3 m, S 0.8):
+    # 50·(0.3 + 2000·1.74e-3) = 189.
+    @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
+        0.0, 0.8, 1.0, false, 100.0, 350.0) ≈ 189 rtol = 1e-13
+    # Over fine non-dendritic snow (r 0.06 mm, S 0.5): d = 1.2e-4·0.5 + 0.5·5.2e-4/2 = 1.9e-4 m,
+    # 50·2000·9e-5 = 9.
+    @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
+        0.0, 0.5, 0.06, false, 3.0, 300.0) ≈ 9 rtol = 1e-12
+    # Two dendritic layers, one wet: d = 1e-4·(0.98 + 0.02·3.45) = 1.049e-4 m against 1e-4 m,
+    # 50·(0.05 + 2000·4.9e-6 + 1) = 52.99.
+    @test GEMB.snow_layer_distance(0.98, 0.55, 0.0611, true, 0.25, 300.0,
+        1.0, 0.5, 0.05, false, 0.0, 300.0) ≈ 52.99 rtol = 1e-13
+    # Identical layers: 0. Dendricity enters only through the optical diameter, so two fresh
+    # layers of different sphericity differ by 50·ΔS only.
     @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
         1.0, 0.5, 0.05, false, 0.0, 300.0) == 0
+    @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
+        1.0, 0.7, 0.05, false, 0.0, 300.0) ≈ 50 * 0.2 rtol = 1e-14
+
+    # δ_h (eq. 8): 1 when exactly one layer is wet.
+    D(wi, wj) = GEMB.snow_layer_distance(0.0, 0.5, 0.3, wi, 5.0, 300.0, 0.0, 0.5, 0.3, wj, 9.0, 300.0)
+    @test D(false, false) == D(true, true) == 0
+    @test D(true, false) == D(false, true) == 50
+
+    # Age gate (eq. 7) on A_i − A_{i+1}, the upper minus the lower layer: 200 at and above 300 d.
+    Dage(ai, aj) = GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, ai, 300.0,
+        0.0, 0.8, 1.0, false, aj, 350.0)
+    @test Dage(300.0, 0.0) == 200
+    @test Dage(1000.0, 10.0) == 200
+    @test Dage(prevfloat(300.0), 0.0) ≈ 189 rtol = 1e-13
+    @test Dage(0.0, 1000.0) ≈ 189 rtol = 1e-13      # younger over older: the formula
+    # Snowfall: D(n, 1) takes the surface layer as i, so a surface 300 days old gets 200.
+    @test GEMB.snow_layer_distance(0.0, 0.8, 1.0, false, 300.0, 350.0,
+        1.0, 0.5, 0.05, false, 0.0, 300.0) == 200
+
     # Firn or ice on either side: never aggregated.
     for ρ in (GEMB.DENSITY_PORE_CLOSEOFF, 870.0, 917.0)
         @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, 300.0,
             1.0, 0.5, 0.05, false, 0.0, ρ) == Inf
+        @test GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 0.0, ρ,
+            1.0, 0.5, 0.05, false, 0.0, 300.0) == Inf
         @test GEMB.snow_layers_distinct(1e-9, Inf, mp)
     end
     # z < 5·z*/D aggregates, z* = column_dztop.
@@ -581,8 +655,8 @@ end
     col = _layer_column(dz1=0.02, ρ1=150.0, r1=r1, d1=d1, s1=s1, age1=0.125, T1=262.0)
     before = deepcopy(col)
     P, Ta = 2.0, 255.0
-    D = _crocus_distance(GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW, GEMB.RE_NEW_SNOW, false, 0.0,
-        d1, s1, r1, false, 0.125)
+    D = _crocus_distance(d1, s1, r1, false, 0.125,
+        GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW, GEMB.RE_NEW_SNOW, false, 0.0)
     @test D * (P / 150.0) < 5 * mp.column_dztop
     out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=P,
         temperature_air=Ta, wind_speed=0.0), mp, true)
@@ -609,9 +683,8 @@ end
     P, Ta = 2.0, 258.0
     z = P / 350.0
     @test GEMB.snow_layer_min_mass(10800.0) <= P && z < mp.column_dzmin
-    # Old coarse snow; fine-grained non-dendritic snow (dissimilar through dendricity alone);
-    # firn; ice.
-    for (ρ1, r1, s1) in ((350.0, 1.0, 0.8), (350.0, 0.06, 0.5), (870.0, 1.5, 0.9),
+    # Old coarse snow (D = 189); firn; ice.
+    for (ρ1, r1, s1) in ((350.0, 1.0, 0.8), (870.0, 1.5, 0.9),
         (917.0, GEMB.GRAIN_RADIUS_ICE, 0.9))
         col = _layer_column(; ρ1, r1, s1)
         before = deepcopy(col)
@@ -632,6 +705,29 @@ end
             @test lay[k][2] == before[k][1]
         end
     end
+    # Fine-grained non-dendritic snow of the fresh snow's sphericity (r 0.06 mm, S 0.5) is
+    # similar under eq. 7: D(n, 1) = 9 (optical diameters 1.9e-4 and 1e-4 m), and D·z = 0.051 is
+    # under 5·z* = 0.25. The snowfall merges by mass and the cell stays non-dendritic.
+    col = _layer_column(ρ1=350.0, r1=0.06, s1=0.5, age1=3.0)
+    before = deepcopy(col)
+    D = _crocus_distance(0.0, 0.5, 0.06, false, 3.0,
+        GEMB.GDN_NEW_SNOW, GEMB.GSP_NEW_SNOW, GEMB.RE_NEW_SNOW, false, 0.0)
+    @test Float64(D) ≈ 9 rtol = 1e-12
+    @test D * z < 5 * mp.column_dztop
+    out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=P,
+        temperature_air=Ta, wind_speed=0.0), mp, true)
+    M = 0.05 * 350.0
+    @test length(out[2]) == 10
+    @test out[2][1] ≈ 0.05 + z rtol = 1e-14
+    @test out[3][1] ≈ (M + P) / (0.05 + z) rtol = 1e-14
+    @test out[6][1] == 0.0
+    @test out[7][1] ≈ (M * 0.5 + P * GEMB.GSP_NEW_SNOW) / (M + P) rtol = 1e-14
+    @test out[5][1] ≈ _albedo_mean_radius(0.06, M, GEMB.RE_NEW_SNOW, P) rtol = 1e-13
+    @test out[8][1] ≈ 3.0 * M / (M + P) rtol = 1e-14
+    for k in 1:8
+        @test out[k][2:end] == before[k][2:end]
+    end
+
     # Below the minimum mass dissimilar snow merges by mass, into snow, firn or ice alike:
     # repeated light snowfall onto ice lowers its density until it is snow.
     P = 0.5

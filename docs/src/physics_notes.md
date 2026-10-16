@@ -204,14 +204,16 @@ speed where they are available and the climatological means in the steady-state 
 initial guess is well defined at every setting.
 
 Snowfall is layered as in Crocus (Vionnet et al., 2012, p. 778; Lafaysse et al., 2026,
-eqs. 7–11). Fresh snow joins the top cell only if the two are similar: the Crocus distance
-`D = 50·(|Δd| + |Δs| + 2000·|Δd_opt| + δ_w)` of dendricity, sphericity, optical diameter `2r`
-and wetness (200 for
-layers 300 days or more apart, infinite against firn or ice) is small enough that a layer `z`
-thick is not distinct, `D·z < 5·column_dztop`. Otherwise snowfall of at least
+eqs. 7–11). Fresh snow joins the top cell only if the two are similar: the Crocus distance of
+eq. 7, `D = 50·(|ΔS| + 2000·|Δd| + δ_h)` of sphericity `S`, optical diameter `d` [m] (eqs. D1
+and D5, from dendricity, sphericity and grain size) and wetting (present liquid water stands in
+for Crocus's wetting history), is 200 when the upper layer is 300 days or more older than the
+lower one and infinite against firn or ice. Snowfall merges when it is small enough that a
+layer `z` thick is not distinct, `D·z < 5·column_dztop`. Otherwise snowfall of at least
 `snow_layer_min_mass(dt)` (1 kg m-2 per 3 hours of forcing step; Crocus's own minimum is a 5 mm
-surface layer) forms its own top cell, even one thinner than `column_dzmin`, and `manage_layer_thickness` keeps it while it stays
-distinct from the cell below and holds that mass. Merges conserve mass and enthalpy and mix the
+surface layer) forms its own top cell, even one thinner than `column_dzmin`, and
+`manage_layer_thickness` keeps it while it stays distinct from the cell below and holds that
+mass. Merges conserve mass and enthalpy and mix the
 grain state by mass (sphericity mass-weighted; dendricity too if both are dendritic; otherwise a
 non-dendritic radius that conserves the mass-weighted Gardner–Sharp pure-snow albedo). A
 surface snow layer over firn or ice that melts or sublimates below that mass is absorbed at the

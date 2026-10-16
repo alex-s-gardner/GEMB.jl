@@ -195,6 +195,10 @@ const SNOW_LAYER_OPTICAL_WEIGHT = 2000.0    # eq. 7, per metre of optical diamet
 const SNOW_LAYER_AGE_LIMIT = 300.0          # eq. 7: layers this many days apart are dissimilar [d]
 const SNOW_LAYER_DISTANCE_AGED = 200.0      # eq. 7: the distance of such layers
 const SNOW_LAYER_AGGREGATION_FACTOR = 5.0   # eq. 11: a layer z thick aggregates if z < 5·z*/D
+# Optical diameter of Crocus (Lafaysse et al., 2026, Appendix D, pp. 6306–6307) [m]: the unit of
+# the dendritic form, eq. D1, and the constant of the non-dendritic form, eq. D5.
+const OPTICAL_DIAMETER_DENDRITIC_UNIT = 1e-4
+const OPTICAL_DIAMETER_NONDENDRITIC_OFFSET = 4e-4
 # Least matrix mass of a snow layer of its own, per second of forcing step [kg m-2 s-1]: 1 kg m-2
 # for a 3-hour step; see `snow_layer_min_mass`.
 const SNOW_LAYER_MIN_MASS_RATE = 1.0 / 10800.0
@@ -226,28 +230,52 @@ eq. 11, p. 6278). GEMB bounds the mass instead, in proportion to the step:
 @inline snow_layer_min_mass(dt::Real) = SNOW_LAYER_MIN_MASS_RATE * dt
 
 """
-    snow_layer_distance(d1, s1, r1, wet1, age1, density1,
-                        d2, s2, r2, wet2, age2, density2) -> D
+    optical_diameter(dendricity, sphericity, grain_radius) -> d [m]
 
-Dissimilarity of two snow layers. Vionnet et al. (2012, p. 778) define it as the sum of the
-differences in dendricity, sphericity and grain size, each weighted by a coefficient; Lafaysse
-et al. (2026, eqs. 7–8, p. 6277) publish the coefficients for Crocus's present state variables
-(sphericity, optical diameter and a wetting-history tracker), which carry no dendricity. Written
-for GEMB's state, which does:
+Optical diameter of snow in Crocus's state, from GEMB's dendricity `δ`, sphericity `S` and
+effective grain radius `grain_radius` [mm] (Lafaysse et al., 2026, Appendix D, pp. 6306–6307):
 
-    D = 50·(|d₁ − d₂| + |s₁ − s₂| + 2000·|d_opt,1 − d_opt,2| + δ_w)   if |age₁ − age₂| < 300 d,
-    D = 200                                                          otherwise,
+    d = 1e-4·(δ + (1 − δ)·(4 − S))               dendritic, δ > 0          (eq. D1)
+    d = g·S + (1 − S)·(4e-4 + g)/2               non-dendritic, δ = 0      (eq. D5)
 
-with dendricity `d`, sphericity `s`, optical diameter `d_opt = 2r` [m] from the effective grain
-radius `r` [mm] (so that term is `4·|r₁ − r₂|` in mm), and `δ_w = 1` when exactly one of the two
-layers holds liquid water (`wet`), else 0. Lafaysse et al. normalize each term by its range (1
-for sphericity, 5e-4 m for the optical diameter); dendricity also spans 0–1 and takes the
-sphericity's weight. Without it, fresh dendritic snow would count as similar to fine-grained
-non-dendritic snow of the same sphericity. Crocus's `δ_h` compares a tracker of past wetting;
-GEMB carries none, so present liquid water stands in for it. Eq. 7 states the age condition as
-`A_i − A_{i+1} < 300`, which an upper layer younger than the one below always satisfies; the
-text says it keeps recent snow apart from permanent snow, so it is applied here to the age
-difference in either order.
+Eq. D1 is the Brun et al. (1992) relation (Vionnet et al., 2012, eq. 13) and reads dendricity
+and sphericity only. Eq. D5 is the non-dendritic form of Crocus's default metamorphism option
+B21, with `g` the Brun grain size [m], which GEMB carries as twice the effective radius,
+`g = 2e-3·grain_radius`. A cell is dendritic when its dendricity exceeds `GDN_TOLERANCE`, as in
+[`calculate_grain_size`](@ref).
+"""
+@inline function optical_diameter(dendricity::Float64, sphericity::Float64,
+    grain_radius::Float64)
+    if dendricity > GDN_TOLERANCE
+        return OPTICAL_DIAMETER_DENDRITIC_UNIT * (dendricity + (1 - dendricity) * (4 - sphericity))
+    end
+    g = 2e-3 * grain_radius
+    return g * sphericity + (1 - sphericity) * (OPTICAL_DIAMETER_NONDENDRITIC_OFFSET + g) / 2
+end
+
+"""
+    snow_layer_distance(d_up, s_up, r_up, wet_up, age_up, density_up,
+                        d_lo, s_lo, r_lo, wet_lo, age_lo, density_lo) -> D
+
+Dissimilarity `D(i, i+1)` of an upper snow layer `i` and the layer `i+1` below it, Lafaysse et al.
+(2026) eqs. 7–8 (p. 6277):
+
+    D = 50·(|S_{i+1} − S_i| + 2000·|d_{i+1} − d_i| + δ_h(i, i+1))   if A_i − A_{i+1} < 300,
+    D = 200                                                        otherwise,
+
+with sphericity `S` (`s_*`), optical diameter `d` [m] from [`optical_diameter`](@ref) of each
+layer's dendricity, sphericity and effective radius [mm] (`d_*`, `s_*`, `r_*`), and age `A`
+[days since snowfall] (`age_*`). The 2000 m⁻¹ normalizes the ≈ 5e-4 m range of `d` to the range
+1 of `S` (p. 6277).
+
+- **Age.** The condition is on the signed difference, as printed. For two layers in place, an
+  upper layer younger than the one below always satisfies it. For snowfall, `D(n, 1)` takes the
+  surface layer as `i` and the new snow as `i+1`, the substitution Lafaysse et al. give for
+  aggregating snowfall with the surface layer (p. 6279), so `D = 200` when the surface layer is
+  300 days or more old: recent snow is kept apart from permanent snow (p. 6278).
+- **Wetting.** `δ_h = 1` when exactly one of the two layers has held liquid water at any time
+  (`h > 1` in Crocus's history tracker, Table 2, eq. 8). GEMB carries no wetting history, so
+  `δ_h` here is 1 when exactly one layer holds liquid water now (`wet_*`), else 0.
 
 Snow is not aggregated with firn or ice (Lafaysse et al., 2026, p. 6279, for glaciers; Crocus's
 default threshold is 850 kg m-3, GEMB's firn boundary is `DENSITY_PORE_CLOSEOFF`, the density at
@@ -255,14 +283,15 @@ which [`calculate_albedo`](@ref) also stops treating a cell as snow): `D = Inf` 
 is at or above it. The one exception is snowfall below [`snow_layer_min_mass`](@ref), too light
 to form a cell, which [`calculate_accumulation`](@ref) mixes into whatever the top cell is.
 """
-@inline function snow_layer_distance(d1::Float64, s1::Float64, r1::Float64, wet1::Bool,
-    age1::Float64, density1::Float64, d2::Float64, s2::Float64, r2::Float64, wet2::Bool,
-    age2::Float64, density2::Float64)
-    (max(density1, density2) >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE) && return Inf
-    abs(age1 - age2) < SNOW_LAYER_AGE_LIMIT || return SNOW_LAYER_DISTANCE_AGED
-    optical = SNOW_LAYER_OPTICAL_WEIGHT * abs(2e-3 * r1 - 2e-3 * r2)
+@inline function snow_layer_distance(d_up::Float64, s_up::Float64, r_up::Float64,
+    wet_up::Bool, age_up::Float64, density_up::Float64, d_lo::Float64, s_lo::Float64,
+    r_lo::Float64, wet_lo::Bool, age_lo::Float64, density_lo::Float64)
+    (max(density_up, density_lo) >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE) && return Inf
+    age_up - age_lo < SNOW_LAYER_AGE_LIMIT || return SNOW_LAYER_DISTANCE_AGED
+    optical = SNOW_LAYER_OPTICAL_WEIGHT *
+              abs(optical_diameter(d_lo, s_lo, r_lo) - optical_diameter(d_up, s_up, r_up))
     return SNOW_LAYER_DISTANCE_SCALE *
-           (abs(d1 - d2) + abs(s1 - s2) + optical + (wet1 != wet2 ? 1.0 : 0.0))
+           (abs(s_lo - s_up) + optical + (wet_up != wet_lo ? 1.0 : 0.0))
 end
 
 """
