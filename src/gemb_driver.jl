@@ -7,6 +7,24 @@ _forcing_or_parameter(layer::AbstractVector, value::Float64, tdim) =
     all(iszero, layer) ? DimArray(Fill(value, length(tdim)), (tdim,)) : layer
 
 """
+    _parameter_layer(layer, value, name, tdim) -> DimArray
+
+A `Fill` of the `ModelParameters` scalar `value` on `tdim`, after checking that the forcing
+layer `name` holds that same value at every step. The run takes `name` from
+`ModelParameters`, so a forcing layer that differs anywhere would otherwise be discarded
+without notice; that is an `ArgumentError`.
+"""
+function _parameter_layer(layer::AbstractVector, value::Float64, name::Symbol, tdim)
+    i = findfirst(!=(value), layer)
+    i === nothing || throw(ArgumentError(
+        "forcing layer `$name` is $(layer[i]) at step $i, but `ModelParameters.$name` is " *
+        "$value. `gemb` takes `$name` from `ModelParameters` and would discard the forcing " *
+        "layer; build the forcing with `$name = $value` or set `ModelParameters.$name` to " *
+        "match it."))
+    return DimArray(Fill(value, length(tdim)), (tdim,))
+end
+
+"""
     gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
          verbose=false, thermal_workspace=ThermalWorkspace(),
          column_workspace=ColumnWorkspace())
@@ -87,12 +105,15 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.shortwave_downward,
         climate_forcing.longwave_downward,
         climate_forcing.vapor_pressure,
-        DimArray(Fill(mp.black_carbon_snow, n), (tdim,)),
-        DimArray(Fill(mp.black_carbon_ice, n), (tdim,)),
+        _parameter_layer(climate_forcing.black_carbon_snow, mp.black_carbon_snow,
+            :black_carbon_snow, tdim),
+        _parameter_layer(climate_forcing.black_carbon_ice, mp.black_carbon_ice,
+            :black_carbon_ice, tdim),
         cloud_optical_thickness,
         solar_zenith_angle,
         shortwave_downward_diffuse,
-        DimArray(Fill(mp.cloud_fraction, n), (tdim,)),
+        _parameter_layer(climate_forcing.cloud_fraction, mp.cloud_fraction, :cloud_fraction,
+            tdim),
         climate_forcing.time_step,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
