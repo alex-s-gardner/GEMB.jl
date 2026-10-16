@@ -473,15 +473,14 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # quadratics. `:Calonne2019`, `:Calonne2019Air` and `:Marchenko2019` are the
     # temperature-dependent forms Vandecrux et al. (2020, RetMIP Sects. 5.1 and 7) recommend
     # over the older fits, having attributed part of a multi-model cold bias at Summit to
-    # conductivity parameterization. `:Calonne2019` is the default and is what the Community
-    # Firn Model ships (`conductivity: "Calonne2019"`); IMAU-FDM hardcodes the same equation.
-    # `:Sturm` gives the lowest conductivity of the five — 0.56 against `:Calonne2019`'s 0.91
-    # W m-1 K-1 at 243 K and ρ = 550 — so selecting it damps the seasonal wave.
-    # The two 2019 forms differ only in whether the snow branch carries the air-conductivity
-    # ratio (`:Calonne2019Air` does, matching IMAU-FDM; `:Calonne2019` does not, matching the
-    # Community Firn Model), which matters only for cold, low-density snow. See
-    # `thermal_conductivity`.
-    thermal_conductivity_method::Symbol = :Calonne2019
+    # conductivity parameterization. `:Calonne2019Air`, the default, is Calonne et al. (2019)
+    # eq. 5 as published (p. 13,087), with the air-conductivity ratio on its snow branch, as
+    # IMAU-FDM carries it. `:Calonne2019` is the Community Firn Model's form of the same
+    # equation (`conductivity: "Calonne2019"`), which omits that ratio; the two differ only in
+    # cold, low-density snow. `:Sturm` gives the lowest conductivity of the five — 0.56
+    # against the 2019 forms' 0.91 W m-1 K-1 at 243 K and ρ = 550 — so selecting it damps the
+    # seasonal wave. See `thermal_conductivity`.
+    thermal_conductivity_method::Symbol = :Calonne2019Air
 
     # --- Heat Capacity ---
     # Specific heat capacity of the load-bearing ice matrix, applied to snow, firn, and ice

@@ -236,19 +236,18 @@ work in enthalpy. Absolute column enthalpy is not comparable between the two met
 (574 061 against 307 385 J kg⁻¹ at 273.15 K), so reported thermal energy shifts when
 switching.
 
-**Thermal conductivity.** `thermal_conductivity_method = :Calonne2019` is the default,
+**Thermal conductivity.** `thermal_conductivity_method = :Calonne2019Air` is the default,
 Calonne et al. (2019) eq. 5 — a sigmoid blend at ρ = 450 kg m⁻³ between the Calonne (2011)
-snow quadratic and a firn branch, scaled by the temperature-dependent conductivity of ice.
-It is continuous into ice by construction and so is deliberately not short-circuited at
-`density_ice`; the `917` in its firn branch is the paper's fitted pure-ice density, not
-`mp.density_ice`. RetMIP Sect. 5.1 recommends it by name, and it is what both the Community
-Firn Model and IMAU-FDM ship.
+snow quadratic, scaled by the temperature-dependent conductivities of ice and air (Reid, 1966,
+for air), and a firn branch scaled by that of ice. It is continuous into ice by construction
+and so is deliberately not short-circuited at `density_ice`; the `917` in its firn branch is
+the paper's fitted pure-ice density, not `mp.density_ice`. RetMIP Sect. 5.1 recommends it by
+name, and both the Community Firn Model and IMAU-FDM ship it.
 
-`:Calonne2019Air` additionally carries eq. 5's air-conductivity ratio on the snow branch,
-using Reid (1966) for air. See [the IMAU-FDM comparison](imau_fdm_comparison.md) for the
-magnitude. `:Marchenko2019` is Marchenko et al. (2019) eq. 30, `k = 0.301e-2·ρ − 0.724`,
+`:Calonne2019` is the Community Firn Model's form, without the air-conductivity ratio on the
+snow branch. See [the IMAU-FDM comparison](imau_fdm_comparison.md) for the magnitude. `:Marchenko2019` is Marchenko et al. (2019) eq. 30, `k = 0.301e-2·ρ − 0.724`,
 fitted over ρ = 350–900 and floored at the Calonne (2011) value below their crossing near
-ρ = 321, where the bare fit heads negative. Both `:Calonne2019` and `:Marchenko2019` are
+ρ = 321, where the bare fit heads negative. The 2019 forms and `:Marchenko2019` are
 higher than `:Sturm`/`:Calonne` in firn, the direction RetMIP's cold bias at Summit and
 Dye-2 implies.
 

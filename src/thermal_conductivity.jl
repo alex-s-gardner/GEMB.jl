@@ -7,13 +7,14 @@ For snow/firn (density < density_ice), by `mp.thermal_conductivity_method`:
 
 - `:Sturm` — Sturm et al. (1997): `K = 0.138 - 1.01e-3*ρ + 3.233e-6*ρ^2`
 - `:Calonne` — Calonne et al. (2011): `K = 0.024 - 1.23e-4*ρ + 2.5e-6*ρ^2`
-- `:Calonne2019` — Calonne et al. (2019) eq. 5, a temperature-dependent sigmoid blend of a
-  snow and a firn regime, with `K_air` pinned at its reference value (matching the
-  Community Firn Model); see [`_thermal_conductivity_calonne2019`](@ref)
-- `:Calonne2019Air` — the same equation carrying the `K_air(T)/K_air(T_ref)` factor on its
-  snow branch as well (matching IMAU-FDM). Gives lower conductivity than `:Calonne2019`
-  for cold low-density snow — up to ~20% at 220 K — and is identical to it at and above
-  ρ ≈ 550 and at the 270.15 K reference temperature
+- `:Calonne2019Air` (the default) — Calonne et al. (2019) eq. 5 as published, a
+  temperature-dependent sigmoid blend of a snow and a firn regime, with the
+  `K_air(T)/K_air(T_ref)` factor on its snow branch (matching IMAU-FDM); see
+  [`_thermal_conductivity_calonne2019`](@ref)
+- `:Calonne2019` — the same equation with `K_air` pinned at its reference value (matching the
+  Community Firn Model). Gives higher conductivity than `:Calonne2019Air` for cold
+  low-density snow — up to ~20% at 220 K — and is identical to it at and above ρ ≈ 550 and at
+  the 270.15 K reference temperature
 - `:Marchenko2019` — Marchenko et al. (2019) eq. 30, a linear firn fit floored by
   `:Calonne`; see [`_thermal_conductivity_marchenko2019`](@ref)
 
@@ -27,7 +28,7 @@ short-circuiting to the ice branch.
 `:Sturm` and `:Calonne` are the two older density-only fits. The `:Calonne2019` pair and
 `:Marchenko2019` are recommended over them by Vandecrux et al. (2020, RetMIP Sect. 5.1), who
 attribute part of a multi-model cold bias at Summit and Dye-2 to conductivity
-parameterizations; `:Calonne2019` is the default.
+parameterizations; `:Calonne2019Air` is the default.
 
 Returns vector of thermal conductivities [W m-1 K-1].
 
@@ -156,21 +157,23 @@ and the fits return their published values.
 
 `air_factor` selects which of the two published readings of the snow term is used:
 
+- `true` (`:Calonne2019Air`, the default) carries `K_air(T)/K_air(T_ref)`, as eq. 5 is
+  printed (p. 13,087). This matches IMAU-FDM (`firn_physics.f90`, `Thermal_Cond`). Since it
+  enters only as a ratio, Reid's absolute calibration cancels and only its temperature
+  *shape* matters — which is why the 0.7% gap between `K_air(T_ref)` and `k_a` is irrelevant
+  here.
 - `false` (`:Calonne2019`) pins `K_air` at its reference value, so the snow prefactor
   collapses to `K_ice/k_i` and the whole blend takes a single factor. This matches the
   Community Firn Model, whose `diffusion.py` hardcodes `K_air = kref_a` with a standing
-  TODO to find the temperature dependence, and it is the form GEMB has always used.
-- `true` (`:Calonne2019Air`) carries `K_air(T)/K_air(T_ref)` as well. This matches
-  IMAU-FDM (`firn_physics.f90`, `Thermal_Cond`). Since it enters only as a ratio, Reid's
-  absolute calibration cancels and only its temperature *shape* matters — which is why the
-  0.7% gap between `K_air(T_ref)` and `k_a` is irrelevant here.
+  TODO to find the temperature dependence.
 
 Air conducts more poorly as it cools, so the ratio is below 1 below the reference
 temperature (0.83 at 220 K, 0.88 at 233 K, 0.94 at 253 K) and `:Calonne2019` therefore
 returns a *higher* conductivity than `:Calonne2019Air` for cold snow — by up to ~20% at
 220 K for ρ ≲ 300, ~10% at ρ = 450, and under 0.3% by ρ = 550 where `θ → 1` and the
-air-free firn branch takes over. The default is `:Calonne2019`; `:Calonne2019Air` is the
-fuller form of the published equation.
+air-free firn branch takes over. Against eq. 5 evaluated with the paper's own constituent
+conductivities at −20 and −60 °C (p. 13,081), `:Calonne2019Air` at ρ = 200 is within 3%,
+while `:Calonne2019` is 27% high at −60 °C.
 
 Both forms are continuous into ice: at ρ = 917 the weight is 1 to within 1e-8 and
 `k_firn = k_i`, so `K = K_ice(T)` to the same relative precision and no ice branch is

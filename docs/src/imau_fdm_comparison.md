@@ -29,21 +29,20 @@ recorded in the [Physics notes](@ref "Physics notes").
 
 ## What GEMB adopted
 
-Three findings, each selected by an option or an optional forcing layer.
+Three findings. The first is GEMB's default; the other two are selected by an option or an
+optional forcing layer.
 
 **The air-conductivity ratio in Calonne et al. (2019) eq. 5.** The equation blends a snow and
 a firn conductivity fit and rescales each by its constituent conductivities relative to their
 values at 270.15 K. The two branches carry different scalings: the firn branch describes a
 connected ice skeleton and scales with ice alone, while the snow branch describes grains in
-air and scales with both. IMAU-FDM carries both factors, using Reid (1966) for air. GEMB's
-`:Calonne2019` applies only the ice ratio, following CFM. Because air conducts less well as
-it cools, omitting the air factor raises conductivity in cold low-density snow — by ~20% at
-220 K and 150–300 kg m⁻³, falling to zero at the reference temperature and above ~550 kg m⁻³
-where the blend hands over to the air-free branch.
-
-`thermal_conductivity_method = :Calonne2019Air` selects the fuller form. Since the air term
+air and scales with both. IMAU-FDM carries both factors, using Reid (1966) for air, and so
+does GEMB's default, `thermal_conductivity_method = :Calonne2019Air`. Since the air term
 enters only as a ratio, Reid's absolute calibration cancels and only its temperature shape
-matters.
+matters. `:Calonne2019` applies only the ice ratio, following CFM. Because air conducts less
+well as it cools, omitting the air factor raises conductivity in cold low-density snow — by
+~20% at 220 K and 150–300 kg m⁻³, falling to zero at the reference temperature and above
+~550 kg m⁻³ where the blend hands over to the air-free branch.
 
 **Fausto et al. (2018) as a temperature-dependent regression.** GEMB's `:Fausto` fresh-snow
 density returns a constant 315 kg m⁻³, which is the published regression
