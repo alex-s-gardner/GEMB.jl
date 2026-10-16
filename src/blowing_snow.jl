@@ -30,6 +30,12 @@ gradient entirely on maritime glaciers.
    is upstream in the atmospheric model (Lenaerts et al., 2012). Use this when a drift product
    *is* available; it is the only path comparable against RACMO-forced firn models.
 
+Path 1 has a second scheme, `mp.blowing_snow_method = :Keenan2021`
+([`apply_redeposition!`](@ref)): the SNOWPACK erosion-redeposition scheme of Keenan et al.
+(2021), in which a saltation mass flux is eroded from the top of the column and redeposited at
+a wind-dependent density that reaches 394 kg m-3 at 10 m s-1. It replaces the `:Crocus`
+compaction and is also mass-conserving.
+
 Optionally, path 1 also sublimates suspended snow ([`blowing_snow_sublimation_rate`](@ref),
 `mp.blowing_snow_sublimation`), after Gordon et al. (2006) as Crocus implements it. That is
 the only part of path 1 that removes mass.
@@ -61,6 +67,14 @@ term.
 - Purdie, H., Mackintosh, A., Lawson, W., Anderson, B., Morgenstern, U., Chinn, T., and
   Mayewski, P. (2011). Interannual variability in net accumulation on Tasman Glacier and its
   relationship with climate. *Global Planet. Change* 77, 142-152.
+- Keenan, E., Wever, N., Dattler, M., Lenaerts, J. T. M., Medley, B., Kuipers Munneke, P.,
+  and Reijmer, C. (2021). Physics-based SNOWPACK model improves representation of
+  near-surface Antarctic snow and firn density. *The Cryosphere* 15, 1065-1085.
+  https://doi.org/10.5194/tc-15-1065-2021
+- Wever, N., Keenan, E., Amory, C., Lehning, M., Sigmund, A., Huwald, H., and Lenaerts,
+  J. T. M. (2023). Observations and simulations of new snow density in the drifting
+  snow-dominated environment of Antarctica. *J. Glaciol.* 69, 823-840.
+  https://doi.org/10.1017/jog.2022.102
 - Brun, E., David, P., Sudul, M., and Brunot, G. (1992). A numerical model to simulate
   snow-cover stratigraphy for operational avalanche forecasting. *J. Glaciol.* 38, 13-22.
   (The coded dendricity/sphericity integers Crocus stores.)
@@ -132,6 +146,35 @@ the same surface.
     z0_eff = min(z0, 0.5 * z_u, 0.5 * DRIFT_WIND_HEIGHT)
     return DRIFT_GUST_COEF * cfs.wind_speed * log(DRIFT_WIND_HEIGHT / z0_eff) /
            log(z_u / z0_eff)
+end
+
+"""
+    wind_speed_10m(wind_speed, wind_observation_height, z0) -> U₁₀ [m s-1]
+
+Wind speed at 10 m above the surface, from a `wind_speed` [m s-1] observed at
+`wind_observation_height` [m], through a neutral logarithmic profile over roughness length
+`z0` [m]:
+
+    U₁₀ = U·log(10/z₀)/log(z_u/z₀)
+
+The identity when `wind_observation_height = 10`. It is the profile [`drift_wind_speed`](@ref)
+uses, without the gust factor. Read by `new_snow_method = :vanKampenhout2017`, whose wind
+term is defined on the 10 m wind (van Kampenhout et al., 2017, eq. 4, p. 2587), and by
+`blowing_snow_method = :Keenan2021`, whose friction velocity and redeposited density are
+defined on it (Keenan et al., 2021, pp. 1067-1068). Callers pass `z0` from [`surface_roughness`](@ref), so
+the 10 m wind is formed over the same surface as the turbulent fluxes.
+
+Throws an `ArgumentError` for a negative or non-finite wind speed, a non-positive `z0`, or an
+observation height at or below `z0`.
+"""
+function wind_speed_10m(wind_speed::Real, wind_observation_height::Real, z0::Real)
+    (isfinite(wind_speed) && wind_speed >= 0) ||
+        throw(ArgumentError("wind speed must be finite and non-negative [m s-1], got $wind_speed"))
+    z0 > 0 || throw(ArgumentError("roughness length must be positive [m], got $z0"))
+    wind_observation_height > z0 ||
+        throw(ArgumentError("wind observation height ($wind_observation_height m) must exceed the roughness length ($z0 m)"))
+    return wind_speed * (log(WIND_HEIGHT_10M / z0) /
+                         log(wind_observation_height / z0))
 end
 
 """
@@ -344,10 +387,16 @@ subtracts them.
     `blowing_snow` output layer are what it would read.
 
 Returns `(0.0, 0.0)` and touches nothing when `mp.blowing_snow_method === :none`, which is
-what keeps the default bit-identical to a run without the term.
+what keeps the default bit-identical to a run without the term. Under
+`mp.blowing_snow_method === :Keenan2021` it runs [`apply_redeposition!`](@ref) instead of the
+compaction above; the two are not combined, since both represent the densification of
+wind-transported snow.
 """
 function apply_blowing_snow!(cols::NamedTuple, cfs::ClimateForcingStep, mp::ModelParameters)
     mp.blowing_snow_method === :none && return 0.0, 0.0
+    mp.blowing_snow_method === :Keenan2021 && return apply_redeposition!(cols, cfs, mp)
+    mp.blowing_snow_method === :Crocus ||
+        error("unrecognized blowing_snow_method: $(mp.blowing_snow_method)")
 
     dz = cols.dz
     density = cols.density
@@ -516,7 +565,8 @@ function apply_prescribed_drift!(cols::NamedTuple, cfs::ClimateForcingStep,
         mass_added = -flux
         density_new = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
                 cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air,
-                cfs.wind_speed),
+                cfs.wind_speed; wind_observation_height=cfs.wind_observation_height,
+                z0=surface_roughness(mp, density[1], water[1])),
             1.0, mp.density_ice)
 
         M_surface = dz[1] * density[1]
@@ -530,4 +580,203 @@ function apply_prescribed_drift!(cols::NamedTuple, cfs::ClimateForcingStep,
 
         return mass_added, mass_added * specific_enthalpy(mp, cfs.temperature_air)
     end
+end
+
+# Keenan et al. (2021) erosion-redeposition constants.
+const REDEPOSIT_Z0 = 2.0e-3          # roughness length for u* [m], Keenan et al. p. 1067
+const REDEPOSIT_FLUX_A = 0.0014      # eq. 3 prefactor [-]
+const REDEPOSIT_FLUX_B = 7.6         # eq. 3 threshold weight [-]
+const REDEPOSIT_FLUX_C = 205.0       # eq. 3 offset, as printed (see `saltation_mass_flux`)
+const REDEPOSIT_DENSITY_A = 361.0    # eq. 4 slope [kg m-3 per decade of U₁₀]
+const REDEPOSIT_DENSITY_B = 33.0     # eq. 4 intercept, and its value at U₁₀ <= 1 [kg m-3]
+const REDEPOSIT_WIND_MIN = 1.0       # eq. 4 branch point [m s-1]
+# Microstructure of new snow above 5 m s-1 in the SNOWPACK "Redeposit" setup, Wever et al.
+# (2023) Table 1, p. 827.
+const REDEPOSIT_DENDRICITY = 0.325
+const REDEPOSIT_SPHERICITY = 0.875
+
+"""
+    redeposition_density(wind_speed_10m) -> ρ_rd [kg m-3]
+
+Density of snow redeposited after drifting, Keenan et al. (2021) eq. 4, p. 1068:
+
+    ρ_rd = 361·log10(U₁₀) + 33     U₁₀ > 1 m s-1
+           33                      U₁₀ ≤ 1 m s-1
+
+with `U₁₀` the hourly 10 m wind speed. The fit is Groot Zwaaftink et al. (2013), from field
+measurements of snow deposited during drifting-snow events; Keenan et al. drive it with hourly
+rather than 100 h mean wind. It is continuous at 1 m s-1 and gives 285.3 kg m-3 at 5 m s-1,
+394.0 at 10 and 502.7 at 20.
+
+Throws an `ArgumentError` unless `wind_speed_10m` is finite and non-negative.
+"""
+function redeposition_density(wind_speed_10m::Real)
+    (isfinite(wind_speed_10m) && wind_speed_10m >= 0) ||
+        throw(ArgumentError("wind speed must be finite and non-negative [m s-1], got $wind_speed_10m"))
+    wind_speed_10m > REDEPOSIT_WIND_MIN || return REDEPOSIT_DENSITY_B
+    return REDEPOSIT_DENSITY_A * log10(wind_speed_10m) + REDEPOSIT_DENSITY_B
+end
+
+"""
+    saltation_friction_velocity(wind_speed_10m) -> u* [m s-1]
+
+Friction velocity of the Keenan et al. (2021) saltation flux from the 10 m wind, through a
+neutral logarithmic profile over `REDEPOSIT_Z0 = 2 mm` (p. 1067):
+
+    u* = κ·U₁₀/log(10/z₀)
+
+Keenan et al. add stability corrections (Michlmayr et al., 2008); they are omitted here, so
+this is the neutral value. `z₀ = 2 mm` is the paper's choice, about ten times the roughness of
+the snow surface GEMB's turbulent fluxes see, and is kept because the fetch length `L` of
+eq. 3 was chosen with it.
+"""
+@inline saltation_friction_velocity(wind_speed_10m::Real) =
+    VON_KARMAN * wind_speed_10m / log(WIND_HEIGHT_10M / REDEPOSIT_Z0)
+
+"""
+    saltation_mass_flux(density_air, u_star, u_star_threshold, fetch_length) -> Φ [kg m-2 s-1]
+
+Saltation mass flux eroded from the snow surface, Keenan et al. (2021) eq. 3, p. 1067:
+
+    Φ = 0.0014·ρ_a·u*·(u* − u*_t)·(u* + 7.6·u*_t + 205)/L
+
+The saltation transport rate `Q` [kg m-1 s-1] of Lehning and Fierz (2008) divided by the
+fetch length `L` [m]. Zero when `u* ≤ u*_t`. The additive 205 is as printed in Keenan et al.
+and as SNOWPACK evaluates it; Wever et al. (2023, pp. 827-828) note that the coefficients of
+this expression carry inconsistent units, and that the simulations agree with observations
+regardless. It dominates the last factor, so in practice `Φ ≈ 0.287·ρ_a·u*·(u* − u*_t)/L`.
+
+Throws an `ArgumentError` for a non-positive fetch length or a negative friction velocity.
+"""
+function saltation_mass_flux(density_air::Real, u_star::Real, u_star_threshold::Real,
+    fetch_length::Real)
+    fetch_length > 0 ||
+        throw(ArgumentError("fetch length must be positive [m], got $fetch_length"))
+    (u_star >= 0 && u_star_threshold >= 0) ||
+        throw(ArgumentError("friction velocities must be non-negative, got $u_star and $u_star_threshold"))
+    u_star > u_star_threshold || return 0.0
+    return REDEPOSIT_FLUX_A * density_air * u_star * (u_star - u_star_threshold) *
+           (u_star + REDEPOSIT_FLUX_B * u_star_threshold + REDEPOSIT_FLUX_C) / fetch_length
+end
+
+"""
+    redeposition_threshold_wind_speed(mobility) -> U₅,t [m s-1]
+
+The 5 m gust speed at which a layer of the given Crocus mobility index starts to drift,
+[`drift_threshold_wind_speed`](@ref), extended to the whole range of the index: `Inf` for
+`mobility ≤ -1`, where no wind moves the layer (dense or wet snow).
+
+Throws for `mobility ≥ 1.868`, where the threshold would be negative; [`mobility_index`](@ref)
+does not exceed 1.25.
+"""
+@inline function redeposition_threshold_wind_speed(mobility::Float64)
+    mobility < DRIFT_D1 - 1.0 ||
+        error("mobility index $mobility is outside the range of the drift threshold")
+    mobility <= -1.0 && return Inf
+    return drift_threshold_wind_speed(mobility)
+end
+
+"""
+    apply_redeposition!(cols, cfs, mp) -> (0.0, 0.0)
+
+Wind packing of near-surface snow by erosion and redeposition, the SNOWPACK scheme of Keenan
+et al. (2021) eqs. 3-4, pp. 1067-1068, with the erosion threshold taken from GEMB's Crocus
+mobility index. Selected by `mp.blowing_snow_method = :Keenan2021`.
+
+Per step:
+
+1. The 10 m wind `U₁₀` ([`wind_speed_10m`](@ref)) and the 5 m gust speed `U₅`
+   ([`drift_wind_speed`](@ref)), both over the roughness of the surface cell.
+2. Erosion starts only if `U₅` exceeds the threshold `U₅,t` of the surface cell
+   ([`redeposition_threshold_wind_speed`](@ref) of its [`mobility_index`](@ref)) and the
+   surface cell holds no liquid water.
+3. The friction velocity `u* = κ·U₁₀/log(10/0.002)` ([`saltation_friction_velocity`](@ref))
+   and its threshold `u*_t = u*·U₅,t/U₅`, the friction velocity at which `U₅` would equal the
+   threshold.
+4. The eroded mass `M = Φ·dt`, with `Φ` the saltation flux of eq. 3
+   ([`saltation_mass_flux`](@ref)) at the air density of the forcing and fetch length
+   `mp.drift_fetch_length`.
+5. `M` is taken from the top of the column down. Erosion stops at the first cell that is wet
+   or whose own threshold is at or above `U₅`, or when `M` is used up. Of a cell of mass `m`,
+   the reworked mass `m_r = min(M, m)` is redeposited in the same cell at
+   `ρ_rd = 361·log10(U₁₀) + 33` ([`redeposition_density`](@ref), eq. 4), so the cell becomes
+   `dz = (m − m_r)/ρ + m_r/ρ_rd`, `ρ = m/dz`. A cell already at or above `ρ_rd` keeps its
+   density: redeposition never lowers it.
+6. In a dendritic cell the reworked fraction `f = m_r/m` takes the microstructure of new snow
+   above 5 m s-1 in the SNOWPACK "Redeposit" setup, dendricity 0.325 and sphericity 0.875
+   (Wever et al., 2023, Table 1, p. 827), mixed by mass and capped so that neither moves away
+   from that state: `d ← (1−f)·d + f·min(d, 0.325)`, `s ← (1−f)·s + f·max(s, 0.875)`, with the
+   radius re-derived by [`dendritic_grain_radius`](@ref). Non-dendritic cells keep their
+   grains.
+
+**Mass and energy.** The eroded mass is redeposited in the column (Keenan et al. p. 1068: the
+mass flux "is redeposited at the snow surface"; Wever et al. p. 827: deposition "is equal to
+the calculated eroded mass"), so nothing crosses the column boundary. Each cell keeps its own
+mass, temperature, water and age, so column mass and enthalpy are unchanged to rounding, and
+the function returns `(0.0, 0.0)` for the blowing-snow budget terms. The grid is not touched
+beyond the `dz` of the reworked cells; the grid controllers that run later in the step restore
+the thickness bands.
+
+Departures from SNOWPACK as Keenan et al. describe it:
+
+- **Threshold.** SNOWPACK computes `u*_t` from Lehning and Fierz (2008), Keenan et al. eq. 2,
+  which needs a bond radius and a coordination number. GEMB carries neither, so the threshold
+  comes from the Crocus mobility index, which is GEMB's own measure of how readily a layer
+  drifts given its dendricity, sphericity, grain size and density (Vionnet et al., 2012). For
+  fresh dendritic snow (d = 1, s = 0.5, ρ = 180 kg m-3) it gives `U₅,t = 5.47 m s-1`, about
+  4.7 m s-1 at 10 m.
+- **Placement.** SNOWPACK removes the eroded elements and deposits a new layer at the surface.
+  Here the reworked mass stays in the cell it came from. The mass and its redeposited density
+  are the same; the vertical order within the eroded depth and the cell count are kept, so the
+  scheme creates and removes no cells.
+- **Stability and air density.** `u*` is the neutral value, and `ρ_a` is the air density of
+  the forcing step where Keenan et al. quote 1.1 kg m-3 (p. 1067, for eq. 2).
+- **Wet snow** does not erode.
+
+Throws an `ArgumentError` for a negative or non-finite wind speed.
+"""
+function apply_redeposition!(cols::NamedTuple, cfs::ClimateForcingStep, mp::ModelParameters)
+    dz = cols.dz
+    density = cols.density
+    water = cols.water
+    grain_radius = cols.grain_radius
+    dendricity = cols.grain_dendricity
+    sphericity = cols.grain_sphericity
+
+    z0 = surface_roughness(mp, density[first(eachindex(density))],
+        water[first(eachindex(water))])
+    wind_10m = wind_speed_10m(cfs.wind_speed, cfs.wind_observation_height, z0)
+    wind_5m = drift_wind_speed(cfs, z0)
+
+    _cell_threshold(i) = redeposition_threshold_wind_speed(mobility_index(grain_radius[i],
+        dendricity[i], sphericity[i], density[i], false))
+
+    i1 = first(eachindex(dz))
+    (water[i1] > WATER_TOLERANCE || wind_5m <= _cell_threshold(i1)) && return 0.0, 0.0
+
+    u_star = saltation_friction_velocity(wind_10m)
+    u_star_threshold = u_star * _cell_threshold(i1) / wind_5m
+    density_air = air_density(cfs.pressure_air, cfs.temperature_air)
+    eroded = saltation_mass_flux(density_air, u_star, u_star_threshold,
+        mp.drift_fetch_length) * cfs.dt
+    density_redeposit = redeposition_density(wind_10m)
+
+    for i in eachindex(dz)
+        eroded > 0.0 || break
+        (water[i] > WATER_TOLERANCE || wind_5m <= _cell_threshold(i)) && break
+        mass = density[i] * dz[i]
+        reworked = min(eroded, mass)
+        if density_redeposit > density[i]
+            dz[i] = (mass - reworked) / density[i] + reworked / density_redeposit
+            density[i] = mass / dz[i]
+        end
+        if dendricity[i] > GDN_TOLERANCE
+            f = reworked / mass
+            dendricity[i] = (1 - f) * dendricity[i] + f * min(dendricity[i], REDEPOSIT_DENDRICITY)
+            sphericity[i] = (1 - f) * sphericity[i] + f * max(sphericity[i], REDEPOSIT_SPHERICITY)
+            grain_radius[i] = dendritic_grain_radius(dendricity[i], sphericity[i])
+        end
+        eroded -= reworked
+    end
+    return 0.0, 0.0
 end

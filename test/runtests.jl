@@ -30,8 +30,14 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Density" begin
         include("test_calculate_density.jl")
     end
+    @testset "Destructive Metamorphism" begin
+        include("test_destructive_metamorphism.jl")
+    end
     @testset "Accumulation" begin
         include("test_calculate_accumulation.jl")
+    end
+    @testset "Fresh Snow: van Kampenhout 2017" begin
+        include("test_fresh_snow_vankampenhout.jl")
     end
     @testset "Melt" begin
         include("test_calculate_melt.jl")
@@ -86,6 +92,12 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
 
     @testset "Blowing Snow" begin
         include("test_blowing_snow.jl")
+    end
+    @testset "Redeposition: Keenan 2021" begin
+        include("test_redeposition.jl")
+    end
+    @testset "Fresh-Snow Options: Whole Model" begin
+        include("test_fresh_snow_design.jl")
     end
 
     @testset "Hydrology" begin

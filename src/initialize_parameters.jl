@@ -22,6 +22,13 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.densification_accumulation in (:accumulation, :precipitation) "densification_accumulation must be accumulation or precipitation"
     @assert mp.mean_temperature_method in (:arithmetic, :arrhenius) "mean_temperature_method must be arithmetic or arrhenius"
 
+    # Destructive metamorphism is a strain rate summed with the viscous one, so it exists only
+    # under the two schemes that form a strain rate from a viscosity.
+    if mp.destructive_metamorphism
+        @assert mp.densification_method in (:Crocus, :CrocusPure) "destructive_metamorphism=true requires densification_method :Crocus or :CrocusPure (it is added to their viscous strain rate); got :$(mp.densification_method)"
+    end
+    @assert 50 <= mp.destructive_metamorphism_density <= 450 "destructive_metamorphism_density must be in [50, 450] kg m-3 (got $(mp.destructive_metamorphism_density))"
+
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
         :Ant_RACMO_GS_SW0, :Ant_Ligtenberg, :Gre_ERA5_GS_SW0,
@@ -29,7 +36,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.densification_coeffs_M01 in valid_coeffs "Invalid densification_coeffs_M01"
 
     # New snow method
-    @assert mp.new_snow_method in (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit, :Pahaut, :Kaspers, :KuipersMunneke) "Invalid new_snow_method"
+    @assert mp.new_snow_method in (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit, :Pahaut, :Kaspers, :KuipersMunneke, :vanKampenhout2017) "Invalid new_snow_method"
 
     # Density of ice
     @assert 800 <= mp.density_ice <= 950 "density_ice must be in [800, 950]"
@@ -138,7 +145,13 @@ function validate_parameters(mp::ModelParameters)
     # (Lenaerts et al. (2012) report up to ~200 kg m-2 yr-1 of drifting-snow erosion in the
     # windiest Antarctic escarpment cells) and exists to catch a per-timestep value passed
     # where an annual rate belongs. Signed: negative is net deposition.
-    @assert mp.blowing_snow_method in (:none, :Crocus) "blowing_snow_method must be none or Crocus"
+    @assert mp.blowing_snow_method in (:none, :Crocus, :Keenan2021) "blowing_snow_method must be none, Crocus or Keenan2021"
+    # Suspension sublimation belongs to the Crocus scheme; the Keenan et al. (2021) scheme
+    # moves no mass across the surface.
+    if mp.blowing_snow_method === :Keenan2021
+        @assert !mp.blowing_snow_sublimation "blowing_snow_sublimation is part of blowing_snow_method=:Crocus and cannot be combined with :Keenan2021"
+    end
+    @assert 0 < mp.drift_fetch_length <= 1000 "drift_fetch_length must be in (0, 1000] m (got $(mp.drift_fetch_length))"
     @assert -2000 <= mp.drift_rate <= 2000 "drift_rate must be in [-2000, 2000] kg m-2 yr-1 (an annual rate, positive for erosion)"
 
     # Slope as a gradient, not degrees. The bound is far above any ice-sheet surface slope

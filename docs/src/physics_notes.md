@@ -64,6 +64,17 @@ Two departures from the published law:
 The paper's `c_η = 250` and its `f2` are used, where the Community Firn Model hardcodes
 `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
 
+**`destructive_metamorphism`** [default `false`] adds the destructive-metamorphism settling
+of fresh snow (Anderson, 1976) to the `:Crocus`/`:CrocusPure` strain rate, as CLM5 does:
+`r = c3·c2·c1·exp(−c4·(T_frz − T))` with `c3 = 2.777×10⁻⁶ s⁻¹`, `c4 = 0.04 K⁻¹`, `c2 = 2`
+when the cell holds liquid water (van Kampenhout et al., 2017, eq. 5, p. 2587), and
+`c1 = exp(−0.046·(ρ − ρ_dm))` above `ρ_dm = destructive_metamorphism_density`, default
+175 kg m⁻³ (Schneider et al., 2022, eq. 3, p. 3). The two strain rates are summed and the step
+is `D·exp(−(σ/η + r)·dt)`. Cells `:Crocus` hands to `:GSFC2020` do not get the term, which is
+below 3.2×10⁻⁶ of its fresh-snow value there. The switch is rejected with any other
+densification scheme. At −10 °C it takes dry snow below 175 kg m⁻³ to that density at
+0.67 % h⁻¹; above it the rate falls by `e` every 21.7 kg m⁻³.
+
 **`:Barnola1991`** is Herron and Langway (1980) stage 1 below 550 kg m⁻³ and Barnola et al.
 (1991) pressure sintering above, `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` with
 `A₀ = 2.54e4 MPa⁻³ s⁻¹` and `Q = 60 kJ mol⁻¹`. It is the only scheme here that treats the
@@ -164,6 +175,7 @@ all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growt
 | `:FaustoFit` | `362.1 + 2.78·(T_air − 273.15)`, the regression itself, clamped to `[1, ρᵢ]` since it reaches zero near 143 K |
 | `:Pahaut` | `max(50, 109 + 6·(T_air − 273.15) + 26·√U)` |
 | `:Kaspers`, `:KuipersMunneke` | Temperature-dependent polar fits |
+| `:vanKampenhout2017` | `ρ_T(T_air) + 266.861·(½(1 + tanh(U₁₀/5)))^8.8`, van Kampenhout et al. (2017) eqs. 2–4 |
 
 `:Pahaut` is Pahaut (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35. It is
 the only option fitted to alpine seasonal snow rather than to a polar ice sheet, and it is
@@ -173,6 +185,17 @@ wind-packed than the katabatic-scoured surfaces the Greenland and Antarctic fits
 regressed on. Prefer it for temperate and mid-latitude glaciers, where the polar fits
 overestimate fresh-snow density, suppressing new-snow albedo and speeding its burial. The
 published 50 kg m⁻³ floor is retained; it binds below about −10 °C in calm air.
+
+`:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017, p. 2587).
+`ρ_T` is Anderson (1976) between −15 and +2 °C, constant at 169.16 kg m⁻³ above +2 °C, and
+`−3.8328·ΔT − 0.0333·ΔT²` at or below −15 °C, so it rises again in very cold air. The wind
+term is defined on the 10 m wind: the forcing wind is carried from `wind_observation_height`
+to 10 m through a neutral log profile over the surface roughness the turbulent fluxes use.
+The formula spans 50–436 kg m⁻³. It is a deposition density, not a near-surface density, so
+it needs a settling scheme: with `densification_method = :Crocus` and
+`destructive_metamorphism = true` the snow settles within
+days, while with an accumulation-driven scheme the top metre stays near the deposition density
+for years. It keeps the default fresh-grain properties.
 
 `:Fausto`, `:FaustoFit` and `:Pahaut` also select the Crocus (Vionnet et al., 2012)
 wind-dependent fresh-grain dendricity and sphericity, those being what Crocus itself pairs
@@ -371,6 +394,22 @@ Two departures from Crocus: GEMB has no wet-snow history variable, so the eq. 61
 uses instantaneous liquid water rather than "has ever been wet", which leaves
 refrozen-but-now-dry layers more driftable; and melt-style thickness bookkeeping is not
 applied, the compaction being density-only.
+
+**`blowing_snow_method = :Keenan2021`** is the SNOWPACK erosion–redeposition scheme of
+Keenan et al. (2021, eqs. 3–4, pp. 1067–1068). When the 5 m gust speed exceeds the drift
+threshold of the surface cell, a saltation mass flux
+`Φ = 0.0014·ρ_a·u*·(u* − u*_t)·(u* + 7.6·u*_t + 205)/L` is eroded from the top of the column
+(`L = drift_fetch_length`, 10 m; `u* = κ·U₁₀/ln(10/0.002)`) and redeposited at
+`ρ_rd = 361·log₁₀(U₁₀) + 33`, never lowering a cell's density; erosion stops at the first wet
+or non-drifting cell. The reworked mass stays in its own cell, so mass, temperature, water and
+age are unchanged and no cell is created. Dendritic cells take Wever et al.'s (2023, Table 1)
+high-wind microstructure in proportion to the reworked mass. It replaces the `:Crocus`
+compaction (both represent the packing of wind-transported snow) and cannot be combined with
+`blowing_snow_sublimation`. Departures from SNOWPACK: the threshold comes from the Crocus
+mobility index, because GEMB carries no bond radius or coordination number for Lehning and
+Fierz (2008) eq. 2; `u*` is neutral; `ρ_a` is the forcing air density rather than the
+1.1 kg m⁻³ Keenan et al. quote. The redeposited density reaches 394 kg m⁻³ at 10 m s⁻¹, above
+the 350 kg m⁻³ ceiling of the `:Crocus` compaction.
 
 **`blowing_snow_sublimation`** [default `false`] sublimates the suspended fraction after
 Gordon et al. (2006) as Crocus implements it (eqs. 67–68), read only under

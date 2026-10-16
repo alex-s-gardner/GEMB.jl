@@ -27,6 +27,15 @@ under every other scheme, and for the cells `:Crocus` hands to `:GSFC2020`, it s
 `NO_VISCOSITY`, and an empty vector means "not requested" (a concrete type on both
 settings — see the note in `gemb_core.jl`).
 
+With `mp.destructive_metamorphism` set, the `:Crocus`/`:CrocusPure` viscous branch adds the
+destructive-metamorphism settling of fresh snow ([`destructive_metamorphism_rate`](@ref)) to
+its overburden strain rate. Both are strain rates `(1/D)·dD/dt`, and van Kampenhout et al.
+(2017, Sect. 3.4) and Schneider et al. (2022, p. 3) sum them, so one step is
+`D·exp(-(σ/η + r_dm)·dt)` with both rates taken at the start-of-step state. The cells
+`:Crocus` hands to `:GSFC2020` (ρ ≥ `CROCUS_HYBRID_DENSITY`) do not get the term; there it is
+below `exp(-0.046·275) = 3.2e-6` of its fresh-snow value. Requesting it with any other
+densification scheme throws.
+
 `water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
 (as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity
 reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
@@ -70,7 +79,13 @@ broadcast temporaries (`mass_init`, `idx`, `H`, `c0`, `c1`, ...) allocated per c
 - van Kampenhout, L., Lenaerts, J. T. M., Lipscomb, W. H., Sacks, W. J., Lawrence, D. M.,
   Slater, A. G., and van den Broeke, M. R. (2017). Improving the representation of polar snow
   and firn in the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
-  (eq. 8, the grain-size treatment the Crocus branch adopts.)
+  (eq. 8, the grain-size treatment the Crocus branch adopts; eq. 5, destructive
+  metamorphism.)
+- Schneider, A. M., Zender, C. S., and Price, S. F. (2022). More realistic intermediate depth
+  dry firn densification in the Energy Exascale Earth System Model (E3SM). *J. Adv. Model.
+  Earth Syst.* 14, e2021MS002542. (eq. 3, the destructive-metamorphism density taper.)
+- Anderson, E. A. (1976). A point energy and mass balance model of a snow cover. NOAA
+  Technical Report NWS 19. (Destructive metamorphism.)
 - Wilkinson, D. S. and Ashby, M. F. (1975). Pressure sintering by power law creep.
   *Acta Metall.* 23, 1277-1285. (The closed-pore `fs(ρ)` of Barnola's eq. 4.)
 - Doake, C. S. M. and Wolff, E. W. (1985). Flow law for ice in polar ice sheets. *Nature* 314,
@@ -106,6 +121,10 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     isempty(viscosity) || fill!(viscosity, NaN)
 
     method = mp.densification_method
+    if mp.destructive_metamorphism && !(method == :Crocus || method == :CrocusPure)
+        error("destructive_metamorphism requires densification_method :Crocus or " *
+              ":CrocusPure, got :$(method)")
+    end
 
     if method == :HerronLangway
         # Rate coefficients `_hl_c0`/`_hl_c1` are shared with `steady_state_density`.
@@ -245,6 +264,8 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         hybrid = method == :Crocus
         p = hybrid ? DensificationCoeffs(mp, pm, tam) : nothing
         dt_seconds = cfs.dt
+        settling = mp.destructive_metamorphism
+        density_dm = mp.destructive_metamorphism_density
         load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
         @inbounds for i in 1:m
             d0 = density[i]
@@ -262,7 +283,12 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
                 η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
                 isempty(viscosity) || (viscosity[i] = η)
-                dz_new = dz0 * exp(-σ / η * dt_seconds)
+                strain_rate = σ / η                              # [s-1]
+                if settling
+                    strain_rate += destructive_metamorphism_rate(d0, temperature[i],
+                        water[i] > WATER_TOLERANCE, density_dm)
+                end
+                dz_new = dz0 * exp(-strain_rate * dt_seconds)
                 d = d0 * dz0 / dz_new
                 if d > density_ice - D_TOLERANCE
                     d = density_ice
@@ -669,6 +695,48 @@ retuned `cη = 358`. The paper's `f2` and `cη = 250` are used here.
                CROCUS_F2_MIN, CROCUS_F2_MAX)
     return f1 * f2 * CROCUS_ETA0 * (ρ / CROCUS_C_ETA) *
            exp(CROCUS_A_ETA * (CtoK - T) + CROCUS_B_ETA * ρ)
+end
+
+"""
+    destructive_metamorphism_rate(density, temperature, wet, density_dm) -> r [s-1]
+
+Compaction rate `-(1/D)·dD/dt` of a snow layer by destructive metamorphism, the settling of
+fresh snow as its crystals lose their branches. Anderson (1976) in the form of van Kampenhout
+et al. (2017) eq. 5, p. 2587, with the density taper of Schneider et al. (2022) eq. 3, p. 3:
+
+    r = c3·c2·c1·exp(-c4·(T_frz - min(T, T_frz)))
+    c1 = 1                           ρ < ρ_dm
+         exp(-c5·(ρ - ρ_dm))          ρ ≥ ρ_dm
+    c2 = 2 with liquid water, else 1
+
+with `c3 = 2.777e-6 s-1`, `c4 = 0.04 K-1` (van Kampenhout et al., p. 2587) and
+`c5 = 0.046 m3 kg-1` (Schneider et al., p. 3). `density` is the ice-matrix density of the
+layer, excluding liquid water, as eq. 5 specifies; `ρ_dm` is
+`mp.destructive_metamorphism_density`, 175 kg m-3 in CLM5. `wet` selects `c2 = 2`, which the
+papers state as "depending on the presence of liquid water" without a threshold; any pore
+water above `WATER_TOLERANCE` counts.
+
+The paper prints eq. 5 as `∂ρ/∂t` but its units are s-1: it is the fractional rate that
+Schneider et al. eq. 3 writes as a strain rate, and the one the Community Land Model sums with
+the overburden strain rate. Temperature is capped at `T_frz`, so wet snow at the melting point
+takes the largest rate, `2·c3`. Below `ρ_dm` the rate is `c3·exp(-c4·ΔT)` and does not depend
+on density; above it the rate falls by a factor `e` every 21.7 kg m-3, so the term moves fresh
+snow to `ρ_dm` within days and then stops mattering.
+
+Throws an `ArgumentError` for a non-positive density or a non-finite or non-positive
+temperature.
+"""
+@inline function destructive_metamorphism_rate(density::Float64, temperature::Float64,
+    wet::Bool, density_dm::Float64)
+    density > 0 ||
+        throw(ArgumentError("density must be positive [kg m-3], got $density"))
+    (isfinite(temperature) && temperature > 0) ||
+        throw(ArgumentError("temperature must be finite and positive [K], got $temperature"))
+    c1 = density < density_dm ? 1.0 :
+         exp(-DESTRUCTIVE_METAMORPHISM_C5 * (density - density_dm))
+    c2 = wet ? DESTRUCTIVE_METAMORPHISM_WET_FACTOR : 1.0
+    return DESTRUCTIVE_METAMORPHISM_C3 * c2 * c1 *
+           exp(-DESTRUCTIVE_METAMORPHISM_C4 * (CtoK - min(temperature, CtoK)))
 end
 
 """

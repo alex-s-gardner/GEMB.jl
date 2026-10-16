@@ -1,6 +1,7 @@
 """
     fresh_snow_density(mp::ModelParameters, T_air_mean, precip_mean, wind_speed_mean,
-                       T_air=T_air_mean, wind_speed=wind_speed_mean)
+                       T_air=T_air_mean, wind_speed=wind_speed_mean;
+                       wind_observation_height=10.0, z0=Z0_SNOW_DRY)
 
 Return the density of fresh snow [kg m-3] for the configured `mp.new_snow_method`.
 
@@ -11,10 +12,11 @@ profile).
 
 `T_air` and `wind_speed` are the *instantaneous* air temperature [K] and wind speed
 [m s-1], read only by the methods whose fits are meant to apply at the moment of snowfall
-rather than to a climatology: `T_air` by `:FaustoFit` and `:Pahaut`, `wind_speed` by
-`:Pahaut`. They default to their climatological counterparts so that the steady-state
-march — which has no instantaneous forcing to offer — gets a well-defined climatological
-ρ₀ from the same call, and so that callers of the older methods need not pass them.
+rather than to a climatology: `T_air` by `:FaustoFit`, `:Pahaut` and `:vanKampenhout2017`,
+`wind_speed` by `:Pahaut` and `:vanKampenhout2017`. They default to their climatological
+counterparts so that the steady-state march — which has no instantaneous forcing to offer —
+gets a well-defined climatological ρ₀ from the same call, and so that callers of the older
+methods need not pass them.
 
 Methods:
 - `:Constant150` → 150, `:Constant315` → 315, `:Constant350` → 350: constants.
@@ -45,6 +47,20 @@ Methods:
   means. Temperature is capped at the melting point, as published.
 - `:KuipersMunneke` → `481.0 + 4.834·(T - CtoK)`: the Antarctic fit used by Kuipers Munneke
   et al. (2015). Both take *climatological* means rather than instantaneous forcing.
+- `:vanKampenhout2017` → `ρ_T(T_air) + ρ_W(U₁₀)`: van Kampenhout et al. (2017) eqs. 2-4,
+  p. 2587, the CLM5 deposition density; see [`vankampenhout_density_temperature`](@ref) and
+  [`vankampenhout_density_wind`](@ref). It reads the instantaneous `T_air` and the 10 m wind
+  speed, which is `wind_speed` carried from `wind_observation_height` to 10 m by
+  [`wind_speed_10m`](@ref) over roughness `z0`. It keeps GEMB's default fresh-grain
+  properties. It is a deposition density (50-436 kg m-3), so its near-surface density
+  depends on the settling scheme: pair it with `densification_method = :Crocus` and
+  `destructive_metamorphism = true`. Under an accumulation-driven densification scheme the
+  snow stays near its deposition density for years.
+
+`wind_observation_height` [m] and `z0` [m] are read only by `:vanKampenhout2017`. Their
+defaults treat `wind_speed` as a 10 m wind over dry snow.
+
+Throws an `ErrorException` for an unrecognized `mp.new_snow_method`.
 
 # References
 - Pahaut, E. (1975). *La métamorphose des cristaux de neige (Snow crystal metamorphosis)*.
@@ -60,10 +76,16 @@ Methods:
 - Kuipers Munneke, P., et al. (2015). Elevation change of the Greenland Ice Sheet due to
   surface mass balance and firn processes, 1960-2014. *The Cryosphere* 9, 2009-2025.
   (`:KuipersMunneke`)
+- van Kampenhout, L., Lenaerts, J. T. M., Lipscomb, W. H., Sacks, W. J., Lawrence, D. M.,
+  Slater, A. G., and van den Broeke, M. R. (2017). Improving the representation of polar snow
+  and firn in the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
+  (`:vanKampenhout2017`)
 """
 function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     precip_mean::Real, wind_speed_mean::Real, T_air::Real=T_air_mean,
-    wind_speed::Real=wind_speed_mean)
+    wind_speed::Real=wind_speed_mean;
+    wind_observation_height::Real=WIND_HEIGHT_10M,
+    z0::Real=Z0_SNOW_DRY)
     if mp.new_snow_method == :Constant150
         return 150.0
     elseif mp.new_snow_method == :Constant315
@@ -83,8 +105,67 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
                 6.69e-2 * precip_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
     elseif mp.new_snow_method == :KuipersMunneke
         return 481.0 + 4.834 * (T_air_mean - CtoK)
+    elseif mp.new_snow_method == :vanKampenhout2017
+        return vankampenhout_density_temperature(T_air) +
+               vankampenhout_density_wind(
+                   wind_speed_10m(wind_speed, wind_observation_height, z0))
     end
-    return 0.0
+    error("unrecognized new_snow_method: $(mp.new_snow_method)")
+end
+
+"""
+    vankampenhout_density_temperature(T_air) -> ρ_T [kg m-3]
+
+Temperature term of the van Kampenhout et al. (2017) fresh-snow density, eq. 3, p. 2587, with
+`T_air` the near-surface air temperature [K] and `ΔT = T_air - 273.15`:
+
+    ρ_T = 50 + 1.7·17^1.5                  ΔT > 2
+          50 + 1.7·(ΔT + 15)^1.5           -15 < ΔT ≤ 2
+          -3.8328·ΔT - 0.0333·ΔT²          ΔT ≤ -15
+
+The middle branch is Anderson (1976). The warm branch holds it at its +2 °C value
+(169.16 kg m-3). The cold branch is a fit to unpublished data by A. G. Slater, and gives a
+density that rises again as the temperature falls (100.03 kg m-3 at -40 °C). The middle branch
+is continuous at +2 °C. At -15 °C it gives 50 and the cold branch gives 49.9995, so ρ_T steps
+down by 5e-4 kg m-3 there, as published.
+
+Throws an `ArgumentError` unless `T_air` is finite and positive.
+"""
+function vankampenhout_density_temperature(T_air::Real)
+    (isfinite(T_air) && T_air > 0) ||
+        throw(ArgumentError("air temperature must be finite and positive [K], got $T_air"))
+    ΔT = T_air - CtoK
+    if ΔT > DENSITY_NEW_SNOW_VK17_DT_WARM
+        return DENSITY_NEW_SNOW_VK17_A + DENSITY_NEW_SNOW_VK17_B *
+               (DENSITY_NEW_SNOW_VK17_DT_WARM - DENSITY_NEW_SNOW_VK17_DT_COLD)^1.5
+    elseif ΔT > DENSITY_NEW_SNOW_VK17_DT_COLD
+        return DENSITY_NEW_SNOW_VK17_A + DENSITY_NEW_SNOW_VK17_B *
+               (ΔT - DENSITY_NEW_SNOW_VK17_DT_COLD)^1.5
+    else
+        return DENSITY_NEW_SNOW_VK17_C1 * ΔT + DENSITY_NEW_SNOW_VK17_C2 * ΔT^2
+    end
+end
+
+"""
+    vankampenhout_density_wind(wind_speed_10m) -> ρ_W [kg m-3]
+
+Wind term of the van Kampenhout et al. (2017) fresh-snow density, eq. 4, p. 2587, with `U` the
+10 m wind speed [m s-1]:
+
+    ρ_W = 266.861·(½(1 + tanh(U/5)))^8.8
+
+It rises from 0.599 kg m-3 at U = 0 through 87.34 at 5 m s-1 toward 266.861, and is half its
+limit at 6.25 m s-1. The paper describes it as a smooth transition at 5 m s-1, built on the
+experiments of Liston et al. (2007).
+
+Throws an `ArgumentError` unless `wind_speed_10m` is finite and non-negative.
+"""
+function vankampenhout_density_wind(wind_speed_10m::Real)
+    (isfinite(wind_speed_10m) && wind_speed_10m >= 0) ||
+        throw(ArgumentError("wind speed must be finite and non-negative [m s-1], got $wind_speed_10m"))
+    return DENSITY_NEW_SNOW_VK17_W *
+           (0.5 * (1.0 + tanh(wind_speed_10m / DENSITY_NEW_SNOW_VK17_U_SCALE)))^
+           DENSITY_NEW_SNOW_VK17_W_EXPONENT
 end
 
 """
@@ -160,14 +241,17 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     # Density of fresh snow [kg m-3] (shared with initialize_profile). The instantaneous air
-    # temperature and wind speed are passed as the fifth and sixth arguments, for `:FaustoFit`
-    # and `:Pahaut`; the other methods ignore them. Clamped for the same reason
-    # `steady_state_profile` clamps its own call: the Fausto fit is a linear regression with no
-    # bounds, so a sufficiently cold forcing step would otherwise hand a non-positive density
-    # to the `dz = mass/density` below. (`:Pahaut` carries its own published floor.)
+    # temperature and wind speed are passed as the fifth and sixth arguments, for `:FaustoFit`,
+    # `:Pahaut` and `:vanKampenhout2017`; the other methods ignore them. The wind height and
+    # the roughness of the surface the snow lands on are read by `:vanKampenhout2017` only.
+    # Clamped for the same reason `steady_state_profile` clamps its own call: the Fausto fit
+    # is a linear regression with no bounds, so a sufficiently cold forcing step would
+    # otherwise hand a non-positive density to the `dz = mass/density` below. (`:Pahaut`
+    # carries its own published floor.)
     density_new_snow = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
             cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air,
-            cfs.wind_speed),
+            cfs.wind_speed; wind_observation_height=cfs.wind_observation_height,
+            z0=surface_roughness(mp, density[1], water[1])),
         1.0, mp.density_ice)
     if mp.new_snow_method == :Fausto || mp.new_snow_method == :FaustoFit ||
        mp.new_snow_method == :Pahaut

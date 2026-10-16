@@ -342,6 +342,8 @@ Works cited in the per-field notes below. Each option's own physics is documente
 equation numbers, on the function named in that field's comment — this list resolves the
 author-year mentions to full entries in one place.
 
+- Anderson, E. A. (1976). A point energy and mass balance model of a snow cover. NOAA
+  Technical Report NWS 19. (`destructive_metamorphism`)
 - Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
   In situ measurements of Antarctic snow compaction compared with predictions of models.
   *J. Geophys. Res.* 115, F03011. (`densification_method`, `grain_growth_method`)
@@ -374,6 +376,10 @@ author-year mentions to full entries in one place.
 - Gregory, S. A., Albert, M. R., and Baker, I. (2014). Impact of physical properties and
   accumulation rate on pore close-off in layered firn. *The Cryosphere* 8, 91-105.
   (`impermeable_density`)
+- Keenan, E., Wever, N., Dattler, M., Lenaerts, J. T. M., Medley, B., Kuipers Munneke, P.,
+  and Reijmer, C. (2021). Physics-based SNOWPACK model improves representation of
+  near-surface Antarctic snow and firn density. *The Cryosphere* 15, 1065-1085.
+  (`blowing_snow_method = :Keenan2021`, `drift_fetch_length`)
 - Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
   *Geosci. Model Dev.* 19, 6273-6334. (`blowing_snow_method`, `blowing_snow_sublimation`,
   `new_snow_method = :Pahaut`)
@@ -384,8 +390,14 @@ author-year mentions to full entries in one place.
   (`thermal_conductivity_method = :Marchenko2019`)
 - Pahaut, E. (1975). *La métamorphose des cristaux de neige*. Monographies de la Météorologie
   Nationale 96, Météo-France. (`new_snow_method = :Pahaut`)
+- Schneider, A. M., Zender, C. S., and Price, S. F. (2022). More realistic intermediate depth
+  dry firn densification in the Energy Exascale Earth System Model (E3SM). *J. Adv. Model.
+  Earth Syst.* 14, e2021MS002542. (`destructive_metamorphism_density`)
 - Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
   seasonal snow. *J. Glaciol.* 43, 26-41. (`thermal_conductivity_method = :Sturm`)
+- van Kampenhout, L., et al. (2017). Improving the representation of polar snow and firn in
+  the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
+  (`new_snow_method = :vanKampenhout2017`, `destructive_metamorphism`)
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
   sheet. *The Cryosphere* 14, 3785-3810. (`thermal_conductivity_method`,
@@ -414,6 +426,17 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
     # (the default) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
+    # Whether `densification_method = :Crocus`/`:CrocusPure` adds the Anderson (1976)
+    # destructive-metamorphism settling of fresh snow to the overburden strain rate, with the
+    # coefficients of van Kampenhout et al. (2017) eq. 5 and the density taper of Schneider et
+    # al. (2022) eq. 3. The rate is a strain rate summed with the viscous one, so the switch is
+    # rejected with any other densification scheme. `false` (the default) leaves output
+    # bit-identical. See `destructive_metamorphism_rate`.
+    destructive_metamorphism::Bool = false
+    # Density [kg m-3] above which destructive metamorphism tapers exponentially, `ρ_dm`.
+    # 175 is the CLM5 value of van Kampenhout et al. (2017, p. 2587). Read only when
+    # `destructive_metamorphism` is set.
+    destructive_metamorphism_density::Float64 = DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT
     # Fresh-snow density parameterization. The default `:Constant350` is a constant 350 kg m-3,
     # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Constant150` and
     # `:Constant315` are the other bare constants. `:Fausto` is the Fausto et al.
@@ -425,7 +448,12 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `:Pahaut` is the alpine-seasonal-snow alternative to those polar fits — Pahaut (1975) as
     # Crocus implements it, temperature- and wind-dependent at the instantaneous timestep, and
     # much lighter over the same range. Prefer it for temperate and mid-latitude glaciers.
-    # See `fresh_snow_density`.
+    # `:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017,
+    # eqs. 2-4): a temperature term plus a 10 m wind term, evaluated at the instantaneous
+    # timestep, with the default fresh-grain properties. It is a deposition density, so it
+    # needs a settling scheme (`densification_method = :Crocus` with
+    # `destructive_metamorphism = true`) to reach observed near-surface densities. See
+    # `fresh_snow_density`.
     new_snow_method::Symbol = :Constant350
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
@@ -597,8 +625,17 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # Independent of `drift_rate`, which is a prescribed mass sink rather than a scheme, and of
     # `blowing_snow_sublimation`, which is the only part that removes mass. This mirrors
     # SURFEX's two independent namelist flags (`OSNOWDRIFT`, `OSNOWDRIFT_SUBLIM`). See
-    # `apply_blowing_snow!`.
+    # `apply_blowing_snow!`. `:Keenan2021` is the SNOWPACK erosion-redeposition scheme of
+    # Keenan et al. (2021) eqs. 3-4: above the erosion threshold, a saltation mass flux is
+    # eroded from the top of the column and redeposited in place at a wind-dependent density
+    # `361·log10(U₁₀) + 33`. It replaces the `:Crocus` compaction rather than adding to it, and
+    # is also mass-conserving. See `apply_redeposition!`.
     blowing_snow_method::Symbol = :none
+    # Fetch length L [m] of the `blowing_snow_method = :Keenan2021` saltation flux (Keenan et
+    # al., 2021, eq. 3): the eroded mass per step is the saltation transport divided by L.
+    # 10 m is the paper's choice; it is a tuning parameter, inversely proportional to the
+    # reworked mass. Read only under `:Keenan2021`. See `apply_redeposition!`.
+    drift_fetch_length::Float64 = DRIFT_FETCH_LENGTH_DEFAULT
     # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
     # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
     # path this removes mass from the surface cell and consumes latent heat, so it appears in

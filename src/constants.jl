@@ -117,6 +117,37 @@ const DENSITY_NEW_SNOW_PAHAUT_B = 6.0
 const DENSITY_NEW_SNOW_PAHAUT_C = 26.0
 const DENSITY_NEW_SNOW_PAHAUT_MIN = 50.0
 
+# Fresh-snow density coefficients for `new_snow_method = :vanKampenhout2017` — van
+# Kampenhout et al. (2017) eqs. 2-4, p. 2587: `ρ_fs = ρ_T + ρ_W`, with `ρ_T` piecewise in
+# `ΔT = T_air - CtoK` [K] and `ρ_W` a function of the 10 m wind speed [m s-1].
+const DENSITY_NEW_SNOW_VK17_DT_WARM = 2.0     # ΔT above which ρ_T is constant [K]
+const DENSITY_NEW_SNOW_VK17_DT_COLD = -15.0   # ΔT at or below which the cold branch applies [K]
+const DENSITY_NEW_SNOW_VK17_A = 50.0          # middle branch: A + B·(ΔT + 15)^1.5 [kg m-3]
+const DENSITY_NEW_SNOW_VK17_B = 1.7           # [kg m-3 K-1.5]
+const DENSITY_NEW_SNOW_VK17_C1 = -3.8328      # cold branch: C1·ΔT + C2·ΔT² [kg m-3 K-1]
+const DENSITY_NEW_SNOW_VK17_C2 = -0.0333      # [kg m-3 K-2]
+const DENSITY_NEW_SNOW_VK17_W = 266.861       # wind term: W·(½(1 + tanh(U/U_s)))^n [kg m-3]
+const DENSITY_NEW_SNOW_VK17_U_SCALE = 5.0     # U_s [m s-1]
+const DENSITY_NEW_SNOW_VK17_W_EXPONENT = 8.8  # n [-]
+# Destructive-metamorphism settling of fresh snow, Anderson (1976) in the form of van
+# Kampenhout et al. (2017) eq. 5, p. 2587, with the density taper of Schneider et al. (2022)
+# eq. 3, p. 3: strain rate `c3·c2·c1·exp(-c4·(T_frz - T))`, `c1 = exp(-c5·(ρ - ρ_dm))` above
+# `ρ_dm`. Read by `destructive_metamorphism_rate`.
+const DESTRUCTIVE_METAMORPHISM_C3 = 2.777e-6   # [s-1], vK17 p. 2587 (Schneider: 2.78e-6)
+const DESTRUCTIVE_METAMORPHISM_C4 = 0.04       # [K-1], both papers
+const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-3)
+const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
+const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 175.0  # ρ_dm [kg m-3], vK17 p. 2587
+
+# Fetch length L [m] of the Keenan et al. (2021) saltation flux, eq. 3, p. 1067: the
+# horizontal scale over which the saltation transport is eroded from the surface. Keenan et
+# al. choose 10 m as the scale of sastrugi and barchan dunes and call it a tuning parameter.
+const DRIFT_FETCH_LENGTH_DEFAULT = 10.0
+
+# Standard 10 m reference height of wind speed [m]: the height eq. 4 of van Kampenhout et al.
+# (2017) and eqs. 3-4 of Keenan et al. (2021) define their wind at.
+const WIND_HEIGHT_10M = 10.0
+
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
 # (`_seb_annual_melt`), which blends between the dry-snow and ice values.
