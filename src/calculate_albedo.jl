@@ -33,15 +33,13 @@ Where the column has a surface of firn or ice, or snow over one, the albedos are
   from `mp.albedo_ice` at `mp.density_ice` to `ALBEDO_FIRN_MAX` (0.65) at pore close-off, for
   both streams.
 - **Snow over firn or ice, `:GardnerSharp`**: Gardner & Sharp (2010) eq. 13 (p. 11) for a snow
-  layer of depth `z` [m w.e.] over a semi-infinite layer. `z` is the matrix mass of the snow
-  cells above the first cell at or above pore close-off, divided by `DENSITY_WATER`. Eq. 13
-  keeps the zenith and cloud terms of eqs. 9–11, while exposed firn and ice carry none, so the
-  lower layer's albedo `α_c^btm` is solved for at each evaluation: it is the value for which
-  eqs. 9–12 at that evaluation's zenith angle and cloud optical thickness return exactly
-  `firn_ice_albedo` of that cell ([`_gardner_lower_albedo`](@ref)). The albedo is therefore
-  continuous at snow exposure: its `z → 0` limit is the exposed firn or ice albedo for every
-  geometry. See [`_albedo_gardner_over`](@ref). At `SZA = 0` and `τ = 0` the solution is
-  `firn_ice_albedo` itself.
+  layer of depth `z` [m w.e.] over a semi-infinite layer whose albedo is `firn_ice_albedo` of
+  the first cell at or above pore close-off, with `z` the matrix mass of the snow cells above
+  that cell divided by `DENSITY_WATER`. The zenith and cloud terms of eqs. 9–11 are scaled by
+  eq. 13's thin-snow weight `A`, so they vanish with the snow, as they do on exposed firn and
+  ice: the albedo is continuous at snow exposure, its `z → 0` limit is exactly the exposed
+  albedo, and wherever `A = 1` it is the semi-infinite value of eqs. 7–12. See
+  [`_albedo_gardner`](@ref).
 - **Thin snow over firn or ice, `:BrunLefebre`**: the MAR integrated albedo of Lefebre et al.
   (2003, p. 3 ¶14), linear in the snow thickness `d` between the albedo of the firn or ice
   surface at `d = 0` and the semi-infinite snow albedo at `d ≥ ALBEDO_SNOW_DEPTH_THICK`
@@ -90,11 +88,11 @@ function calculate_albedo(dz::Vector{Float64},
         elseif mp.albedo_method == :GardnerSharp
             # `z_we` is Inf when no firn or ice lies under the snow (semi-infinite snow).
             z_we = mass_snow / DENSITY_WATER
-            albedo_diffuse = _albedo_gardner_over(grain_radius[1], cfs.black_carbon_snow,
+            albedo_diffuse = _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
                 ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness, albedo_under, z_we)
             # With the sun at or below the horizon there is no direct beam; see the docstring.
             albedo = cfs.solar_zenith_angle < 90.0 ?
-                     _albedo_gardner_over(grain_radius[1], cfs.black_carbon_snow,
+                     _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
                          cfs.solar_zenith_angle, cfs.cloud_optical_thickness, albedo_under,
                          z_we) :
                      albedo_diffuse
@@ -197,28 +195,49 @@ end
 Broadband albedo from Gardner and Sharp (2010, eqs. 7–12, pp. 10–11): the pure-snow albedo
 `α_S` from the specific surface area (eq. 7), plus the changes due to soot loading `c` [ppmw]
 (eq. 8, giving `α_c = α_S + dα_c`), solar zenith angle `SZA` [degrees, 0 ≤ SZA < 90] (eqs. 9–10)
-and cloud optical thickness `τ ≥ 0` (eq. 11), summed by eq. 12. A zenith angle outside that
-range throws: the zenith term is defined only for the sun above the horizon.
+and cloud optical thickness `τ ≥ 0` (eq. 11), summed by eq. 12:
+
+    α = α_c + dα_u(α_c) + dα_τ(α_c),
+    dα_u(α_c) = 0.53·α_S·(1 − α_c)·(1 − u′)^1.2,   dα_τ(α_c) = 0.1·τ·α_c^1.3 / (1 + 1.5τ)^α_S,
+
+with `u′` the cosine of the effective zenith angle (eq. 10). A zenith angle outside `[0, 90)`
+throws: the zenith term is defined only for the sun above the horizon.
 
 The four-argument form is semi-infinite snow. The six-argument form is a snow layer `z_we`
-[m w.e.] deep over a semi-infinite layer of albedo `albedo_under`, by eq. 13 (p. 11 ¶51–52):
-`dα_c` is replaced in eqs. 8–12 by
+[m w.e.] deep over firn or ice whose exposed albedo is `albedo_under`, which carries no zenith
+or cloud term ([`firn_ice_albedo`](@ref)). Eq. 13 (p. 11 ¶51–52) replaces `dα_c` in eqs. 8–12 by
 
     dα′_c = (α_c^btm − α_S^top) + A·(α_c^top − α_c^btm),
     A = min(1, 2.1·z^p),   p = 1.35·(1 − α_S^top) − 0.1·c^top − 0.13,
 
-with `α_c^btm = albedo_under` and the snow's `α_S`, `α_c` and `c` as the top layer. The zenith
-and cloud terms (eqs. 9 and 11) are then evaluated with `α_c′ = α_S + dα′_c`. As `z_we → 0`
-the result therefore tends to eqs. 9–12 with `α_c = albedo_under`, which equals
-`albedo_under` at `SZA = 0` and `τ = 0`. [`_albedo_gardner_over`](@ref) instead takes the
-albedo the exposed lower layer has and solves for the `α_c^btm` that reproduces it.
+so `α′_c = α_c^btm + A·(α_c^top − α_c^btm)`, with `α_c^btm = albedo_under` and the snow's
+`α_S`, `α_c` and `c` as the top layer. The zenith and cloud increments are evaluated at `α′_c`,
+as in the paper, and multiplied by `A`:
 
-Where `A = 1`, from `z_we = 2.1^(−1/p)` upward, the result is the semi-infinite value exactly;
-`z_we = Inf` is semi-infinite snow. Gardner and Sharp fitted eq. 13 for snow over ice or old
-snow (p. 11 ¶52) with `z` 0.01–0.5 m w.e., `r_e` 0.05–1 mm, `c` 0–0.3 ppmw, `SZA` 0–75° and
-`τ` 0–20 (Table B2, p. 13). Below `z = 0.01` m w.e. the formula is extrapolated toward
-`A = 0`. Over that fitted range `p > 0`; for `p ≤ 0` (very fine or sooty snow, outside it) `A`
-is 1, which is the formula's value for every `z_we ≤ 1` m w.e.
+    α = α′_c + A·(dα_u(α′_c) + dα_τ(α′_c)).
+
+**Departure from the paper:** the factor `A` on the two increments. Eq. 12 adds them unscaled,
+so as `z → 0` the paper's albedo tends to eqs. 9–12 evaluated with `α_c = α_c^btm`, which lies
+above an exposed albedo that has no zenith or cloud term (by up to 0.45 for fresh snow at low
+sun under clear sky). With the factor, the `z = 0` value is `albedo_under` exactly at every
+geometry and the albedo is continuous when the last snow goes. Where `A = 1`, from
+`z_we = 2.1^(−1/p)` upward, the factor is 1 and the result is the semi-infinite value of
+eqs. 7–12 bit for bit; `z_we = Inf` is semi-infinite snow. Inside the fitted depth range
+(`z ≥ 0.01` m w.e.) `A < 1` only where `p > ln 2.1 / ln 100 ≈ 0.161`, which for clean snow
+means `r_e` above about 0.18 mm.
+
+Writing `F = dα_u + dα_τ`, `F(α) ≤ k_u + k_τ` on `[0, 1]` with `k_u = 0.53·α_S·(1 − u′)^1.2 < 1`
+and `k_τ = 0.1·τ/(1 + 1.5τ)^α_S`, so `|α − albedo_under| ≤ A·(|α_c^top − albedo_under| + k_u +
+k_τ)`: the albedo approaches the exposed value as `A`, i.e. as `z^p`. `dα/dA = (α_c^top −
+albedo_under)·(1 + A·F′(α′_c)) + F(α′_c)` with `1 + A·F′ ≥ 1 − k_u > 0`, so where the snow's
+`α_c` is at least `albedo_under` the albedo increases with `z`. The approach is slow: `p` is
+0.08–0.35 over the fitted grain sizes.
+
+Gardner and Sharp fitted eq. 13 for snow over ice or old snow (p. 11 ¶52) with `z`
+0.01–0.5 m w.e., `r_e` 0.05–1 mm, `c` 0–0.3 ppmw, `SZA` 0–75° and `τ` 0–20 (Table B2, p. 13).
+Below `z = 0.01` m w.e. the formula is extrapolated toward `A = 0`. Over that fitted range
+`p > 0`; for `p ≤ 0` (very fine or sooty snow, outside it) `A` is 1, which is the formula's
+value for every `z_we ≤ 1` m w.e., so such snow keeps its semi-infinite albedo down to `z = 0`.
 """
 _albedo_gardner(grain_radius_surface::Float64, c::Float64, SZA::Float64, t::Float64) =
     _albedo_gardner(grain_radius_surface, c, SZA, t, 0.0, Inf)
@@ -227,49 +246,16 @@ function _albedo_gardner(grain_radius_surface::Float64, c::Float64,
     SZA::Float64, t::Float64, albedo_under::Float64, z_we::Float64)
 
     as, dac, u = _gardner_terms(grain_radius_surface, c, SZA, t, z_we)
+    z_we < Inf || return _gardner_sum(as, dac, u, t)
 
-    # finite snow depth over a lower layer of albedo `albedo_under` (eq. 13); at A = 1 the
-    # semi-infinite `dac` is kept as is
-    if z_we < Inf
-        (0.0 <= albedo_under <= 1.0) ||
-            throw(DomainError(albedo_under, "albedo of the layer under the snow must be in [0, 1]"))
-        A = _gardner_thin_snow_weight(as, c, z_we)
-        if A < 1.0
-            dac = (albedo_under - as) + A * ((as + dac) - albedo_under)
-        end
-    end
+    (0.0 <= albedo_under <= 1.0) ||
+        throw(DomainError(albedo_under, "albedo of the layer under the snow must be in [0, 1]"))
+    A = _gardner_thin_snow_weight(as, c, z_we)
+    A < 1.0 || return _gardner_sum(as, dac, u, t)
 
-    return _gardner_sum(as, dac, u, t)
-end
-
-"""
-    _albedo_gardner_over(grain_radius_surface, c, SZA, τ, albedo_exposed, z_we) -> α
-
-Albedo of a snow layer `z_we` [m w.e.] deep over firn or ice whose exposed albedo is
-`albedo_exposed`: Gardner and Sharp (2010) eq. 13 as in [`_albedo_gardner`](@ref), with the
-lower layer's albedo `α_c^btm` = [`_gardner_lower_albedo`](@ref)`(albedo_exposed, …)` at this
-grain radius, zenith angle and cloud optical thickness. As `z_we → 0` the result tends to
-`albedo_exposed` for every geometry, so the albedo is continuous when the last snow goes and
-the exposed surface takes `albedo_exposed` with no zenith or cloud term.
-
-The approach is slow: `A = 2.1·z^p` with `p` 0.08–0.35 over the fitted grain sizes, so at
-`z_we = 1e-9` the layer still shows 0.15–41 % of the way from the exposed albedo to the snow's.
-
-Where `A = 1` the root is not needed and the result is the semi-infinite value exactly, as for
-`_albedo_gardner`. `z_we = Inf` is semi-infinite snow.
-"""
-function _albedo_gardner_over(grain_radius_surface::Float64, c::Float64,
-    SZA::Float64, t::Float64, albedo_exposed::Float64, z_we::Float64)
-
-    as, dac, u = _gardner_terms(grain_radius_surface, c, SZA, t, z_we)
-    if z_we < Inf
-        A = _gardner_thin_snow_weight(as, c, z_we)
-        if A < 1.0
-            albedo_under = _gardner_lower_albedo(albedo_exposed, as, u, t)
-            dac = (albedo_under - as) + A * ((as + dac) - albedo_under)
-        end
-    end
-    return _gardner_sum(as, dac, u, t)
+    # eq. 13: α′_c, and the zenith and cloud increments scaled by A
+    ac = albedo_under + A * ((as + dac) - albedo_under)
+    return ac + A * (_gardner_zenith_term(as, ac, u) + _gardner_cloud_term(as, ac, t))
 end
 
 # Pure-snow albedo `as` (eq. 7), its change by soot `dac` (eq. 8) and the cosine `u` of the
@@ -308,94 +294,17 @@ end
     return p > 0.0 ? min(1.0, 2.1 * z_we^p) : 1.0
 end
 
-# Eq. 12: the sum of `as`, `dac`, and the zenith (eq. 9) and cloud (eq. 11) terms evaluated with
-# α_c = as + dac.
+# Eq. 9: change in albedo due to solar zenith angle, at loaded-snow albedo `ac`.
+@inline _gardner_zenith_term(as::Float64, ac::Float64, u::Float64) =
+    0.53 * as * (1 - ac) * (1 - u)^1.2
+
+# Eq. 11: change in albedo due to cloud (apart from the change in diffuse fraction), at
+# loaded-snow albedo `ac`.
+@inline _gardner_cloud_term(as::Float64, ac::Float64, t::Float64) =
+    (0.1 * t * ac^1.3) / ((1 + 1.5 * t)^as)
+
+# Eq. 12 for semi-infinite snow: the sum of `as`, `dac`, and the zenith and cloud terms evaluated
+# with α_c = as + dac.
 @inline function _gardner_sum(as::Float64, dac::Float64, u::Float64, t::Float64)
-    # change in albedo due to solar zenith angle
-    dasz = 0.53 * as * (1 - (as + dac)) * (1 - u)^1.2
-
-    # change in albedo due to cloud (apart from change in diffuse fraction)
-    dat = (0.1 * t * (as + dac)^1.3) / ((1 + 1.5 * t)^as)
-
-    # Broadband albedo
-    return as + dac + dasz + dat
+    return as + dac + _gardner_zenith_term(as, as + dac, u) + _gardner_cloud_term(as, as + dac, t)
 end
-
-"""
-    _gardner_lower_albedo(albedo_exposed, as, u, τ) -> α_c^btm
-
-The lower-layer albedo for which Gardner and Sharp (2010) eqs. 9–12, at pure-snow albedo `as`
-(eq. 7, of the snow on top), effective-zenith cosine `u` (eq. 10) and cloud optical thickness
-`τ`, return `albedo_exposed`. This is the `z → 0` limit of eq. 13, where `α_c′ = α_c^btm`:
-
-    G(y) = y + k_u·(1 − y) + k_τ·y^1.3 = albedo_exposed,
-    k_u = 0.53·as·(1 − u)^1.2,   k_τ = 0.1·τ/(1 + 1.5τ)^as.
-
-`G′(y) = 1 − k_u + 1.3·k_τ·y^0.3`. Since `as < 1.48` for every finite specific surface area and
-`0 < u ≤ 1`, `k_u ≤ 0.53·as < 1`, and `k_τ ≥ 0`, so `G` is strictly increasing on `[0, 1]`,
-from `G(0) = k_u` to `G(1) = 1 + k_τ ≥ 1`. A root in `[0, 1]` therefore exists, and is unique,
-exactly when `albedo_exposed ≥ k_u`. At `u = 1` and `τ = 0`, `G(y) = y` and the root is
-`albedo_exposed` itself.
-
-`albedo_exposed < k_u` throws: eqs. 9–12 cannot return an albedo below `k_u` for any lower
-layer. With fresh snow on top (`as ≈ 0.845` at `r_e` 0.05 mm) `k_u` reaches 0.45 as the sun
-approaches the horizon under clear sky; it exceeds an `albedo_ice` of 0.30 above a zenith angle of
-about 73.5°, and of 0.20 above about 60.7°. A cloud optical thickness of 3 or more sets `u = 0.64`
-and `k_u = 0.156·as`. The default `albedo_ice` of 0.48 is above `k_u` at every geometry.
-
-The root is found by Newton's method safeguarded by bisection on the bracket `[0, 1]`, with
-the residual evaluated by the same expression as the albedo itself, until the residual is zero
-or the bracket is two adjacent floating-point numbers; the residual returned is then the
-smallest of those evaluated.
-"""
-function _gardner_lower_albedo(albedo_exposed::Float64, as::Float64, u::Float64, t::Float64)
-    (0.0 <= albedo_exposed <= 1.0) ||
-        throw(DomainError(albedo_exposed, "exposed firn or ice albedo must be in [0, 1]"))
-
-    # Eq. 12 at A = 0, where `dac = α_c^btm − as`, exactly as `_albedo_gardner_over` evaluates it.
-    residual(y) = _gardner_sum(as, y - as, u, t) - albedo_exposed
-    k_u = 0.53 * as * (1 - u)^1.2
-    k_τ = 0.1 * t / (1 + 1.5 * t)^as
-
-    lo, hi = 0.0, 1.0
-    r_lo, r_hi = residual(lo), residual(hi)
-    r_lo <= 0.0 || error("Gardner-Sharp eq. 13: no lower-layer albedo in [0, 1] makes " *
-        "eqs. 9–12 return the exposed firn or ice albedo $(albedo_exposed): at this geometry " *
-        "(u = $(u), τ = $(t)) and pure-snow albedo $(as) of the snow on top, the zenith term " *
-        "alone is $(r_lo + albedo_exposed) (eq. 9 with α_c = 0). This happens under clear " *
-        "sky at large zenith angles over dark ice; see `_gardner_lower_albedo`.")
-    r_hi >= 0.0 || error("Gardner-Sharp eq. 13: eqs. 9–12 with a lower-layer albedo of 1 " *
-        "return $(r_hi + albedo_exposed) < $(albedo_exposed)")
-    r_lo == 0.0 && return lo
-    r_hi == 0.0 && return hi
-
-    best, r_best = abs(r_lo) <= abs(r_hi) ? (lo, r_lo) : (hi, r_hi)
-    # The root of the clear-sky equation (k_τ = 0), a close start under any cloud.
-    y = clamp((albedo_exposed - k_u) / (1 - k_u), lo, hi)
-    for _ in 1:GARDNER_LOWER_ALBEDO_MAX_ITERATIONS
-        r = residual(y)
-        if abs(r) < abs(r_best)
-            best, r_best = y, r
-        end
-        r == 0.0 && return y
-        if r < 0.0
-            lo = y
-        else
-            hi = y
-        end
-        nextfloat(lo) >= hi && return best
-        y_new = y - r / (1 - k_u + 1.3 * k_τ * y^0.3)
-        # A Newton step below one ulp probes the neighbouring float on the side of the root.
-        if y_new == y
-            y_new = r < 0.0 ? nextfloat(y) : prevfloat(y)
-        end
-        y = lo < y_new < hi ? y_new : 0.5 * (lo + hi)
-    end
-    error("Gardner-Sharp eq. 13: lower-layer albedo for exposed albedo $(albedo_exposed) did " *
-          "not converge in $(GARDNER_LOWER_ALBEDO_MAX_ITERATIONS) iterations (bracket " *
-          "[$(lo), $(hi)])")
-end
-
-# Newton with a bisection fallback reaches adjacent floats on [0, 1] in a few iterations from
-# the clear-sky start; the cap only stops a loop that has stopped making progress.
-const GARDNER_LOWER_ALBEDO_MAX_ITERATIONS = 200

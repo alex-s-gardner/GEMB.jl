@@ -450,6 +450,10 @@ Consequences for consumers of the output:
   `:BrunLefebre`, `:GreuellKonzelmann`) are diagnostic functions of the current column, so
   `calculate_albedo` returns two scalars rather than per-cell vectors. The surface series
   `albedo_broadband` is recorded from the value used in that timestep's shortwave balance.
+- **Thin snow over firn or ice** under `:GardnerSharp` is Gardner & Sharp (2010) eq. 13 with
+  the zenith and cloud increments (eqs. 9, 11) multiplied by eq. 13's weight `A`. The albedo
+  therefore reaches the exposed firn or ice albedo exactly as the snow goes, at every sun angle
+  and cloud cover; where `A = 1` it is eqs. 7–12 unchanged.
 - **`ice_flux` is a signed per-interval basal flux**, so `cumsum(ice_flux)` is the cumulative
   flux exactly. Its negation is surface elevation change against a datum fixed in the ice;
   see [`trim_bottom!`](@ref) for the identity.

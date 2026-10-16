@@ -228,22 +228,24 @@ end
     # Deep, graded column so nothing is transmitted through the base. For each albedo method,
     # with and without subsurface absorption, the column absorbs exactly
     # (1 − α)(SW↓ − SW↓_d) + (1 − α_d)·SW↓_d with the albedos `calculate_albedo` returned —
-    # including over thin snow on ice and on firn, where those differ from the grain-size albedo.
+    # including over thin snow on ice and on firn, where those differ from the grain-size albedo,
+    # exposed ice, snow deep enough for A = 1 over ice, dark ice at low sun, and night.
     n = 400
     dz = fill(0.1, n)
     profiles = (collect(range(300.0, 917.0; length=n)),
         [fill(350.0, 1); fill(917.0, n - 1)], [fill(350.0, 1); fill(870.0, n - 1)],
-        [fill(350.0, 1); fill(917.0, n - 1)])
+        [fill(350.0, 1); fill(917.0, n - 1)], fill(917.0, n),
+        [fill(350.0, 3); fill(917.0, n - 3)])
     dz_profiles = (dz, [0.04; fill(0.1, n - 1)], [0.01; fill(0.1, n - 1)],
-        [1e-5; fill(0.1, n - 1)])
+        [1e-5; fill(0.1, n - 1)], dz, dz)
     for method in (:GardnerSharp, :BrunLefebre, :GreuellKonzelmann), sub in (false, true),
-        (density, dzp) in zip(profiles, dz_profiles),
-        (sza, τ) in ((40.0, 1.0), (0.0, 0.0), (60.0, 0.0), (75.0, 10.0))
+        (density, dzp) in zip(profiles, dz_profiles), albedo_ice in (0.20, 0.35),
+        (sza, τ) in ((40.0, 1.0), (0.0, 0.0), (60.0, 0.0), (75.0, 10.0), (85.0, 0.0), (95.0, 3.0))
         cfs = GEMB.ClimateForcingStep(; dt=3600.0, shortwave_downward=500.0,
             shortwave_downward_diffuse=200.0, solar_zenith_angle=sza,
             cloud_optical_thickness=τ, cloud_fraction=0.5)
         mp = GEMB.ModelParameters(albedo_method=method, shortwave_subsurface_absorption=sub,
-            albedo_ice=0.35)
+            albedo_ice=albedo_ice)
         grain_radius = fill(0.5, n)
         α, α_d = GEMB.calculate_albedo(dzp, density, grain_radius, cfs, mp)
         sw = GEMB.calculate_shortwave_radiation(dzp, density, grain_radius, α, α_d, cfs, mp)
