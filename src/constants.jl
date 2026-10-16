@@ -78,6 +78,41 @@ const GRAIN_GROWTH_KGR = 1.3e-7
 # which ramps to zero across [150, this].
 const DENSITY_MARBOUTY_MAX = 400.0
 
+# Dry-snow specific-surface-area (SSA) decay of `grain_growth_method = :Taillandier2007`, in
+# GEMB's SSA convention S = 3/(0.091·r) [cm2 g-1, r in mm] (Gardner and Sharp, 2010, eq. 7),
+# starting from the SSA of GEMB's fresh snow.
+const SSA_NEW_SNOW = 3 / (0.091 * RE_NEW_SNOW)
+# Taillandier et al. (2007), p. 8: SSA(t) = B − A·ln(t + Δt) with t in hours and, for initial SSA
+# S0 and mean temperature Tm [°C], A = a1·S0 − a2·(Tm − a3) and B = b1·S0 − b2·(Tm − b3).
+# Equitemperature (ET) metamorphism, eqs. 10-11:
+const TAILLANDIER_ET_A = (0.0760, 1.76, 2.96)
+const TAILLANDIER_ET_B = (0.629, 15.0, 11.2)
+# Temperature-gradient (TG) metamorphism, eqs. 6-7 (A' = 0.0961·S0 − 3.44·(Tm + 1.90)):
+const TAILLANDIER_TG_A = (0.0961, 3.44, -1.90)
+const TAILLANDIER_TG_B = (0.659, 27.2, 2.03)
+# Gradient above which the TG law applies [K m-1]. Taillandier et al. (2007, p. 10 ¶38) place the
+# ET-TG boundary between 9 and 20 K m-1; 15 K m-1 is where Brun et al. (1992) start
+# temperature-gradient growth (Vionnet et al., 2012, Table 1).
+const SSA_DECAY_GRADIENT_THRESHOLD = 15.0
+# Floor on the decaying SSA [cm2 g-1]: the asymptote Taillandier et al. (2007, p. 10 ¶36) give for
+# depth hoar under TG metamorphism (r = 0.41 mm).
+const SSA_DECAY_MIN = 80.0
+# Snow aging of SNICAR in CLM5.0 (`grain_growth_method = :FlannerZender2006`; see
+# `snicar_aging.jl`), radii in µm. Values from SnowSnicarMod.F90 (CTSM commit e7c1b5a) and the
+# CLM5.0 parameter file clm50_params.c250311.nc (snw_rds_min, snw_rds_refrz, C2_liq_Brun89,
+# xdrdt = 1).
+# Radius of fresh snow the aging table was fitted from, r0 of dr/dt = drdt0·(τ/(r − r0 + τ))^(1/κ)
+# (snw_rds_min; 3/(917·S) for S = 60 m2 kg-1, Flanner et al., 2007, p. 4).
+const SNICAR_RADIUS_FRESH = 54.526
+# Largest radius of the SNICAR optics table, the upper bound on aged snow (snw_rds_max).
+const SNICAR_RADIUS_MAX = 1500.0
+# Radius given to refrozen liquid water (snw_rds_refrz).
+const SNICAR_RADIUS_REFROZEN = 1000.0
+# Wet-snow growth of Brun (1989) without its dry term, dV/dt = C2·f³ for liquid mass fraction f
+# [m3 s-1] (C2_liq_Brun89; C1_liq_Brun89 = 0), and the cap on f.
+const SNICAR_LIQUID_GROWTH = 4.22e-13
+const SNICAR_LIQUID_FRACTION_MAX = 0.1
+
 # Density separating the two densification stages [kg m-3]. Every scheme in
 # `calculate_density` switches rate coefficients here: it is the transition from
 # grain-settling-dominated to creep-dominated compaction, and all the published two-stage

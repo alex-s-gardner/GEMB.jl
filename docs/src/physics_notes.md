@@ -157,9 +157,31 @@ independently of the albedo scheme.
 - **`:hybrid`** — Marbouty below 400 kg m⁻³ and Arthern at or above it, keeping the
   temperature-gradient physics in seasonal snow while grains continue to coarsen in firn.
   This is the default.
+- **`:Taillandier2007`** — below 400 kg m⁻³, the specific-surface-area decay of dry snow
+  measured by Taillandier et al. (2007), `SSA = B − A·ln(t + Δt)` with equitemperature
+  (eq. 13) or temperature-gradient (eq. 9, above 15 K m⁻¹) coefficients, advanced from the
+  current SSA at the cell temperature; Arthern above.
+- **`:FlannerZender2006`** — the snow aging of SNICAR in CLM5.0 (CLM5.0 Technical Note
+  §2.3.2.3; `SnowAge_grain` in CTSM's `SnowSnicarMod.F90`). Dry growth is
+  `dr/dt = (dr/dt)₀·(τ/(r − r₀ + τ))^(1/κ)`, `r₀ = 54.526 µm`, the radius form of the SSA
+  decay of Flanner and Zender (2006, eq. 16), with τ, κ and (dr/dt)₀ from the nearest node of
+  the table Flanner fitted to their microphysical model (`snicar_drdt_bst_fit_60_c070416.nc`,
+  copied to `data/`; 223–273 K, 0–300 K m⁻¹, 50–400 kg m⁻³). Wet growth is Brun (1989)
+  without its dry term, refrozen water enters at 1000 µm, and radii are capped at 1500 µm.
+  It ages every dendritic cell and every cell below 400 kg m⁻³; the radius of dendritic snow
+  is then state of its own, not diagnosed from dendricity and sphericity, which still evolve
+  for the schemes that read them. Arthern applies at or above 400 kg m⁻³. CLM 5.1 and 6.0
+  multiply the dry rate by 5 (`xdrdt`) and raise the refrozen radius to 1500 µm as tuning;
+  this option uses the CLM5.0 values.
+
+Under `:Marbouty` and `:hybrid`, dry non-dendritic surface snow does not coarsen at gradients
+below 16 K m⁻¹, and at GEMB's 350 kg m⁻³ fresh-snow density Marbouty's density factor is 0.2,
+as in Brun et al. (1992) and Crocus (Vionnet et al., 2012, Table 1). In cold, low-gradient
+weather the surface radius then stays near that of fresh snow mixed into the top cell;
+`:Taillandier2007` and `:FlannerZender2006` coarsen it at the measured and modeled rates.
 
 The dendritic and wet (Brun, 1989) branches and the `GRAIN_DIAMETER_MAX` cap are common to
-all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growth densifies
+every setting but `:FlannerZender2006`. Because `:ArthernB` densification goes as `1/r²`, faster grain growth densifies
 *more* slowly: on synthetic forcing with `:ArthernB`, final mean column density is
 902.6 kg m⁻³ under `:Marbouty` (median grain radius 0.41 mm), 891.4 under `:hybrid`
 (0.589 mm) and 889.3 under `:Arthern` (0.592 mm).

@@ -309,7 +309,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
                 density[1] = (M_surface + cfs.precipitation) / dz[1]
                 grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(
                     grain_dendricity[1], grain_sphericity[1], grain_radius[1], M_surface,
-                    dfall, sfall, refall, cfs.precipitation)
+                    dfall, sfall, refall, cfs.precipitation, independent_grain_radius(mp))
             end
 
         else

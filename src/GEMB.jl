@@ -38,6 +38,7 @@ include("densification_lookup.jl")
 include("grid_ops.jl")
 
 # Core physics modules
+include("snicar_aging.jl")
 include("calculate_grain_size.jl")
 include("calculate_albedo.jl")
 include("calculate_shortwave_radiation.jl")

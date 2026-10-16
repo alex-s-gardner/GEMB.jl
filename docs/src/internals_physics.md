@@ -18,6 +18,7 @@ Pages = [
     "densification_lookup.jl",
     "heat_capacity.jl",
     "hydrology.jl",
+    "snicar_aging.jl",
     "thermal_conductivity.jl",
     "turbulent_heat_flux.jl",
 ]

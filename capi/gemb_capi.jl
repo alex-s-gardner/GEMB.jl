@@ -102,7 +102,7 @@ const OPTION_VALUES = (
     (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019),
     (:constant, :CuffeyPaterson),
     (:water, :ice),
-    (:Marbouty, :Arthern, :hybrid),
+    (:Marbouty, :Arthern, :hybrid, :Taillandier2007, :FlannerZender2006),
     (:constant, :ColeouLesaffre),
     (:thickness, :density),
     (:instantaneous, :ZuoOerlemans, :Darcy),

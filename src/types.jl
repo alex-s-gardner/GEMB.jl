@@ -506,7 +506,12 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # Model ships as `GrGrowPhysics: "Arthern"`) applies the firn law at every density, where
     # dry surface snow barely coarsens. `:Marbouty` stops growing grains at
     # `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen in deep firn — where `:ArthernB`
-    # and `:Crocus` densification read it as `1/r²`. See `calculate_grain_size`.
+    # and `:Crocus` densification read it as `1/r²`. `:Taillandier2007` replaces Marbouty
+    # below `DENSITY_MARBOUTY_MAX` by the measured specific-surface-area decay of dry snow
+    # (Taillandier et al., 2007). `:FlannerZender2006` ages all snow below it, and all dendritic
+    # snow, by the SNICAR law of CLM5.0 (Flanner and Zender, 2006; Flanner et al., 2007), with
+    # radius as state of its own. Both coarsen surface snow at low gradients, where Marbouty's
+    # law is zero. See `calculate_grain_size`.
     grain_growth_method::Symbol = :hybrid
 
     # --- Melt & Water ---

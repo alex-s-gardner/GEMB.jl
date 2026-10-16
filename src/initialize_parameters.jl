@@ -83,7 +83,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.rain_heat_capacity in (:water, :ice) "rain_heat_capacity must be water or ice"
 
     # Grain growth
-    @assert mp.grain_growth_method in (:Marbouty, :Arthern, :hybrid) "grain_growth_method must be one of: Marbouty, Arthern, hybrid"
+    @assert mp.grain_growth_method in (:Marbouty, :Arthern, :hybrid, :Taillandier2007, :FlannerZender2006) "grain_growth_method must be one of: Marbouty, Arthern, hybrid, Taillandier2007, FlannerZender2006"
 
     # Water
     @assert mp.water_irreducible_method in (:constant, :ColeouLesaffre) "water_irreducible_method must be constant or ColeouLesaffre"

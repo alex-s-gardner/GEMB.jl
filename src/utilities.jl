@@ -132,6 +132,19 @@ should use this.
         GDN_TOLERANCE * 2) / 2
 
 """
+    independent_grain_radius(mp) -> Bool
+
+Whether the grain radius of dendritic snow is state of its own rather than
+[`dendritic_grain_radius`](@ref) of its dendricity and sphericity: true under
+`grain_growth_method = :FlannerZender2006`, whose SNICAR aging carries one prognostic radius
+from fresh snow on (see [`calculate_grain_size`](@ref)). Where this holds, mixing and drift
+leave the radius to [`mix_grains`](@ref)'s non-dendritic rule or unchanged instead of
+re-deriving it.
+"""
+@inline independent_grain_radius(mp::ModelParameters) =
+    mp.grain_growth_method === :FlannerZender2006
+
+"""
     fast_divisors(n::Integer)
 
 Find all positive divisors of integer `n`, returned sorted.

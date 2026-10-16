@@ -308,7 +308,7 @@ in. A layer thin enough, or similar enough, is not distinct; `D = Inf` (firn or 
     D * z >= SNOW_LAYER_AGGREGATION_FACTOR * mp.column_dztop
 
 """
-    mix_grains(d1, s1, r1, M1, d2, s2, r2, M2) -> (d, s, r)
+    mix_grains(d1, s1, r1, M1, d2, s2, r2, M2, independent_radius = false) -> (d, s, r)
 
 Grain state of snow of matrix mass `M1` with dendricity `d1`, sphericity `s1` and effective radius
 `r1` [mm] combined with `M2` of `(d2, s2, r2)`, after the aggregation of Crocus (Lafaysse et
@@ -324,17 +324,21 @@ to conserve the mass-weighted albedo. With weight `f = M2/(M1 + M2)`:
   `q = ALBEDO_GRAIN_RADIUS_EXPONENT`. This weights fine grains more than a linear mean (50/50 of
   1 mm and 0.05 mm gives 0.24 mm).
 
+With `independent_radius` (see [`independent_grain_radius`](@ref)) the radius is mixed by the
+second rule in both cases, and two dendritic states still mix their dendricity.
+
 Every result moves from the first state by `O(f)`. Where the mixed sphericity and dendricity, or
 the mixed `r^q`, round back to the first state's values (in particular `f = 0`, when
 `M2/(M1 + M2)` underflows), the first state is returned bit for bit.
 """
 @inline function mix_grains(d1::Float64, s1::Float64, r1::Float64, M1::Float64,
-    d2::Float64, s2::Float64, r2::Float64, M2::Float64)
+    d2::Float64, s2::Float64, r2::Float64, M2::Float64, independent_radius::Bool = false)
     f = M2 / (M1 + M2)
     f == 0.0 && return d1, s1, r1
     s = s1 + f * (s2 - s1)
-    if (d1 > GDN_TOLERANCE) && (d2 > GDN_TOLERANCE)
-        d = d1 + f * (d2 - d1)
+    dendritic = (d1 > GDN_TOLERANCE) && (d2 > GDN_TOLERANCE)
+    d = dendritic ? d1 + f * (d2 - d1) : 0.0
+    if dendritic && !independent_radius
         (d == d1 && s == s1) && return d1, s1, r1
         return d, s, dendritic_grain_radius(d, s)
     end
@@ -342,7 +346,7 @@ the mixed `r^q`, round back to the first state's values (in particular `f = 0`, 
     a1 = r1^q
     a = a1 + f * (r2^q - a1)
     r = a == a1 ? r1 : a^(1 / q)
-    return 0.0, s, r
+    return d, s, r
 end
 
 """
@@ -361,7 +365,8 @@ water and thickness summed, age mass-weighted), but with the grain state of the 
         cols.grain_radius[i_target] = mix_grains(
             cols.grain_dendricity[i_target], cols.grain_sphericity[i_target],
             cols.grain_radius[i_target], M_target,
-            cols.grain_dendricity[i], cols.grain_sphericity[i], cols.grain_radius[i], M_i)
+            cols.grain_dendricity[i], cols.grain_sphericity[i], cols.grain_radius[i], M_i,
+            independent_grain_radius(mp))
     cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
         cols.age[i_target], M_target + cols.water[i_target])
     cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]

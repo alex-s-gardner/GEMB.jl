@@ -474,8 +474,9 @@ function apply_blowing_snow!(cols::NamedTuple, cfs::ClimateForcingStep, mp::Mode
             dendricity[i] -= d_dendricity
             sphericity[i] = min(1.0, sphericity[i] + drift_rate * (1.0 - sphericity[i]))
             # Grain size is diagnostic while dendricity is nonzero, so re-derive it rather
-            # than evolving it independently.
-            grain_radius[i] = dendritic_grain_radius(dendricity[i], sphericity[i])
+            # than evolving it independently, unless it is state of its own.
+            independent_grain_radius(mp) ||
+                (grain_radius[i] = dendritic_grain_radius(dendricity[i], sphericity[i]))
         else
             sphericity[i] = min(1.0, sphericity[i] + drift_rate * (1.0 - sphericity[i]))
             # `ZDGR2 = ZDRIFT_EFFECT * 5/10000` in metres of diameter; GEMB carries radius in
@@ -706,8 +707,8 @@ Per step:
    above 5 m s-1 in the SNOWPACK "Redeposit" setup, dendricity 0.325 and sphericity 0.875
    (Wever et al., 2023, Table 1, p. 827), mixed by mass and capped so that neither moves away
    from that state: `d ← (1−f)·d + f·min(d, 0.325)`, `s ← (1−f)·s + f·max(s, 0.875)`, with the
-   radius re-derived by [`dendritic_grain_radius`](@ref). Non-dendritic cells keep their
-   grains.
+   radius re-derived by [`dendritic_grain_radius`](@ref) (kept where
+   [`independent_grain_radius`](@ref) holds). Non-dendritic cells keep their grains.
 
 **Mass and energy.** The eroded mass is redeposited in the column (Keenan et al. p. 1068: the
 mass flux "is redeposited at the snow surface"; Wever et al. p. 827: deposition "is equal to
@@ -774,7 +775,8 @@ function apply_redeposition!(cols::NamedTuple, cfs::ClimateForcingStep, mp::Mode
             f = reworked / mass
             dendricity[i] = (1 - f) * dendricity[i] + f * min(dendricity[i], REDEPOSIT_DENDRICITY)
             sphericity[i] = (1 - f) * sphericity[i] + f * max(sphericity[i], REDEPOSIT_SPHERICITY)
-            grain_radius[i] = dendritic_grain_radius(dendricity[i], sphericity[i])
+            independent_grain_radius(mp) ||
+                (grain_radius[i] = dendritic_grain_radius(dendricity[i], sphericity[i]))
         end
         eroded -= reworked
     end

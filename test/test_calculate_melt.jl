@@ -708,3 +708,44 @@ end
     @test M_new ≈ M + f1 + f2 rtol = 1e-12
     @test ρ_new ≈ M_new / dz rtol = 1e-12
 end
+
+@testset "SNICAR refrozen-water radius" begin
+    # Under :FlannerZender2006 water that freezes in a cell enters its radius at
+    # SNICAR_RADIUS_REFROZEN, weighted by the refrozen fraction of the cell's mass (CLM5.0); the
+    # mass and energy budget is the same as under the default.
+    function melt_run(method; hot)
+        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age =
+            _make_melt_inputs()
+        density .= 300.0
+        grain_dendricity .= 0.0
+        grain_radius .= 0.1
+        if hot
+            # ~8.8 kg m-2 of melt, above the top cell's 4.3 kg m-2 of retention, percolates
+            # into the cold cell below and refreezes there
+            temperature[1] = 320.0
+        else
+            water[1] = 5.0                    # pore water in a cold cell refreezes in place
+        end
+        mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
+            water_irreducible_method=:constant, grain_growth_method=method)
+        return GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
+            grain_dendricity, grain_sphericity, age, mp, false)
+    end
+    for hot in (false, true)
+        out_h = melt_run(:hybrid; hot)
+        out_f = melt_run(:FlannerZender2006; hot)
+        @test out_f[12] > 0                                   # something refroze
+        @test all(out_h[5] .== 0.1)                           # default: radius untouched
+        for k in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13)
+            @test out_f[k] == out_h[k]
+        end
+        if !hot
+            # Only cell 1 froze: f = refrozen/(M + W) after freezing, 35 kg m-2 of 30 + 5.
+            f = out_f[12] / 35.0
+            @test out_f[5][1] ≈ (100 + f * (GEMB.SNICAR_RADIUS_REFROZEN - 100)) / 1000 rtol = 1e-12
+            @test all(out_f[5][2:end] .== 0.1)
+        else
+            @test any(out_f[5] .> 0.1) && all(out_f[5] .<= GEMB.SNICAR_RADIUS_REFROZEN / 1000)
+        end
+    end
+end

@@ -601,6 +601,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             percolation_depth += dz[i]
         end
 
+        # Refrozen water enters the SNICAR radius (CLM5.0); `freeze` is indexed on the column
+        # before cells are deleted.
+        independent_grain_radius(mp) &&
+            snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
+
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
         # column state is assembled with `M` standing in for it.
@@ -612,6 +617,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         # calculate new grid lengths
         dz = M ./ density
+    elseif independent_grain_radius(mp)
+        # Only pore water froze this step.
+        snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
     end
 
     freeze_total = sum(freeze)
