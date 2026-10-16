@@ -5,7 +5,7 @@
 # intended change to the defaults or to a physics scheme moves them, and re-pinning them, with
 # the old and new values and the reason in the commit message, is part of making that change.
 #
-# Two sites:
+# Three sites:
 #
 # - `test_1` from GEMB_ClimateForcing.jl (3-hourly, 1994-2025, 75-cycle spin-up on its
 #   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 4.0 kg m-2 yr-1)
@@ -18,16 +18,22 @@
 #   1940 of runoff, under a varying solar zenith angle and cloud optical thickness. It sees the
 #   rain, pore-water, refreeze, runoff and vapor-phase paths and the albedo's zenith and cloud
 #   terms. The forcing is closed-form and lives in this repository.
+# - The thin-snow site of `synthetic_thin_snow_forcing.jl` (hourly, 90 spring days at 72° N, no
+#   spin-up, `albedo_ice = 0.30`): repeated light snowfall on bare dark ice that coarsens and
+#   melts off within days, with the sun at least 50° from the zenith and a cloud optical
+#   thickness of at least 3. Thin coarse snow over ice puts the albedo on the `A < 1` branch of
+#   Gardner & Sharp (2010) eq. 13, which the other two sites barely reach. 455 kg m-2 of melt
+#   and 513 of runoff from 253 of precipitation.
 #
 # The tolerances come from measured variability, on arm64 macOS with Julia 1.12.7:
 #
-# - Both sites are bit-for-bit reproducible run to run.
+# - All three sites are bit-for-bit reproducible run to run.
 # - Raising every value of the air-temperature series by one ulp moves the pinned mass totals
-#   by at most 5e-12 kg m-2 at `test_1` and 1.8e-10 at the maritime site, and the mean albedo
-#   by at most 7e-16: neither site amplifies rounding differences.
+#   by at most 5e-12 kg m-2 at `test_1`, 1.8e-10 at the maritime site and 4e-12 at the
+#   thin-snow site, and the mean albedo by at most 7e-16: no site amplifies rounding differences.
 # - A relative perturbation of the whole temperature series of 1e-9 moves the totals by at most
-#   6.7e-6 kg m-2 at `test_1` and 3.2e-4 at the maritime site, linearly there (100 times the
-#   response to 1e-11). At 1e-7, discrete events (new layers, merges, phase switches) flip at
+#   6.7e-6 kg m-2 at `test_1`, 3.2e-4 at the maritime site and 5.8e-6 at the thin-snow site,
+#   linearly at the last two (at the thin-snow site 1e-7 still moves them by only 6.4e-4). At 1e-7, discrete events (new layers, merges, phase switches) flip at
 #   `test_1` and move its melt by 0.55 kg m-2.
 #
 # `mass_tol` is therefore max(1e-5 × total, 0.01 kg m-2) and the albedo tolerance 1e-5: more than
@@ -38,6 +44,7 @@ using GEMB: Statistics
 using GEMB_ClimateForcing
 
 include("synthetic_maritime_forcing.jl")
+include("synthetic_thin_snow_forcing.jl")
 
 const MASS_RTOL = 1e-5
 const MASS_ATOL_FLOOR = 0.01    # kg m-2
@@ -89,6 +96,24 @@ end
     @test total(:refreeze) ≈ 2922.510450 atol = mass_tol(2922.510450)
     @test total(:runoff) ≈ 7740.916607 atol = mass_tol(7740.916607)
     @test total(:evaporation_condensation) ≈ 170.918127 atol = mass_tol(170.918127)
+end
+
+@testset "Synthetic regression: thin snow over dark ice at low sun" begin
+    cf = synthetic_thin_snow_forcing()
+    mp = ModelParameters(output_frequency=:daily, albedo_ice=0.30)
+    # The mean air temperature is above the melting point, so the ice starts at 0 °C.
+    profile = @test_logs (:warn, r"above the melt point") initialize_profile(mp, cf;
+        constant_density=true, constant_temperature=true)
+    output = gemb(profile, cf, mp)
+    total(k) = sum(parent(output[k]))
+
+    # The premise of this site: the snow melts off and the ice beneath melts too.
+    @test total(:melt) > total(:precipitation)
+
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.845053 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 454.922676 atol = mass_tol(454.922676)
+    @test total(:refreeze) ≈ 93.680064 atol = mass_tol(93.680064)
+    @test total(:runoff) ≈ 513.109435 atol = mass_tol(513.109435)
 end
 
 @testset "Synthetic regression: tolerance policy" begin
