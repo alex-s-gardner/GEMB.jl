@@ -17,7 +17,6 @@ const FLUX_NAMES = (
     :mass_added, :mass_lateral, :mass_blowing_snow, :E_added,
     :densification_from_compaction, :densification_from_melt, :percolation_depth,
     :ice_slab_thickness, :ice_slab_depth, :aquifer_thickness, :aquifer_depth,
-    :refreeze_thermal, :refreeze_thermal_count,
 )
 
 """

@@ -71,10 +71,12 @@ end
         _, flux = GEMB.gemb_core(state, forcing, mp, false;
             thermal_workspace=GEMB.ThermalWorkspace())
 
-        names = keys(flux)
         # `viscosity` is last and crosses through its own buffer, not `flux_out`.
-        @test names[end] === :viscosity
-        @test length(names) - 1 == GEMBCApi.N_FLUX
+        @test keys(flux)[end] === :viscosity
+        # Every Julia-only term is a real flux term, so a renamed one fails here.
+        @test all(in(keys(flux)), GEMBCApi.JULIA_ONLY_FLUX)
+        names = filter(n -> n !== :viscosity && n ∉ GEMBCApi.JULIA_ONLY_FLUX, keys(flux))
+        @test length(names) == GEMBCApi.N_FLUX
         for i in 1:GEMBCApi.N_FLUX
             @test header_define("GEMB_FLUX_" * uppercase(string(names[i]))) == i - 1
         end
