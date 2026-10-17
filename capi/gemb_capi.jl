@@ -157,7 +157,7 @@ const FLAG_FIELDS = (
 const N_FLAGS = length(FLAG_FIELDS)
 
 const N_FORCING = fieldcount(GEMB.ClimateForcingStep)
-const N_FLUX = 21  # the flux scalars; `viscosity` comes back through its own buffer
+const N_FLUX = 23  # the flux scalars; `viscosity` comes back through its own buffer
 
 """
     _resolve_option(i, code) -> Symbol
@@ -476,6 +476,8 @@ Base.@ccallable function gemb_step(
         unsafe_store!(flux_out, flux.ice_slab_depth, 19)
         unsafe_store!(flux_out, flux.aquifer_thickness, 20)
         unsafe_store!(flux_out, flux.aquifer_depth, 21)
+        unsafe_store!(flux_out, flux.refreeze_thermal, 22)
+        unsafe_store!(flux_out, Float64(flux.refreeze_thermal_count), 23)
 
         if viscosity_out != C_NULL
             for i in eachindex(flux.viscosity)

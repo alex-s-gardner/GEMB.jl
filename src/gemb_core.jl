@@ -124,9 +124,14 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
             shortwave_flux, cfs, mp, verbose, thermal_workspace; water)
     # Pore water the solve froze itself (see `_wet_cell_handoff!`) is refreeze like the rest;
     # under the SNICAR aging it enters the grain radius as `calculate_melt`'s refreeze does.
-    if refreeze_thermal > 0.0 && independent_grain_radius(mp)
-        snicar_refreeze!(grain_radius, grain_dendricity,
-            view(thermal_workspace.refrozen, 1:length(dz)), dz .* density, water, density)
+    refreeze_thermal_count = 0
+    if refreeze_thermal > 0.0
+        refrozen_cells = view(thermal_workspace.refrozen, 1:length(dz))
+        refreeze_thermal_count = count(>(0.0), refrozen_cells)
+        if independent_grain_radius(mp)
+            snicar_refreeze!(grain_radius, grain_dendricity, refrozen_cells, dz .* density,
+                water, density)
+        end
     end
 
     # 6. Exchange the vapor mass with the surface cell, in the phase its latent heat implied.
@@ -339,6 +344,10 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         ice_slab_depth=ice_slab_depth,
         aquifer_thickness=aquifer_thickness,
         aquifer_depth=aquifer_depth,
+        # Part of `refreeze`: the water the thermal solve froze itself (`_wet_cell_handoff!`), and
+        # the number of cells it froze in.
+        refreeze_thermal=refreeze_thermal,
+        refreeze_thermal_count=refreeze_thermal_count,
         viscosity=viscosity,
     )
 

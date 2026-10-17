@@ -235,3 +235,28 @@ end
     @test new_state.evaporation_condensation > 0.0
     @test flux.heat_flux_latent > 0.0
 end
+
+@testset "Water the thermal solve freezes is counted" begin
+    # The thin, water-heavy surface cell of `_wet_cell_handoff!` (W/M = 1.04) over a dry column at the
+    # melting point, losing 100 W m-2: the air is at 273.15 K and saturated over water, so the
+    # turbulent fluxes vanish, and there is no shortwave. In 1800 s the solve itself freezes
+    # 100·1800/LF of the water at the melting point, in one cell.
+    T0 = GEMB.CtoK
+    state = merge(_make_core_state(), (temperature=fill(T0, 10), dz=[0.0061; fill(0.08, 9)],
+        density=[93.4; fill(400.0, 9)], water=[0.597; zeros(9)]))
+    cfs = GEMB.ClimateForcingStep(; dt=1800.0, temperature_air=T0, pressure_air=100000.0,
+        wind_speed=5.0, shortwave_downward=0.0, longwave_downward=GEMB.SB * T0^4 - 100.0 / 0.98,
+        vapor_pressure=GEMB.saturation_vapor_pressure_water(T0), temperature_air_mean=260.0,
+        wind_speed_mean=5.0, precipitation_mean=200.0, temperature_observation_height=2.0,
+        wind_observation_height=2.0)
+    _, flux = GEMB.gemb_core(state, cfs, _make_core_mp(dt=1800.0), true)
+    @test flux.refreeze_thermal ≈ 100.0 * 1800.0 / GEMB.LF rtol = 1e-9
+    @test flux.refreeze_thermal_count === 1
+    # It is part of refreeze, and calculate_melt finds nothing more to refreeze.
+    @test flux.refreeze ≈ flux.refreeze_thermal rtol = 1e-12
+
+    # An ordinary column never takes the branch.
+    _, flux = GEMB.gemb_core(_make_core_state(), _make_core_cfs(), _make_core_mp(), true)
+    @test flux.refreeze_thermal === 0.0
+    @test flux.refreeze_thermal_count === 0
+end

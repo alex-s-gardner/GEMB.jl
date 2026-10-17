@@ -194,6 +194,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         runoff=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         refreeze=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        refreeze_thermal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        refreeze_thermal_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         evaporation_condensation=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         shortwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         longwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -424,6 +426,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_melt = parent(output[:melt])
     out_runoff = parent(output[:runoff])
     out_refreeze = parent(output[:refreeze])
+    out_refreeze_thermal = parent(output[:refreeze_thermal])
+    out_refreeze_thermal_count = parent(output[:refreeze_thermal_count])
     out_ec = parent(output[:evaporation_condensation])
     out_dcomp = parent(output[:densification_from_compaction])
     out_dmelt = parent(output[:densification_from_melt])
@@ -468,6 +472,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_melt = 0.0
     cum_runoff = 0.0
     cum_refreeze = 0.0
+    cum_refreeze_thermal = 0.0
+    cum_refreeze_thermal_count = 0
     cum_ec = 0.0
     cum_rain = 0.0
     cum_mass_added = 0.0
@@ -551,6 +557,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_melt += flux.melt
         cum_runoff += flux.runoff
         cum_refreeze += flux.refreeze
+        cum_refreeze_thermal += flux.refreeze_thermal
+        cum_refreeze_thermal_count += flux.refreeze_thermal_count
         cum_ec += state.evaporation_condensation
         cum_rain += flux.rain
         cum_mass_added += flux.mass_added
@@ -602,6 +610,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_melt[oi] = cum_melt
                 out_runoff[oi] = cum_runoff
                 out_refreeze[oi] = cum_refreeze
+                out_refreeze_thermal[oi] = cum_refreeze_thermal
+                out_refreeze_thermal_count[oi] = cum_refreeze_thermal_count
                 out_ec[oi] = cum_ec
                 out_dcomp[oi] = cum_densification_compaction
                 out_dmelt[oi] = cum_densification_melt
@@ -681,6 +691,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_melt = 0.0
             cum_runoff = 0.0
             cum_refreeze = 0.0
+            cum_refreeze_thermal = 0.0
+            cum_refreeze_thermal_count = 0
             cum_ec = 0.0
             cum_rain = 0.0
             cum_mass_added = 0.0

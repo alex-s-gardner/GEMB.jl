@@ -237,6 +237,35 @@ using Dates
         @test haskey(md2, "climatology_n_years")
     end
 
+    @testset "Thermal-solve freezing diagnostics are interval sums" begin
+        # Six 30-minute steps at the melting point, saturated air and 100 W m-2 of net longwave loss,
+        # from a column at 273.15 K whose 6 mm surface cell holds more water than ice. The thermal
+        # solve freezes that cell's water itself in the first step and never again.
+        T0 = GEMB.CtoK
+        n = 6
+        time = DateTime(2020, 4, 1) .+ Minute.(30 .* (0:n-1))
+        forcing = initialize_forcing(time, fill(T0, n), fill(100000.0, n), fill(0.0, n),
+            fill(5.0, n), fill(0.0, n), fill(GEMB.SB * T0^4 - 100.0 / 0.98, n),
+            fill(GEMB.saturation_vapor_pressure_water(T0), n);
+            temperature_air_mean=260.0, wind_speed_mean=5.0, precipitation_mean=200.0,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+        profile = initialize_profile(initialize_parameters(), forcing)
+        parent(profile[:temperature]) .= T0
+        parent(profile[:dz])[1] = 0.0061
+        parent(profile[:density])[1] = 93.4
+        parent(profile[:water])[1] = 0.597
+        each = gemb(profile, forcing, initialize_parameters(output_frequency=:all))
+        whole = gemb(profile, forcing, initialize_parameters(output_frequency=:last))
+        @test collect(each[:refreeze_thermal_count]) == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        @test each[:refreeze_thermal][1] > 0.0 && all(iszero, each[:refreeze_thermal][2:end])
+        @test each[:refreeze_thermal][1] <= each[:refreeze][1]
+        @test only(whole[:refreeze_thermal_count]) == sum(each[:refreeze_thermal_count])
+        @test only(whole[:refreeze_thermal]) == sum(each[:refreeze_thermal])
+        md = DimensionalData.metadata(each[:refreeze_thermal_count])
+        @test md["units"] == "1" && md["cell_methods"] == "time: sum"
+        @test DimensionalData.metadata(each[:refreeze_thermal])["units"] == "kg m-2"
+    end
+
     @testset "CF layer metadata" begin
         n = 365
         time = DateTime(2020, 1, 1) .+ Day.(0:n-1)

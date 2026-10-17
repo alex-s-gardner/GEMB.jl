@@ -140,7 +140,8 @@ int main(void) {
         "flux_mass_lateral", "flux_mass_blowing_snow", "flux_E_added",
         "flux_densification_from_compaction", "flux_densification_from_melt",
         "flux_percolation_depth", "flux_ice_slab_thickness", "flux_ice_slab_depth",
-        "flux_aquifer_thickness", "flux_aquifer_depth"
+        "flux_aquifer_thickness", "flux_aquifer_depth", "flux_refreeze_thermal",
+        "flux_refreeze_thermal_count"
     };
     for (int i = 0; i < GEMB_N_FLUX; i++) {
         emit(FLUX_NAMES[i], 0, flux_total[i]);

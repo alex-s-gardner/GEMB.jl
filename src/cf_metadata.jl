@@ -59,6 +59,18 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: sum";
         comment="CF has only surface_snow_and_ice_refreezing_flux (kg m-2 s-1); " *
                 "there is no amount form, so standard_name is omitted."),
+    :refreeze_thermal => CFAttrs("kg m-2", "pore water frozen inside the thermal solve",
+        "time: sum";
+        comment="Part of refreeze. Water the thermal solve froze itself because handing " *
+                "the wet cell on with its water liquid would have needed an ice-matrix " *
+                "temperature below WET_HANDOFF_TEMPERATURE_MIN (223.15 K, the coldest " *
+                "temperature of the data Cuffey and Paterson 2010 eq. 9.1 is fitted to). " *
+                "It arises in cells whose water is a large share of their mass, such as a " *
+                "thin wet surface layer refreezing. No CF standard name exists."),
+    :refreeze_thermal_count => CFAttrs("1",
+        "number of cell-steps whose pore water froze inside the thermal solve", "time: sum";
+        comment="Count, over the interval, of (cell, timestep) pairs contributing to " *
+                "refreeze_thermal. No CF standard name exists."),
     :evaporation_condensation => CFAttrs("kg m-2",
         "net surface water vapour mass exchange", "time: sum";
         comment="Positive = mass gain by the column (condensation/deposition); " *

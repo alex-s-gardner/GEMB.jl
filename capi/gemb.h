@@ -35,7 +35,7 @@ extern "C" {
 #define GEMB_N_NUMERIC  27
 #define GEMB_N_FLAGS     4
 #define GEMB_N_FORCING  22
-#define GEMB_N_FLUX     21
+#define GEMB_N_FLUX     23
 
 /* --- options[] indices, and the codes each accepts. Codes are 1-based. ------------------- */
 
@@ -232,6 +232,8 @@ extern "C" {
 #define GEMB_FLUX_ICE_SLAB_DEPTH                 18  /* [m]       */
 #define GEMB_FLUX_AQUIFER_THICKNESS              19  /* [m]       */
 #define GEMB_FLUX_AQUIFER_DEPTH                  20  /* [m]       */
+#define GEMB_FLUX_REFREEZE_THERMAL               21  /* [kg m-2]  part of REFREEZE frozen in the thermal solve */
+#define GEMB_FLUX_REFREEZE_THERMAL_COUNT         22  /* [-]       cells frozen in the thermal solve */
 
 /* --- Entry points. --------------------------------------------------------------------- */
 

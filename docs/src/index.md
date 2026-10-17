@@ -148,6 +148,8 @@ julia> output
   :melt                          eltype: Float64 dims: Ti size: 11688
   :runoff                        eltype: Float64 dims: Ti size: 11688
   :refreeze                      eltype: Float64 dims: Ti size: 11688
+  :refreeze_thermal              eltype: Float64 dims: Ti size: 11688
+  :refreeze_thermal_count        eltype: Float64 dims: Ti size: 11688
   :evaporation_condensation      eltype: Float64 dims: Ti size: 11688
   :shortwave_net                 eltype: Float64 dims: Ti size: 11688
   :longwave_net                  eltype: Float64 dims: Ti size: 11688

@@ -74,6 +74,8 @@ Below is a list of variables used by GEMB.
 | rain                                  | kg m<sup>-2</sup> | Rain mass.                                                                                                                                       |
 | rain\_temperature\_threshold          | K                 | Temperature threshold above which precipitation falls as rain.                                                                                   |
 | refreeze                              | kg m<sup>-2</sup> | Refrozen mass                                                                                                                                    |
+| refreeze\_thermal                     | kg m<sup>-2</sup> | Part of refreeze: pore water the thermal solve froze itself, because the cell's water is so large a share of its mass that handing it on liquid would need an ice-matrix temperature below 223.15 K.|
+| refreeze\_thermal\_count              | count             | Number of (cell, timestep) pairs contributing to refreeze\_thermal over the output interval.                                                     |
 | relative\_humidity                    | percent           | Relative humidity in the range of 0 to 100 percent.                                                                                              |
 | run\_prefix                           | string            | Unique run identifier (default: "default").                                                                                                      |
 | runoff                                | kg m<sup>-2</sup> | Runoff mass                                                                                                                                      |
