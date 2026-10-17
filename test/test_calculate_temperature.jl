@@ -981,6 +981,117 @@ end
         zeros(n), cfs, mp, false; water=[1.0; zeros(n - 1)])
 end
 
+@testset "Wet cell whose water outweighs its matrix freezes inside the solve" begin
+    # The regime of the Tien Shan Cbg run (tile N42_E078, band 3350 m, 2001-04-29 12:00): a 6 mm
+    # surface cell of 93.4 kg m-3 fresh snow holding 0.597 kg m-2 of water, W/M = 1.04, loses
+    # heat under clear skies. Its water's latent heat exceeds the matrix's enthalpy, so a matrix
+    # temperature carrying the cold content of freezing it would lie below 0 K: under Cuffey and
+    # Paterson eq. 9.1 that matrix enthalpy is outside the inverse's domain. The solve freezes
+    # the water instead. The cell loses 100 W m-2 as in the testset above; its neighbors are dry
+    # at 273.15 K, so while it stays at the melting point no heat is conducted.
+    n = N_CELLS
+    ε = 0.97
+    T0 = GEMB.CtoK
+    lw_down = GEMB.SB * T0^4 - 100.0 / ε
+    dz1, ρ1, W = 0.0061, 93.4, 0.597
+    M1 = ρ1 * dz1
+    for hcm in (:CuffeyPaterson, :constant), solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()),
+        dt in (1800.0, 7200.0)
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, heat_capacity_method=hcm, dt_divisors=[60.0])
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        cfs = GEMB.ClimateForcingStep(
+            dt, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+            GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        hw = GEMB.specific_enthalpy_water(mp)
+        dz = [dz1; fill(DZ_UNIFORM, n - 1)]
+        density = [ρ1; fill(DENSITY_UNIFORM, n - 1)]
+        water = [W; zeros(n - 1)]
+        E0 = sum(density .* dz .* h.(fill(T0, n))) + W * hw
+        if dt == 1800.0
+            # Handing the cell off with its water liquid would need a matrix enthalpy below that
+            # of WET_HANDOFF_TEMPERATURE_MIN, and under eq. 9.1 below the inverse's domain.
+            h_matrix = (M1 * h(T0) - 100.0 * dt) / M1
+            @test h_matrix < h(GEMB.WET_HANDOFF_TEMPERATURE_MIN)
+            hcm === :CuffeyPaterson &&
+                @test_throws DomainError GEMB.temperature_from_specific_enthalpy(mp, h_matrix)
+        end
+        ws = GEMB.ThermalWorkspace()
+        t_out, lw_up, shf, lhf, basal, _, _, refrozen = GEMB.calculate_temperature(fill(T0, n),
+            dz, density, W, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true, ws; water)
+        M_new = density[1] * dz[1]
+        # Mass moves from water to matrix and nothing else changes.
+        @test M_new + water[1] ≈ M1 + W rtol = 1e-13
+        @test refrozen ≈ M_new - M1 rtol = 1e-12
+        @test ws.refrozen[1] == refrozen && all(==(0.0), ws.refrozen[2:n])
+        @test density[2:n] == fill(DENSITY_UNIFORM, n - 1) && dz[2:n] == fill(DZ_UNIFORM, n - 1)
+        # The column's enthalpy changes by exactly the energy crossing its boundaries.
+        E1 = sum(density .* dz .* h.(t_out)) + sum(water) * hw
+        @test E1 - E0 ≈ dt * (lw_down - lw_up + shf + lhf + basal) rtol = 1e-10
+        if dt == 1800.0
+            # 100 W m-2 for 1800 s freezes 0.538 of the 0.597 kg m-2 on the plateau.
+            @test t_out[1] == T0
+            @test all(t_out[2:end] .== T0)
+            @test refrozen ≈ 100.0 * dt / GEMB.LF rtol = 1e-9
+            @test dz[1] == dz1
+        else
+            # All of the water freezes after 1997 s; the cell then cools below the melting point.
+            @test water[1] == 0.0
+            @test refrozen == W
+            @test GEMB.WET_HANDOFF_TEMPERATURE_MIN < t_out[1] < T0
+        end
+        # What calculate_melt then finds is a cell it does not refreeze further.
+        out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n), zeros(n),
+            fill(0.5, n), zeros(n), mp, true)
+        @test out[12] ≈ 0.0 atol = 1e-12
+    end
+end
+
+@testset "Wet-cell handoff" begin
+    for hcm in (:CuffeyPaterson, :constant)
+        mp = GEMB.ModelParameters(heat_capacity_method=hcm)
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        hw = GEMB.specific_enthalpy_water(mp)
+        T0 = GEMB.CtoK
+        function handoff(H, M, W, dz)
+            t, d, ρ, w, r = [0.0], [dz], [M / dz], [W], [0.0]
+            f = GEMB._wet_cell_handoff!(mp, t, d, ρ, w, r, 1, H, M)
+            return (; f, T=t[1], dz=d[1], density=ρ[1], water=w[1], refrozen=r[1])
+        end
+        # A matrix temperature at or above WET_HANDOFF_TEMPERATURE_MIN is handed on with the
+        # water liquid, as `_matrix_temperature` gives it.
+        M, W = 40.0, 2.0
+        for T in (250.0, GEMB.WET_HANDOFF_TEMPERATURE_MIN)
+            H = M * h(T) + W * hw
+            o = handoff(H, M, W, 0.1)
+            @test o.f == 0.0 && o.refrozen == 0.0 && o.water == W && o.dz == 0.1 && o.density == M / 0.1
+            @test o.T == GEMB._matrix_temperature(mp, H, M, W)
+            @test o.T ≈ T rtol = 1e-12
+        end
+        # Thin, water-heavy cell (W/M = 1.04) on the plateau: half the water freezes at 273.15 K.
+        M, W, dz = 0.573, 0.597, 0.0061
+        o = handoff((M + W) * h(T0) + 0.5 * W * GEMB.LF, M, W, dz)
+        @test o.T == T0
+        @test o.f ≈ 0.5 * W rtol = 1e-12
+        @test o.refrozen == o.f
+        @test o.water ≈ 0.5 * W rtol = 1e-12
+        @test o.dz == dz
+        @test o.density ≈ (M + 0.5 * W) / dz rtol = 1e-12
+        # Below the plateau all the water freezes, and matrix and ice share one temperature.
+        o = handoff((M + W) * h(260.0), M, W, dz)
+        @test o.f == W && o.water == 0.0
+        @test o.T ≈ 260.0 rtol = 1e-12
+        # Freezing that would exceed the ice density leaves the cell at ice density, thicker.
+        M, W, dz = 91.0, 1.0, 0.1
+        o = handoff((M + W) * h(220.0), M, W, dz)
+        @test o.density == mp.density_ice
+        @test o.dz ≈ (M + W) / mp.density_ice rtol = 1e-14
+        @test o.T ≈ 220.0 rtol = 1e-12
+    end
+end
+
 @testset "Wet-cell temperature map" begin
     for hcm in (:CuffeyPaterson, :constant)
         mp = GEMB.ModelParameters(heat_capacity_method=hcm)

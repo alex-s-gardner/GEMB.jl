@@ -119,9 +119,15 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     # 5. Calculate new temperature-depth profile and turbulent heat flux
     temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal,
-        evaporation_condensation, evaporation_condensation_liquid =
+        evaporation_condensation, evaporation_condensation_liquid, refreeze_thermal =
         calculate_temperature(temperature, dz, density, water[1], grain_radius,
             shortwave_flux, cfs, mp, verbose, thermal_workspace; water)
+    # Pore water the solve froze itself (see `_wet_cell_handoff!`) is refreeze like the rest;
+    # under the SNICAR aging it enters the grain radius as `calculate_melt`'s refreeze does.
+    if refreeze_thermal > 0.0 && independent_grain_radius(mp)
+        snicar_refreeze!(grain_radius, grain_dendricity,
+            view(thermal_workspace.refrozen, 1:length(dz)), dz .* density, water, density)
+    end
 
     # 6. Exchange the vapor mass with the surface cell, in the phase its latent heat implied.
     #    Deposition and condensation (positive) are new mass at age 0, so they dilute the
@@ -162,6 +168,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_melt(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age, mp, verbose;
             workspace=column_workspace)
+    refreeze += refreeze_thermal
 
     densification_from_melt = densification_from_melt - sum(dz)
 

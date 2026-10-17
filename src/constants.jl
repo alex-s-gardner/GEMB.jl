@@ -13,6 +13,13 @@ const HEAT_CAPACITY_ICE_DEFAULT = 2102.0
 # Cuffey and Paterson (2010) eq. 9.1: c_p(T) = a + b·T, T in kelvin.
 const HEAT_CAPACITY_CUFFEY_A = 152.5
 const HEAT_CAPACITY_CUFFEY_B = 7.122
+# Lowest ice-matrix temperature [K] at which the thermal solve hands a wet cell to
+# `calculate_melt` with its water still counted liquid; below it the solve freezes the water
+# itself (`_wet_cell_handoff!`). 223.15 K (−50 °C) is the coldest temperature of Cuffey and
+# Paterson (2010) Table 9.1, p. 400, the pure-ice data eq. 9.1 is a fit to. A handoff below it
+# carries the cell's cold content in a matrix temperature outside that support, and a matrix
+# enthalpy below −a²/(2b) has no temperature under eq. 9.1 at all.
+const WET_HANDOFF_TEMPERATURE_MIN = 223.15
 
 const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
 

@@ -57,7 +57,9 @@ The interface a subtype must implement is
 updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
 the last two in kg m-2 accumulated over the step; the last is the part exchanged at `LV`).
 `water` is the per-cell pore water (`Zeros` for a dry column); a wet cell is held at the
-melting point while its water freezes (see [`calculate_temperature`](@ref)). Three invariants bind every implementation: the
+melting point while its water freezes (see [`calculate_temperature`](@ref)). A wet cell is
+returned through [`_wet_cell_handoff!`](@ref), which may freeze some of its water, changing
+`water`, `density` and `dz` and recording the mass in `workspace.refrozen`. Three invariants bind every implementation: the
 bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged; the
 returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
 energy and mass budgets against them; and every buffer entry drawn from `workspace` must be
@@ -256,16 +258,17 @@ struct ThermalWorkspace
     explicit::_ExplicitWorkspace
     implicit::_ImplicitWorkspace
     conductivity::Vector{Float64}  # thermal conductivity per cell [W m-1 K-1]
+    refrozen::Vector{Float64}      # pore water the solve froze per cell [kg m-2]; see `_wet_cell_handoff!`
     # One table per (wind height, temperature height, roughness lengths) met in this run,
     # built on first use; see `_stability_table!`.
     stability_tables::Vector{StabilityTable}
 end
 
 ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[],
-    StabilityTable[])
+    Float64[], StabilityTable[])
 
-# Only the scheme-independent buffer: each scheme's own set is grown inside `_thermal_solve!`.
-_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity,)
+# Only the scheme-independent buffers: each scheme's own set is grown inside `_thermal_solve!`.
+_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity, ws.refrozen)
 
 # Which buffer set a scheme draws from. One method per solver, so a new scheme adds its own
 # workspace type and one accessor rather than editing a branch.

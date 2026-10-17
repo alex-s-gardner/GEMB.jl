@@ -12,7 +12,7 @@ implicit per `mp.thermal_solver`. Accounts for:
 
 Sub-time steps are determined by Von Neumann stability analysis.
 
-Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)`.
+Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid, refrozen)`.
 
 `evaporation_condensation` [kg m-2, positive for deposition or condensation] is the vapor mass
 exchanged over the step. `evaporation_condensation_liquid` is the part exchanged in sub-steps
@@ -31,12 +31,17 @@ enthalpy counts the water as liquid, and cooling first freezes that water at 273
 ([`_wet_cell_temperature`](@ref)) before the cell's temperature falls. The surface fluxes and
 the diffusion see that temperature.
 
-The water mass itself is not changed here. The returned temperature of a wet cell is its *ice
-matrix* temperature with all of its water still counted as liquid, so a cell whose water has
-partly frozen inside the solve is returned below 273.15 K with exactly the cold content that
-freezing released. [`calculate_melt`](@ref) refreezes that water at the start of its pass and
-counts it as refreeze, which returns the cell to the state the solve ended in. `water =
-nothing` treats the column as dry.
+The returned temperature of a wet cell is normally its *ice matrix* temperature with all of
+its water still counted as liquid. A cell whose water has partly frozen inside the solve is
+returned below 273.15 K with exactly the cold content that freezing released.
+[`calculate_melt`](@ref) refreezes that water at the start of its pass and counts it as
+refreeze, which returns the cell to the state the solve ended in.
+
+The exception is a cell whose matrix would have to go below `WET_HANDOFF_TEMPERATURE_MIN` to
+carry that cold content. There the solve freezes the water itself ([`_wet_cell_handoff!`](@ref)),
+changing `water`, `density` and `dz` in place. `refrozen` [kg m-2] is the mass frozen this way
+over the column; per cell it is in `workspace.refrozen`, and the caller counts it as refreeze.
+`water = nothing` treats the column as dry.
 
 `workspace` supplies the solver's scratch buffers (see [`ThermalWorkspace`](@ref)). The default
 allocates a fresh one per call, which is convenient for a one-off call but allocates every time;
@@ -107,6 +112,8 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
 
     sfc = _ThermalSurface(density_air, emissivity, emissivity_melt_switch, thf_C, thf_ri_scale,
         table)
+    refrozen = view(workspace.refrozen, 1:m)
+    fill!(refrozen, 0.0)
 
     if water === nothing
         water_cells = Zeros(m)
@@ -126,8 +133,11 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
         _thermal_solve!(mp.thermal_solver, temperature, dz, density, K, shortwave_flux,
             water_surface, grain_radius, sfc, cfs, mp, verbose, workspace, water_cells)
 
+    refrozen_total = sum(refrozen)
+
     return temperature, longwave_upward_out, heat_flux_sensible_out, heat_flux_latent_out,
-        heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out
+        heat_flux_basal_out, evaporation_condensation_out, evaporation_condensation_liquid_out,
+        refrozen_total
 end
 
 """
@@ -412,13 +422,15 @@ function _thermal_solve!(solver::ExplicitThermal,
         end
     end
 
-    # Recover cells 1 … m-1 from the prognostic enthalpy as matrix temperatures with their
-    # water counted liquid (see `calculate_temperature`). Cell m is the untouched Dirichlet
-    # reservoir.
+    # Recover cells 1 … m-1 from the prognostic enthalpy: a dry cell's temperature, and a wet
+    # cell through `_wet_cell_handoff!`. Cell m is the untouched Dirichlet reservoir.
     @inbounds for i in 1:m-1
-        temperature[i] = water[i] > 0.0 ?
-            _matrix_temperature(mp, H[i], density[i] * dz[i], water[i]) :
-            temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
+        if water[i] > 0.0
+            _wet_cell_handoff!(mp, temperature, dz, density, water, workspace.refrozen, i, H[i],
+                density[i] * dz[i])
+        else
+            temperature[i] = temperature_from_scaled_enthalpy(mp, H[i] * M_inv[i])
+        end
     end
 
     heat_flux_latent_out = lhf_cumulative / cfs.dt    # J -> W/m2
@@ -888,9 +900,10 @@ function _thermal_solve!(solver::ImplicitThermal,
         end
         heat_flux_basal_cumulative += heat_flux_basal
 
-        # Matrix temperatures with the water counted liquid (see `calculate_temperature`).
+        # Dry-cell temperatures. A wet cell's row is rebuilt from its enthalpy at the start of
+        # each sub-step, so its temperature is recovered once, after the last sub-step.
         @inbounds for i in 1:n
-            temperature[i] = _matrix_temperature(mp, H[i], M[i], water[i])
+            water[i] > 0.0 || (temperature[i] = _matrix_temperature(mp, H[i], M[i], water[i]))
         end
 
         # Emissivity melt switch, held outside the Newton iteration so it cannot chatter. It
@@ -925,6 +938,11 @@ function _thermal_solve!(solver::ImplicitThermal,
                 error("temperature of bottom grid cell changed inside of thermal function: original = $(T_bottom) K, updated = $(temperature[m]) K")
             end
         end
+    end
+
+    @inbounds for i in 1:n
+        water[i] > 0.0 &&
+            _wet_cell_handoff!(mp, temperature, dz, density, water, workspace.refrozen, i, H[i], M[i])
     end
 
     heat_flux_latent_out = lhf_cumulative / cfs.dt              # J -> W/m2
@@ -1045,6 +1063,60 @@ end
 # liquid at the melting point.
 @inline _matrix_temperature(mp::ModelParameters, H::Float64, M::Float64, W::Float64) =
     temperature_from_specific_enthalpy(mp, (H - W * specific_enthalpy_water(mp)) / M)
+
+"""
+    _wet_cell_handoff!(mp, temperature, dz, density, water, refrozen, i, H, M) -> frozen [kg m-2]
+
+Set the returned state of wet cell `i`, with matrix mass `M` and enthalpy `H` [J m-2] counting its
+water `water[i]` as liquid, at the end of the thermal solve.
+
+- **Water handed over liquid.** If the matrix can carry the cell's cold content at or above
+  `WET_HANDOFF_TEMPERATURE_MIN`, the water stays liquid and `temperature[i]` is the matrix
+  temperature `_matrix_temperature`. [`calculate_melt`](@ref) then refreezes the water
+  that cold content allows.
+- **Water frozen here.** Otherwise the solve freezes the water itself, to the state of
+  [`_wet_cell_temperature`](@ref):
+  - `(H_hi − H)/LF` of it at 273.15 K while the enthalpy is on the freezing plateau;
+  - all of it, with matrix and frozen water at `h⁻¹(H/(M + W))`, below it.
+
+  The frozen mass joins the matrix at constant `dz` (at ice density, `dz` shrinks), as in
+  `calculate_melt`'s pore-water refreeze. It is recorded in `refrozen[i]` and returned.
+
+The second case is a cell whose water is a large share of its mass. The latent heat of freezing
+all of it can exceed the enthalpy of the matrix itself, `W·LF > M·h(273.15)` (`W/M > 0.92` under
+Cuffey and Paterson eq. 9.1). A matrix temperature holding that cold content would lie far below
+the data of eq. 9.1, and below 0 K, where eq. 9.1 has no inverse. One example is a thin
+low-density surface layer that has taken up its own mass of meltwater and refreezes under clear
+skies. The enthalpy `H` is conserved either way.
+"""
+@inline function _wet_cell_handoff!(mp::ModelParameters, temperature::AbstractVector{Float64},
+    dz::AbstractVector{Float64}, density::AbstractVector{Float64}, water::AbstractVector{Float64},
+    refrozen::AbstractVector{Float64}, i::Int, H::Float64, M::Float64)
+    W = water[i]
+    h_matrix = (H - W * specific_enthalpy_water(mp)) / M
+    if h_matrix >= specific_enthalpy(mp, WET_HANDOFF_TEMPERATURE_MIN)
+        temperature[i] = temperature_from_specific_enthalpy(mp, h_matrix)
+        return 0.0
+    end
+    H_lo, H_hi = _wet_cell_plateau(mp, M, W)
+    if H >= H_lo
+        frozen = (H_hi - H) / LF
+        T = CtoK
+    else
+        frozen = W
+        T = temperature_from_specific_enthalpy(mp, H / (M + W))
+    end
+    M_new = M + frozen
+    water[i] = W - frozen
+    density[i] = M_new / dz[i]
+    if density[i] > mp.density_ice - D_TOLERANCE
+        density[i] = mp.density_ice
+        dz[i] = M_new / density[i]
+    end
+    temperature[i] = T
+    refrozen[i] = frozen
+    return frozen
+end
 
 # Solve temperature of a cell from its enthalpy: the dry map through the cached scaled
 # inverse, or `_wet_cell_temperature` when the cell holds water.
