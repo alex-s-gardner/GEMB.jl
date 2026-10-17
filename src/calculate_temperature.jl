@@ -16,8 +16,9 @@ Returns `(temperature, longwave_upward, heat_flux_sensible, heat_flux_latent, he
 
 `evaporation_condensation` [kg m-2, positive for deposition or condensation] is the vapor mass
 exchanged over the step. `evaporation_condensation_liquid` is the part exchanged in sub-steps
-whose latent heat was `LV` (a surface at the melting point), which is exchanged with liquid
-water; the rest, at `LS`, is exchanged with ice. See [`apply_vapor_exchange!`](@ref).
+whose latent heat was `LV` (a surface at the melting point with liquid water to give, see
+[`_surface_liquid`](@ref)), which is exchanged with liquid water; the rest, at `LS`, is
+exchanged with ice. See [`apply_vapor_exchange!`](@ref).
 
 `longwave_upward` [W m-2, positive upward] is emitted plus reflected longwave,
 `εσT_s⁴ + (1 − ε)·LW↓`, with ε the emissivity in force at each sub-step. The surface therefore
@@ -308,8 +309,12 @@ function _thermal_solve!(solver::ExplicitThermal,
         # `emissivity` is the value in force this sub-step (the melt switch below can change
         # it between sub-steps).
         T1_0 = temperature[1]
+        # Evaporation at LV needs liquid: the surface cell's own, net of what earlier sub-steps
+        # evaporated (`EC_liquid_cumulative` is negative for a loss).
+        liquid = _surface_liquid(mp, H[1], density[1] * dz[1], water[1]) +
+                 EC_liquid_cumulative > 0.0
         longwave_upward_flux, heat_flux_sensible, heat_flux_latent, latent_heat, _,
-            dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1_0, emissivity, sfc, cfs)
+            dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1_0, emissivity, sfc, cfs, liquid)
         Λ = dlw + dshf + dlhf
         if Λ < 0.0
             C1 = (density[1] * dz[1] + water[1]) * heat_capacity(mp, T1_0)
@@ -460,9 +465,9 @@ responding to `T1` entirely, so every flux — and every derivative — goes fla
 implicit solver's Newton iteration and its final applied-flux evaluation so the two cannot drift.
 """
 @inline function _surface_energy_balance(T1::Float64, emissivity::Float64,
-    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, liquid::Bool=true)
     longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, _ =
-        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs)
+        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs, liquid)
     return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface
 end
 
@@ -485,9 +490,9 @@ Two rules shape it, and since the slope sets only the implicit solver's Newton c
   the Newton diagonal instead of strengthening it.
 """
 @inline function _surface_energy_balance_and_slope(T1::Float64, emissivity::Float64,
-    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, liquid::Bool=true)
     longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface,
-        dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1, emissivity, sfc, cfs)
+        dlw, dshf, dlhf = _surface_fluxes_and_slopes(T1, emissivity, sfc, cfs, liquid)
     return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface, dlw + dshf + dlhf
 end
 
@@ -503,12 +508,20 @@ turbulent pair is set to zero together when its sum would be positive, so
 `dlw + dshf + dlhf ≤ 0`.
 """
 @inline function _surface_fluxes_and_slopes(T1::Float64, emissivity::Float64,
-    sfc::_ThermalSurface, cfs::ClimateForcingStep)
+    sfc::_ThermalSurface, cfs::ClimateForcingStep, liquid::Bool=true)
 
     T_surface = min(CtoK, T1)
     heat_flux_sensible, heat_flux_latent, latent_heat, dshf, dlhf =
         _table_turbulent_heat_flux(sfc.table, T_surface, sfc.density_air, sfc.C,
             sfc.ri_scale, cfs)
+    # A surface at the melting point with no liquid water to give sublimates: the vapor comes
+    # from ice and costs LS. The mass flux is the one the LV branch gives, since the saturation
+    # vapor pressures over water and ice agree at the melting point (Murphy and Koop, 2005,
+    # eqs. 7 and 10, within 0.01 % at 273.15 K); its slope is zero there either way.
+    if !liquid && latent_heat == LV && heat_flux_latent < 0.0
+        heat_flux_latent *= LS / LV
+        latent_heat = LS
+    end
     T2 = T_surface * T_surface
     longwave_upward = -(SB * T2 * T2 * emissivity +
                         (1.0 - emissivity) * cfs.longwave_downward)
@@ -521,6 +534,22 @@ turbulent pair is set to zero together when its sum would be positive, so
     return longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, T_surface,
         dlw, dshf, dlhf
 end
+
+"""
+    _surface_liquid(mp, H, M, W) -> kg m-2
+
+Liquid water the surface cell, of matrix mass `M`, pore water `W` and enthalpy `H` [J m-2]
+counting that water liquid, can give to evaporation during the thermal solve: its pore water
+that has not frozen, `(H − (M + W)·h(273.15))/LF` clamped to `[0, W]`. That is all of `W` at or
+above the freezing plateau and the unfrozen part on it.
+
+The solve charges an evaporating surface at the melting point `LV` only while this, net of what
+it has already evaporated, is positive, and `LS` otherwise. Vapor from a dry cell's melt also
+costs `LS` (`LF` to melt the ice, `LV` to evaporate the water), so it is charged as sublimation of
+the cell's ice.
+"""
+@inline _surface_liquid(mp::ModelParameters, H::Float64, M::Float64, W::Float64) =
+    clamp((H - (M + W) * specific_enthalpy(mp, CtoK)) / LF, 0.0, W)
 
 """
     _thermal_solve!(::ImplicitThermal, temperature, dz, density, K, shortwave_flux, water_surface, grain_radius, sfc, cfs, mp, verbose)
@@ -729,6 +758,10 @@ function _thermal_solve!(solver::ImplicitThermal,
             end
         end
 
+        # Evaporation at LV needs liquid: the surface cell's own, net of what earlier sub-steps
+        # evaporated (`EC_liquid_cumulative` is negative for a loss).
+        liquid = _surface_liquid(mp, H[1], M[1], water[1]) + EC_liquid_cumulative > 0.0
+
         # Rows from the start-of-sub-step state: a dry cell is written against its own
         # temperature; a wet cell according to where its enthalpy sits on the freezing plateau.
         @inbounds for i in 1:n
@@ -787,7 +820,7 @@ function _thermal_solve!(solver::ImplicitThermal,
                 residual_best = Inf
                 for _ in 1:THERMAL_IMPLICIT_MAX_ITERATIONS
                     longwave_upward, heat_flux_sensible, heat_flux_latent, _, _, slope =
-                        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs)
+                        _surface_energy_balance_and_slope(T1, emissivity, sfc, cfs, liquid)
 
                     # Joules this sub-step, and the slope in J m-2 K-1.
                     Q_surface = longwave_downward +
@@ -856,7 +889,7 @@ function _thermal_solve!(solver::ImplicitThermal,
             # state the row was written for; otherwise rewrite the row and solve again.
             mode_changed = n_wet > 0 && _update_wet_modes!(mode, M_eff, T_old, H, M, water,
                 T_it, Q_sw, A_face, T_bottom, n, emissivity, sfc, cfs, longwave_downward, dt,
-                mp)
+                mp, liquid)
 
             chords_settled = (mp.heat_capacity_method === :constant) ||
                              dT_max <= THERMAL_IMPLICIT_T_TOLERANCE
@@ -870,7 +903,7 @@ function _thermal_solve!(solver::ImplicitThermal,
         # Applied fluxes: the *true* nonlinear surface balance at the converged iterate, so the
         # returned averages are exactly what the column received.
         longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, _ =
-            _surface_energy_balance(T_it[1], emissivity, sfc, cfs)
+            _surface_energy_balance(T_it[1], emissivity, sfc, cfs, liquid)
         longwave_upward_step = longwave_upward * dt
         thf = (heat_flux_sensible + heat_flux_latent) * dt
         Q_surface = (longwave_downward + longwave_upward_step) + thf
@@ -990,7 +1023,7 @@ change: the matrix alone with the water liquid (`WET_CELL_DRY`), or matrix and w
 end
 
 """
-    _update_wet_modes!(mode, M_eff, T_old, H, M, water, T_it, Q_sw, A_face, T_bottom, n, emissivity, sfc, cfs, longwave_downward, dt, mp) -> changed
+    _update_wet_modes!(mode, M_eff, T_old, H, M, water, T_it, Q_sw, A_face, T_bottom, n, emissivity, sfc, cfs, longwave_downward, dt, mp, liquid=true) -> changed
 
 Classify each wet cell by the enthalpy the current iterate `T_it` would give it, and rewrite
 the rows (`M_eff`, `T_old`) of those whose state differs from the one they were solved in.
@@ -1001,9 +1034,9 @@ function _update_wet_modes!(mode::Vector{Float64}, M_eff::Vector{Float64},
     water::AbstractVector{Float64}, T_it::Vector{Float64}, Q_sw::Vector{Float64},
     A_face::Vector{Float64}, T_bottom::Float64, n::Int, emissivity::Float64,
     sfc::_ThermalSurface, cfs::ClimateForcingStep, longwave_downward::Float64, dt::Float64,
-    mp::ModelParameters)
+    mp::ModelParameters, liquid::Bool=true)
 
-    lw, shf, lhf, _, _ = _surface_energy_balance(T_it[1], emissivity, sfc, cfs)
+    lw, shf, lhf, _, _ = _surface_energy_balance(T_it[1], emissivity, sfc, cfs, liquid)
     Q_surface = longwave_downward + (lw + shf + lhf) * dt
     changed = false
     F_prev = 0.0

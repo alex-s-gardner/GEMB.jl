@@ -1237,7 +1237,9 @@ end
 
 @testset "Melting-point clamp on the surface flux" begin
     # A surface cell above 273.15 K sees the surface fluxes of a 273.15 K surface, and its
-    # excess enthalpy is exactly what it received: M₁·(h(T₁) − h(273.15)) = Q·dt.
+    # excess enthalpy is exactly what it received: M₁·(h(T₁) − h(273.15)) = Q·dt. The cell is dry
+    # and the air below saturation, so it loses the vapor mass flux of a 273.15 K surface, from
+    # ice, at LS (`_surface_liquid`).
     n = 2
     dz = [0.05, 50.0]
     ρ = 400.0
@@ -1249,8 +1251,8 @@ end
     for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
         mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
             dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
-        T, lw_up, shf, lhf, basal, = GEMB.calculate_temperature(copy(T_in), dz, fill(ρ, n),
-            0.0, fill(0.5, n), sw, cfs, mp, true)
+        T, lw_up, shf, lhf, basal, ec, ec_liquid = GEMB.calculate_temperature(copy(T_in), dz,
+            fill(ρ, n), 0.0, fill(0.5, n), sw, cfs, mp, true)
         @test T[1] > GEMB.CtoK
         ε = mp.emissivity
         @test lw_up ≈ ε * GEMB.SB * GEMB.CtoK^4 + (1 - ε) * lw_down rtol = 1e-12
@@ -1260,7 +1262,10 @@ end
             mp.surface_roughness_effective_ratio * z0, mp.surface_roughness_effective_ratio * z0,
             cfs)
         @test shf ≈ shf_0 rtol = 1e-12
-        @test lhf ≈ lhf_0 rtol = 1e-12
+        @test lhf_0 < 0.0
+        @test ec ≈ lhf_0 / GEMB.LV * 3600.0 rtol = 1e-12
+        @test ec_liquid == 0.0
+        @test lhf * 3600.0 ≈ GEMB.LS * ec rtol = 1e-12
         Q = sw[1] + lw_down - lw_up + shf + lhf + basal
         @test ρ * dz[1] * (GEMB.specific_enthalpy(mp, T[1]) - GEMB.specific_enthalpy(mp, GEMB.CtoK)) ≈
               Q * 3600.0 rtol = 1e-9

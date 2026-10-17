@@ -10,11 +10,14 @@ Positive masses are deposition or condensation, negative sublimation or evaporat
   ice: it changes `dz[1]` at constant density and carries `h_ice(T₁)` per kg.
 - The part exchanged at `LV`, `evaporation_condensation_liquid`, is liquid water. Condensate is
   added to `water[1]` and evaporation takes `water[1]` first, each at the melt-point water
-  enthalpy. Any evaporation beyond `water[1]` comes from the ice of cell 1. The flux charged
-  only `LV` for that mass, so the remaining `LS − LV = LF` per kg is drawn from the cell's
-  enthalpy, and the mass leaves the column at `h_ice(T₁) + LF`.
+  enthalpy. The thermal solve charges `LV` only for evaporation its pore water can supply
+  ([`_surface_liquid`](@ref)). Evaporation beyond `water[1]` arises only where the solve itself
+  froze some of that water at the end ([`_wet_cell_handoff!`](@ref)); it comes from the ice of
+  cell 1, the remaining `LS − LV = LF` per kg is drawn from the cell's enthalpy, and the mass
+  leaves the column at `h_ice(T₁) + LF`.
 
-Throws if cell 1 would lose all its ice.
+Throws if cell 1 would lose all its ice, or if that draw would take its ice below
+`WET_HANDOFF_TEMPERATURE_MIN`, the coldest temperature the heat-capacity fit is supported at.
 """
 function apply_vapor_exchange!(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64}, evaporation_condensation::Float64,
@@ -41,6 +44,12 @@ function apply_vapor_exchange!(temperature::Vector{Float64}, dz::Vector{Float64}
             H1_new = M1 * h_ice + ice_change * h_ice - from_ice * (h_ice + LF)
             M1_new > 0.0 || error("apply_vapor_exchange!: evaporation of $(evaporated) kg m-2 " *
                                   "exceeds the surface cell's water and ice")
+            H1_new >= M1_new * specific_enthalpy(mp, WET_HANDOFF_TEMPERATURE_MIN) ||
+                error("apply_vapor_exchange!: evaporating $(from_ice) kg m-2 of the surface " *
+                      "cell's ice at LV leaves LF·$(from_ice) = $(from_ice * LF) J m-2 to be drawn " *
+                      "from a cell of $(M1) kg m-2 (dz $(dz[1]) m, density $(density[1]) kg m-3, " *
+                      "T $(temperature[1]) K, water $(water[1] + from_water) kg m-2), which would " *
+                      "take it below $(WET_HANDOFF_TEMPERATURE_MIN) K")
             temperature[1] = temperature_from_specific_enthalpy(mp, H1_new / M1_new)
             ice_change -= from_ice
             E -= from_ice * (h_ice + LF)

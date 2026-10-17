@@ -74,8 +74,8 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     @test sum(parent(output[:runoff])) == 0.0
 
     @test mean_albedo ≈ 0.868763 atol = ALBEDO_ATOL
-    @test total_melt ≈ 127.969237 atol = mass_tol(127.969237)
-    @test total_refreeze ≈ 132.310696 atol = mass_tol(132.310696)
+    @test total_melt ≈ 128.236807 atol = mass_tol(128.236807)
+    @test total_refreeze ≈ 132.672193 atol = mass_tol(132.672193)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -90,12 +90,12 @@ end
     @test total(:runoff) > 0.5 * total(:precipitation)
     @test total(:refreeze) > 0.2 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.859842 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 5376.685582 atol = mass_tol(5376.685582)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.859856 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 5376.075876 atol = mass_tol(5376.075876)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2922.510450 atol = mass_tol(2922.510450)
-    @test total(:runoff) ≈ 7740.916607 atol = mass_tol(7740.916607)
-    @test total(:evaporation_condensation) ≈ 170.918127 atol = mass_tol(170.918127)
+    @test total(:refreeze) ≈ 2921.140743 atol = mass_tol(2921.140743)
+    @test total(:runoff) ≈ 7741.819384 atol = mass_tol(7741.819384)
+    @test total(:evaporation_condensation) ≈ 170.977325 atol = mass_tol(170.977325)
 end
 
 @testset "Synthetic regression: thin snow over dark ice at low sun" begin

@@ -27,8 +27,10 @@ function _make_core_cfs(; dt=3600.0, temperature_air=265.0, precipitation=0.0,
 end
 
 # Helper to create ModelParameters for gemb_core tests
-function _make_core_mp(; dt=3600.0, column_depth_max=0.9)
+function _make_core_mp(; dt=3600.0, column_depth_max=0.9,
+    thermal_solver::GEMB.AbstractThermalSolver=GEMB.ExplicitThermal())
     return GEMB.ModelParameters(
+        thermal_solver=thermal_solver,
         albedo_method=:GardnerSharp,
         albedo_ice=0.45,
         albedo_snow=0.85,
@@ -214,49 +216,58 @@ end
         _, lhf, L = GEMB.turbulent_heat_flux(T_s, 1.2, 1e-3, 1e-4, 1e-4, cfs)
         @test L == (T_s < GEMB.CtoK ? GEMB.LS : GEMB.LV)
     end
+    # A melting surface holding pore water evaporates it, at LV.
     temperature = fill(GEMB.CtoK, 10)
     _, _, _, lhf, _, ec, ec_liquid = GEMB.calculate_temperature(temperature, fill(0.08, 10),
         fill(400.0, 10), 0.5, fill(0.5, 10), [800.0; zeros(9)],
-        _make_core_cfs(temperature_air=280.0, shortwave_downward=800.0), mp, true)
+        _make_core_cfs(temperature_air=280.0, shortwave_downward=800.0), mp, true;
+        water=[0.5; zeros(9)])
+    @test ec < 0.0
     @test ec_liquid == ec
     @test lhf * 3600.0 ≈ GEMB.LV * ec rtol = 1e-12
-end
 
-@testset "Condensation on a melting surface closes the column energy budget" begin
-    # Humid warm air over a melting, wet surface condenses onto it. `verbose = true` makes
-    # gemb_core check the column energy against the vapor enthalpy above.
+    # The same surface dry, in the dark and in dry air: it has no water and no melt to give, so
+    # it sublimates, at LS, though it sits at the melting point.
     temperature = fill(GEMB.CtoK, 10)
-    state = merge(_make_core_state(), (temperature=temperature, water=[0.3; zeros(9)]))
-    cfs = GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=280.0, pressure_air=100000.0,
-        wind_speed=8.0, shortwave_downward=0.0, longwave_downward=320.0, vapor_pressure=900.0,
-        temperature_air_mean=260.0, wind_speed_mean=5.0, precipitation_mean=200.0,
-        temperature_observation_height=2.0, wind_observation_height=2.0)
-    new_state, flux = GEMB.gemb_core(state, cfs, _make_core_mp(), true)
-    @test new_state.evaporation_condensation > 0.0
-    @test flux.heat_flux_latent > 0.0
+    _, _, _, lhf, _, ec, ec_liquid = GEMB.calculate_temperature(temperature, fill(0.08, 10),
+        fill(400.0, 10), 0.0, fill(0.5, 10), zeros(10),
+        _make_core_cfs(temperature_air=GEMB.CtoK, shortwave_downward=0.0), mp, true)
+    @test ec < 0.0
+    @test ec_liquid == 0.0
+    @test lhf * 3600.0 ≈ GEMB.LS * ec rtol = 1e-12
 end
 
-@testset "Water the thermal solve freezes is counted" begin
-    # The thin, water-heavy surface cell of `_wet_cell_handoff!` (W/M = 1.04) over a dry column at the
-    # melting point, losing 100 W m-2: the air is at 273.15 K and saturated over water, so the
-    # turbulent fluxes vanish, and there is no shortwave. In 1800 s the solve itself freezes
-    # 100·1800/LF of the water at the melting point, in one cell.
+@testset "Evaporation at the melting point never draws more than the surface cell can give" begin
+    # The THU_L state of station-suite.md §8 (station forcing with the ERA5-Land-scaled wind,
+    # up to 38.5 m s-1): a 1 mm, 0.55 kg m-2 surface cell of dry bare ice at the melting point,
+    # heated by 300 W m-2 of absorbed shortwave while a 38.5 m s-1 wind of dry air evaporates
+    # from it. It stays above 273.15 K in the solve, but holds no pore water, and its melt covers
+    # only a seventh of the 0.31 kg m-2 that leaves. Charged at LV, that loss took LF per kg from
+    # this cell afterwards, more than its enthalpy (a DomainError in
+    # `temperature_from_specific_enthalpy`). The solve now charges it at LS, as sublimation of the
+    # cell's ice, within the surface energy balance.
     T0 = GEMB.CtoK
-    state = merge(_make_core_state(), (temperature=fill(T0, 10), dz=[0.0061; fill(0.08, 9)],
-        density=[93.4; fill(400.0, 9)], water=[0.597; zeros(9)]))
-    cfs = GEMB.ClimateForcingStep(; dt=1800.0, temperature_air=T0, pressure_air=100000.0,
-        wind_speed=5.0, shortwave_downward=0.0, longwave_downward=GEMB.SB * T0^4 - 100.0 / 0.98,
-        vapor_pressure=GEMB.saturation_vapor_pressure_water(T0), temperature_air_mean=260.0,
-        wind_speed_mean=5.0, precipitation_mean=200.0, temperature_observation_height=2.0,
-        wind_observation_height=2.0)
-    _, flux = GEMB.gemb_core(state, cfs, _make_core_mp(dt=1800.0), true)
-    @test flux.refreeze_thermal ≈ 100.0 * 1800.0 / GEMB.LF rtol = 1e-9
-    @test flux.refreeze_thermal_count === 1
-    # It is part of refreeze, and calculate_melt finds nothing more to refreeze.
-    @test flux.refreeze ≈ flux.refreeze_thermal rtol = 1e-12
-
-    # An ordinary column never takes the branch.
-    _, flux = GEMB.gemb_core(_make_core_state(), _make_core_cfs(), _make_core_mp(), true)
-    @test flux.refreeze_thermal === 0.0
-    @test flux.refreeze_thermal_count === 0
+    n = 10
+    cfs = GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=278.0, pressure_air=90000.0,
+        wind_speed=38.5, shortwave_downward=300.0, longwave_downward=250.0, vapor_pressure=400.0,
+        temperature_air_mean=260.0, wind_speed_mean=8.0, precipitation_mean=200.0,
+        temperature_observation_height=2.0, wind_observation_height=2.0)
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = _make_core_mp(thermal_solver=solver)
+        dz = [0.001; fill(0.08, n - 1)]
+        ρ = [545.0; fill(900.0, n - 1)]
+        M1 = ρ[1] * dz[1]
+        T = fill(T0, n)
+        w = zeros(n)
+        _, _, _, lhf, _, ec, ec_liquid = GEMB.calculate_temperature(T, dz, ρ, 0.0, fill(0.5, n),
+            [300.0; zeros(n - 1)], cfs, mp, true; water=w)
+        # Over half the cell's mass leaves in the hour, all of it at LS.
+        @test -ec > 0.5 * M1
+        @test ec_liquid == 0.0
+        @test lhf * 3600.0 ≈ GEMB.LS * ec rtol = 1e-12
+        # The vapor exchange that follows takes the mass from the cell, which stays near 0 °C.
+        GEMB.apply_vapor_exchange!(T, dz, ρ, w, ec, ec_liquid, mp)
+        @test dz[1] * ρ[1] ≈ M1 + ec rtol = 1e-10
+        @test T[1] > 270.0
+    end
 end
