@@ -20,6 +20,9 @@ methods need not pass them.
 
 Methods:
 - `:Constant150` → 150, `:Constant315` → 315, `:Constant350` → 350: constants.
+- `:Constant` → `mp.new_snow_density`: a constant of the caller's choosing, validated to
+  `[NEW_SNOW_DENSITY_MIN, NEW_SNOW_DENSITY_MAX]`, with the same fresh-grain properties as the
+  three fixed constants.
 - `:Fausto` → 315: the Fausto et al. (2018) Greenland fit frozen at one temperature (it is
   `:FaustoFit` evaluated at T ≈ 256.2 K). Numerically equal to `:Constant315`, but `:Fausto`
   additionally selects the Crocus wind-dependent fresh-grain properties below, where
@@ -92,6 +95,8 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
         return 315.0
     elseif mp.new_snow_method == :Constant350
         return 350.0
+    elseif mp.new_snow_method == :Constant
+        return mp.new_snow_density
     elseif mp.new_snow_method == :Fausto
         return DENSITY_NEW_SNOW_FAUSTO_CONSTANT
     elseif mp.new_snow_method == :FaustoFit

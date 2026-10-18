@@ -193,6 +193,7 @@ every setting but `:FlannerZender2006`. Because `:ArthernB` densification goes a
 | Option | Form |
 |---|---|
 | `:Constant350` (default), `:Constant315`, `:Constant150` | Bare constants; 350 is what the Community Firn Model ships |
+| `:Constant` | `new_snow_density`, a bare constant in [50, 550] kg m⁻³ |
 | `:Fausto` | 315 kg m⁻³, the Fausto et al. (2018) regression at 256.2 K |
 | `:FaustoFit` | `362.1 + 2.78·(T_air − 273.15)`, the regression itself, clamped to `[1, ρᵢ]` since it reaches zero near 143 K |
 | `:Pahaut` | `max(50, 109 + 6·(T_air − 273.15) + 26·√U)` |

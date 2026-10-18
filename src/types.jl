@@ -456,8 +456,11 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # timestep, with the default fresh-grain properties. It is a deposition density, so it
     # needs a settling scheme (`densification_method = :Crocus` with
     # `destructive_metamorphism = true`) to reach observed near-surface densities. See
-    # `fresh_snow_density`.
+    # `fresh_snow_density`. `:Constant` is a bare constant of `new_snow_density`, with the default
+    # fresh-grain properties as `:Constant350`.
     new_snow_method::Symbol = :Constant350
+    # Fresh-snow density [kg m-3] of `new_snow_method = :Constant`; no other method reads it.
+    new_snow_density::Float64 = 350.0
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
     # Calonne (2019) conductivity and Barnola (1991) densification fits were built against.

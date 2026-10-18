@@ -88,6 +88,8 @@ const OPTION_FIELDS = (
     :blowing_snow_method,
 )
 
+# `new_snow_method = :Constant` is Julia-only: it is absent from its tuple below, and its
+# `new_snow_density` from `NUMERIC_FIELDS`, so a C host steps with one of the fixed densities.
 const OPTION_VALUES = (
     (:HerronLangway, :Arthern, :ArthernB, :Barnola1991, :Crocus, :CrocusPure, :GSFC2020,
      :Simonsen2013, :Ligtenberg),

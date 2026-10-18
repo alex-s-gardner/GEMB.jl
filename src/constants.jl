@@ -159,6 +159,12 @@ const DENSITY_NEW_SNOW_PAHAUT_B = 6.0
 const DENSITY_NEW_SNOW_PAHAUT_C = 26.0
 const DENSITY_NEW_SNOW_PAHAUT_MIN = 50.0
 
+# Range accepted for `new_snow_density`, the density of `new_snow_method = :Constant` [kg m-3]. It
+# spans the deposition densities the other methods return, from the 50 kg m-3 floor of `:Pahaut`
+# to `:KuipersMunneke`'s 481 at the melting point, with margin.
+const NEW_SNOW_DENSITY_MIN = 50.0
+const NEW_SNOW_DENSITY_MAX = 550.0
+
 # Fresh-snow density coefficients for `new_snow_method = :vanKampenhout2017` — van
 # Kampenhout et al. (2017) eqs. 2-4, p. 2587: `ρ_fs = ρ_T + ρ_W`, with `ρ_T` piecewise in
 # `ΔT = T_air - CtoK` [K] and `ρ_W` a function of the 10 m wind speed [m s-1].
