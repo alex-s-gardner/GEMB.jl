@@ -220,7 +220,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
 
     dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp;
-        viscosity=viscosity)
+        grain_dendricity, grain_sphericity, viscosity)
 
     densification_from_compaction = densification_from_compaction - sum(dz)
 

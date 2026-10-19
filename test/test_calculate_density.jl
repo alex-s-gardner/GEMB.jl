@@ -705,8 +705,9 @@ end
     grain_radius = [0.05, 0.07, 0.09]       # mm, all below eq. 9's f2 = 1 threshold
     water = zeros(3)
 
+    # Fresh dendritic grains: eq. 9's gate is closed, so f2 = 1.
     (dz_out, density_out) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
-        grain_radius, water, cfs, mp)
+        grain_radius, water, cfs, mp; grain_dendricity=ones(3), grain_sphericity=fill(0.5, 3))
     Δρ = density_out .- density
 
     # Unlike `:ArthernB`, the surface cell densifies: eq. 6's half-own-weight rule gives
@@ -716,7 +717,7 @@ end
     # Hand-computed increment for cell 2 from the paper's equations:
     # σ = (ρ₁dz₁ + 0.5ρ₂dz₂)·g, dz' = dz·exp(-σ/η·dt).
     σ = (density[1] * dz[1] + 0.5 * density[2] * dz[2]) * GEMB.GRAVITY
-    η = GEMB._crocus_viscosity(density[2], t_vec[2], 0.0, dz[2], grain_radius[2])
+    η = GEMB._crocus_viscosity(density[2], t_vec[2], 0.0, dz[2], grain_radius[2], false)
     dz_expected = dz[2] * exp(-σ / η * 86400.0)
     @test dz_out[2] ≈ dz_expected rtol = 1e-12
     @test density_out[2] ≈ density[2] * dz[2] / dz_expected rtol = 1e-12
@@ -738,7 +739,8 @@ end
     rates = map((zeros(3), [0.0, 2.0, 0.0])) do water
         mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
         (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
-            copy(grain_radius), water, cfs, mp)
+            copy(grain_radius), water, cfs, mp;
+            grain_dendricity=ones(3), grain_sphericity=fill(0.5, 3))
         d .- density
     end
     dry, wet = rates
@@ -771,8 +773,10 @@ end
 
     rates = map((:Arthern, :CrocusPure)) do meth
         mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
+        # Dry faceted grains (dendricity 0, sphericity 0): eq. 9 applies, as in depth hoar.
         (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
-            copy(grain_radius), zeros(n), cfs, mp)
+            copy(grain_radius), zeros(n), cfs, mp; grain_dendricity=zeros(n),
+            grain_sphericity=zeros(n))
         (d .- density) .* 365.0     # per year
     end
     arthern, crocus = rates
@@ -833,7 +837,8 @@ end
     dz = fill(1.0, n)
     density = fill(890.0, n)
     (dz_out, d_out) = GEMB.calculate_density(fill(273.15, n), copy(dz), copy(density),
-        fill(0.05, n), fill(1.0, n), cfs, mp)
+        fill(0.05, n), fill(1.0, n), cfs, mp; grain_dendricity=zeros(n),
+        grain_sphericity=zeros(n))
     @test all(d_out .<= mp.density_ice)
     @test all(dz_out .> 0.0)
     @test dz_out .* d_out ≈ dz .* density rtol = 1e-14
@@ -856,7 +861,8 @@ end
     outs = map((:Crocus, :CrocusPure, :GSFC2020)) do meth
         mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
         GEMB.calculate_density(t_vec, copy(dz), copy(density),
-            copy(grain_radius), copy(water), cfs, mp)
+            copy(grain_radius), copy(water), cfs, mp; grain_dendricity=zeros(4),
+            grain_sphericity=zeros(4))
     end
     (dz_h, d_h), (dz_p, d_p), (dz_g, d_g) = outs
 
@@ -885,8 +891,10 @@ end
 
     rates = map((:Arthern, :Crocus, :CrocusPure)) do meth
         mp = GEMB.ModelParameters(density_ice=910.0, densification_method=meth)
+        # Dry faceted grains (dendricity 0, sphericity 0): eq. 9 applies, as in depth hoar.
         (_, d) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
-            copy(grain_radius), zeros(n), cfs, mp)
+            copy(grain_radius), zeros(n), cfs, mp; grain_dendricity=zeros(n),
+            grain_sphericity=zeros(n))
         (d .- density) .* 365.0
     end
     arthern, hybrid, pure = rates
@@ -908,7 +916,8 @@ end
     mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:Crocus)
     water = zeros(n); water[2] = 5.0
     (_, d_wet) = GEMB.calculate_density(t_vec, copy(dz), copy(density),
-        copy(grain_radius), water, cfs, mp)
+        copy(grain_radius), water, cfs, mp; grain_dendricity=zeros(n),
+        grain_sphericity=zeros(n))
     @test (d_wet[2] - density[2]) * 365.0 > hybrid[2]
 end
 
@@ -1195,8 +1204,10 @@ end
         precipitation_mean=pm, temperature_air_mean=tam,
         accumulation_mean=am, temperature_air_effective=teff)
 
+    # Grain shape is read only by the Crocus schemes (eq. 9's gate); every other scheme ignores it.
     _run(mp) = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
-        copy(grain_radius), zeros(n), cfs, mp)[2]
+        copy(grain_radius), zeros(n), cfs, mp; grain_dendricity=zeros(n),
+        grain_sphericity=zeros(n))[2]
 
     # Defaults: the refined scalars, which is why Fix 1 and Fix 2 are correctness fixes
     # rather than opt-in preferences.
@@ -1226,7 +1237,8 @@ end
             precipitation_mean=am, temperature_air_mean=tam)
         d_ref = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
             copy(grain_radius), zeros(n), cfs_as_precip,
-            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation))[2]
+            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation);
+            grain_dendricity=zeros(n), grain_sphericity=zeros(n))[2]
         @test d_a == d_ref
     end
 
@@ -1253,7 +1265,8 @@ end
             precipitation_mean=am, temperature_air_mean=teff)
         d_ref = GEMB.calculate_density(copy(temperature), copy(dz), copy(density),
             copy(grain_radius), zeros(n), cfs_as_tam,
-            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation))[2]
+            GEMB.ModelParameters(; kw..., densification_accumulation=:precipitation);
+            grain_dendricity=zeros(n), grain_sphericity=zeros(n))[2]
         @test _run(GEMB.ModelParameters(; kw..., mean_temperature_method=:arrhenius)) == d_ref
     end
 

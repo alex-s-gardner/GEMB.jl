@@ -1,5 +1,6 @@
 """
-    calculate_density(temperature, dz, density, grain_radius, water, cfs::ClimateForcingStep, mp::ModelParameters)
+    calculate_density(temperature, dz, density, grain_radius, water, cfs::ClimateForcingStep, mp::ModelParameters;
+                      grain_dendricity, grain_sphericity, viscosity)
 
 Compute the densification of snow/firn using one of several models:
 - `:HerronLangway`: Herron and Langway (1980)
@@ -37,9 +38,14 @@ below `exp(-0.046·275) = 3.2e-6` of its fresh-snow value. Requesting it with an
 densification scheme throws.
 
 `water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
-(as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity
-reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
-ignore it.
+(as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, eq. 8's viscosity
+reduction, and the grain-type gate of eq. 9); the accumulation-driven schemes proxy overburden
+with mean accumulation and ignore it.
+
+`grain_dendricity` and `grain_sphericity` (keywords, per cell) are read only by
+`:Crocus`/`:CrocusPure`, which apply eq. 9's grain-type stiffening only to cells that
+`crocus_f2_applies` admits. Those two schemes throw an `ArgumentError` when either is
+missing or of the wrong length; every other scheme ignores them.
 
 The accumulation-driven branches are scalar-loop implementations, numerically identical
 element by element to the vectorized form they replaced but without its mask / gather /
@@ -94,6 +100,8 @@ broadcast temporaries (`mass_init`, `idx`, `H`, `c0`, `c1`, ...) allocated per c
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters;
+    grain_dendricity::Vector{Float64}=NO_GRAIN_STATE,
+    grain_sphericity::Vector{Float64}=NO_GRAIN_STATE,
     viscosity::Vector{Float64}=NO_VISCOSITY)
 
     # specify constants
@@ -261,6 +269,10 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         # `:Crocus` hands cells at or above `CROCUS_HYBRID_DENSITY` to `:GSFC2020`, because
         # eq. 7 is fitted to a 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn —
         # see `CROCUS_HYBRID_DENSITY`. `:CrocusPure` applies eq. 5 at every density.
+        (length(grain_dendricity) == m && length(grain_sphericity) == m) ||
+            throw(ArgumentError(":$(method) densification gates eq. 9 on grain shape and needs " *
+                                "grain_dendricity and grain_sphericity for all $m cells; got " *
+                                "$(length(grain_dendricity)) and $(length(grain_sphericity))"))
         hybrid = method == :Crocus
         p = hybrid ? DensificationCoeffs(mp, pm, tam) : nothing
         dt_seconds = cfs.dt
@@ -281,7 +293,9 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 # but the first the self term is a per-mille correction to the overlying
                 # load; for the first it is the difference between compacting and not.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
-                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
+                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i],
+                    crocus_f2_applies(grain_dendricity[i], grain_sphericity[i], water[i],
+                        grain_radius[i]))
                 isempty(viscosity) || (viscosity[i] = η)
                 strain_rate = σ / η                              # [s-1]
                 if settling
@@ -619,6 +633,54 @@ const CROCUS_G3 = 1.0e-4        # e-folding grain size
 const CROCUS_F2_MAX = 4.0
 # Floor, not in the paper. See `_crocus_viscosity`.
 const CROCUS_F2_MIN = 1.0
+# Sphericity below which a non-dendritic cell counts as angular for eq. 9: Crocus's `XVGRAN6`
+# (`modd_snow_metamo.F90:128` of the Crocus 3.0.1 release), the test at `snowcro.F90:2114`.
+const CROCUS_F2_SPHERICITY_MAX = 51 / 99
+
+"""
+    crocus_f2_applies(dendricity, sphericity, water, grain_radius) -> Bool
+
+Whether eq. 9's grain-type factor `f2` of the Crocus viscosity applies to a cell. It applies when
+the cell is
+
+- non-dendritic: `dendricity` at most `GDN_TOLERANCE` (the classification
+  [`calculate_grain_size`](@ref) uses) *and* an optical diameter `d` of at least
+  `1e-4·(4 − S)` m, Crocus's own non-dendritic test, with `d` from [`optical_diameter`](@ref)
+  (Lafaysse et al., 2026, eq. D5, GEMB's grain size `2·grain_radius`);
+- angular: `sphericity < CROCUS_F2_SPHERICITY_MAX = 51/99`;
+- dry: `water` at most `WATER_TOLERANCE` [kg m-2].
+
+Every other cell gets `f2 = 1`. The optical-diameter test admits only grains of at least
+0.33 mm (0.40 mm at sphericity 0), where eq. 9 is 3.7 to 4: angular snow finer than that, which
+GEMB's `:FlannerZender2006` radius readily produces, is dendritic snow to Crocus and gets no
+stiffening there either.
+
+Crocus 3.0.1 (`snowcro.F90:2112-2121`, `SNOWCROCOMPACTN`) applies `f2` only to a layer that is
+non-dendritic by that optical-diameter test, has sphericity below 51/99, *and* carries the
+historical tracker value 1: faceted crystals at some time and liquid water never (Lafaysse et al.,
+2026, Table 2). The tracker is set to 1 when a dry non-dendritic layer first reaches sphericity
+below 0.1/99 (`snowcro.F90:2596-2598`), and wetting that rounds the grains moves it to 3, after
+which `f2` never applies again (`snowcro.F90:2600-2603`). Neither Vionnet et al. (2012, eq. 9) nor
+Lafaysse et al. (2026, eq. 55) prints the history condition; the code is the reference
+implementation.
+
+GEMB carries no historical tracker, so this gate reads the cell's present state. It differs
+from Crocus in three ways:
+
+- coarse angular snow that never reached sphericity 0 is stiffened here and not in Crocus;
+- a layer that was wet and has refrozen and faceted again is stiffened here and not in
+  Crocus, which excludes it for good;
+- a faceted layer that holds water but has not yet rounded to sphericity 1 is excluded here
+  and stiffened in Crocus, where `f1` then dominates its viscosity anyway.
+
+The first two err toward stiffening, the third toward softening.
+"""
+@inline crocus_f2_applies(dendricity::Float64, sphericity::Float64, water::Float64,
+    grain_radius::Float64) =
+    dendricity <= GDN_TOLERANCE && sphericity < CROCUS_F2_SPHERICITY_MAX &&
+    water <= WATER_TOLERANCE &&
+    optical_diameter(dendricity, sphericity, grain_radius) >=
+        OPTICAL_DIAMETER_DENDRITIC_UNIT * (4 - sphericity)
 
 """
     CROCUS_HYBRID_DENSITY
@@ -639,7 +701,7 @@ either paper prescribes a blending function. `:CrocusPure` applies eq. 5 at ever
 const CROCUS_HYBRID_DENSITY = 450.0
 
 """
-    _crocus_viscosity(ρ, T, W_liq, D, grain_radius) -> η [kg s-1 m-1]
+    _crocus_viscosity(ρ, T, W_liq, D, grain_radius, f2_applies=true) -> η [kg s-1 m-1]
 
 Snow viscosity of Vionnet et al. (2012) eq. 7, with the two microstructure correction
 factors of eqs. 8 and 9:
@@ -649,50 +711,32 @@ factors of eqs. 8 and 9:
   other expression of: every accumulation-driven scheme here is blind to `water`, and
   `:ArthernB` reads it only as overburden.
 - `f2 = min(4, exp(min(g1, gs − g2)/g3))` (eq. 9) *raises* viscosity for coarse angular
-  grains, suppressing compaction in depth hoar.
+  grains, suppressing compaction in depth hoar. It applies only when `f2_applies` is true;
+  otherwise `f2 = 1`. `calculate_density` sets `f2_applies` from
+  `crocus_f2_applies`: non-dendritic by Crocus's optical-diameter test, angular (sphericity
+  below 51/99) and dry, the cells Crocus scores with eq. 9.
 
 `W_liq` is cell water [kg m-2], `D` cell thickness [m], `grain_radius` [mm]; `gs` in eq. 9
 is a grain size, taken here as the grain diameter `2·grain_radius` in metres.
 
-`f2` is floored at 1, which the published eq. 9 does not do. Two facts force the choice:
-
- 1. Eq. 9 is bounded above (`min(4.0, ...)`) but not below. It crosses 1 at `gs = g2 =
-    0.2 mm` and decays as `exp((gs − g2)/g3)` beneath that, so a *fine*-grained cell gets
-    `f2 < 1` — a softening, from a factor the paper introduces to "account for [...] the
-    increase of viscosity with angular grains". At GEMB's fresh-snow radius
-    (`RE_NEW_SNOW = 0.05 mm`, so gs = 0.1 mm) it is `exp(-1) = 0.368`, i.e. new snow
-    compacts 2.7× faster than the unmodified eq. 7 rate.
- 2. In Crocus that regime is unreachable, so the paper never has to bound it. Eq. 9 is a
-    *non-dendritic* relation, and Crocus tracks dendricity explicitly: fresh snow is
-    dendritic (Sect. 3.3) and is described by `d` and `s`, not by `gs`. A layer only
-    acquires a `gs` once `d` reaches 0, and the paper puts non-dendritic `gs` in the
-    0.3-0.4 mm range — where eq. 9 gives 2.7 to 4 (its cap binds at gs = 0.339 mm). Every
-    `gs` the paper's own model can present to eq. 9 therefore yields `f2 >= 2.7`.
-
-GEMB has no such gate: it carries one `grain_radius` for dendritic and non-dendritic snow
-alike, and initializes it at 0.05 mm — squarely inside the interval eq. 9 leaves undefined.
-Passing that radius through unfloored would apply a 1.6-2.7× softening to the fresh snow at
-the top of the column, inverting the factor's intent for the cells it was never meant to
-score. Flooring at 1 makes `f2` a pure stiffening correction, which is what eq. 9 does
-across its whole valid domain, and leaves it inert (`f2 = 1`) below it rather than
-extrapolating a relation off its domain.
-
-`grain_dendricity` is available in the column state, so a closer port could gate eq. 9 on
-`d == 0` as Crocus does. That would need a defensible `f2` for dendritic snow — the paper
-supplies none, since the question does not arise there — so the floor is the conservative
-reading, not the only one.
+Where it applies, `f2` is also floored at 1, which the published eq. 9 does not do. Eq. 9 is
+bounded above (`min(4.0, ...)`) but not below: it crosses 1 at `gs = g2 = 0.2 mm` and decays
+as `exp((gs − g2)/g3)` beneath that, so a fine-grained cell would get `f2 < 1`, a softening from
+a factor introduced for "the increase of viscosity with angular grains". The gate admits only
+grains of at least 0.33 mm, where eq. 9 is 3.7 to 4, so the floor binds only for a direct
+`f2_applies = true` call on a finer grain.
 
 Deviates from the Community Firn Model's `Crocus`, which was used to cross-check eq. 7 and
 the `dρ/dt = ρσ/η` form: CFM hardcodes `f2 = 4.0` (eq. 9's ceiling, so it stiffens every
 cell including fresh fine-grained snow) and adopts van Kampenhout et al. (2017) eq. 8's
-retuned `cη = 358`. The paper's `f2` and `cη = 250` are used here.
+retuned `cη = 358`. The paper's `f2`, Crocus's gate and `cη = 250` are used here.
 """
 @inline function _crocus_viscosity(ρ::Float64, T::Float64, W_liq::Float64,
-    D::Float64, grain_radius::Float64)
+    D::Float64, grain_radius::Float64, f2_applies::Bool=true)
     f1 = 1.0 / (1.0 + 60.0 * W_liq / (DENSITY_WATER * D))
     gs = 2.0 * grain_radius / 1000.0        # radius [mm] -> diameter [m]
-    f2 = clamp(exp(min(CROCUS_G1, gs - CROCUS_G2) / CROCUS_G3),
-               CROCUS_F2_MIN, CROCUS_F2_MAX)
+    f2 = f2_applies ? clamp(exp(min(CROCUS_G1, gs - CROCUS_G2) / CROCUS_G3),
+                            CROCUS_F2_MIN, CROCUS_F2_MAX) : 1.0
     return f1 * f2 * CROCUS_ETA0 * (ρ / CROCUS_C_ETA) *
            exp(CROCUS_A_ETA * (CtoK - T) + CROCUS_B_ETA * ρ)
 end

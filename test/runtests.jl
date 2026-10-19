@@ -33,6 +33,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Destructive Metamorphism" begin
         include("test_destructive_metamorphism.jl")
     end
+    @testset "Crocus f2 gate" begin
+        include("test_crocus_f2_gate.jl")
+    end
     @testset "Accumulation" begin
         include("test_calculate_accumulation.jl")
     end

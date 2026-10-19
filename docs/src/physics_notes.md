@@ -46,14 +46,21 @@ Overburden is the `Σ(ρdz + water)·g` integral taken at the cell midpoint — 
 half-own-weight rule for the surface layer, applied uniformly. Integration uses
 `D·exp(−σ/η·dt)`, eq. 5's exact solution at constant σ and η.
 
+`f2` applies only to cells that are non-dendritic (dendricity 0 and Crocus's optical-diameter
+test `d_opt ≥ 1e-4·(4 − S)`), angular (sphericity below 51/99) and dry; every other cell gets
+`f2 = 1`. This follows the Crocus 3.0.1 code (`SNOWCROCOMPACTN`, `snowcro.F90:2112-2121`),
+which applies eq. 9 only to such layers whose historical tracker also says they have been
+faceted and never wet (Lafaysse et al., 2026, Table 2). Neither Vionnet et al. (2012) eq. 9 nor
+Lafaysse et al. (2026) eq. 55 prints the history condition. The optical-diameter test admits
+only grains of at least 0.33 mm, where eq. 9 is 3.7–4. GEMB has no historical tracker, so the
+gate reads the present state: it also stiffens coarse angular snow that never fully faceted
+and refrozen snow that faceted again, and it skips a faceted cell while it holds water.
+
 Two departures from the published law:
 
-- `f2` is floored at 1. Eq. 9 is bounded above but not below, so it *softens* fine-grained
-  snow — 0.368, a 2.7× speedup, at GEMB's 0.05 mm fresh-snow radius. Crocus never reaches
-  that regime because eq. 9 applies only to non-dendritic snow, whose grain size the paper
-  puts at 0.3–0.4 mm where eq. 9 gives 2.7–4. GEMB carries one grain radius for both
-  regimes, so the floor keeps `f2` a stiffening correction over the domain eq. 9 covers and
-  inert below it.
+- `f2` is floored at 1. Eq. 9 is bounded above but not below, so it would *soften* grains
+  finer than 0.2 mm. The gate admits no grain that fine, so the floor binds only for a direct
+  call of the viscosity with the factor forced on.
 - `:Crocus` hands cells at or above 450 kg m⁻³ to `:GSFC2020`. Eq. 7 is fitted to a 1–2 m
   alpine snowpack and `exp(b_η·ρ)` saturates in firn: unblended, the law gives 0.7–0.8×
   `:Arthern`'s compaction rate in the top few metres but only 0.02–0.09× below 20 m.
@@ -61,8 +68,8 @@ Two departures from the published law:
   handover is a branch rather than a weighted blend, since neither paper prescribes a
   blending function. `:CrocusPure` applies eq. 5 at every density.
 
-The paper's `c_η = 250` and its `f2` are used, where the Community Firn Model hardcodes
-`f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
+The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
+Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
 
 **`destructive_metamorphism`** [default `false`] adds the destructive-metamorphism settling
 of fresh snow (Anderson, 1976) to the `:Crocus`/`:CrocusPure` strain rate, as CLM5 does:

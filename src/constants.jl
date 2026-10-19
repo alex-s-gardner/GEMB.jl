@@ -408,6 +408,11 @@ const AQUIFER_TOLERANCE = 1e-3         # standing-water detection [fraction of p
 # `isempty` first — so there is nothing to alias.
 const NO_VISCOSITY = Float64[]
 
+# The "not supplied" default of `calculate_density`'s `grain_dendricity`/`grain_sphericity`
+# keywords. Only `:Crocus`/`:CrocusPure` read them, and those throw on an empty vector. Never
+# written to, so sharing it aliases nothing.
+const NO_GRAIN_STATE = Float64[]
+
 """
     energy_tolerance(E_reference)
 

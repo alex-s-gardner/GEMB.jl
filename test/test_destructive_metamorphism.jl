@@ -61,8 +61,9 @@ end
     @test_throws "temperature must be finite and positive" _dm(150.0, NaN)
 end
 
-# A one-cell column. Grain radius 0.05 mm puts eq. 9's f2 on GEMB's floor of 1, and a dry cell
-# has f1 = 1, so the Vionnet et al. (2012) eq. 7 viscosity is η0·(ρ/c_η)·exp(a_η·(T_frz − T)
+# A one-cell column. Fresh dendritic grains (radius 0.05 mm) close eq. 9's gate, so f2 = 1,
+# and a dry cell has f1 = 1, so the Vionnet et al. (2012) eq. 7 viscosity is
+# η0·(ρ/c_η)·exp(a_η·(T_frz − T)
 # + b_η·ρ) with η0 = 7.62237e6 kg s-1 m-1, a_η = 0.1 K-1, b_η = 0.023 m3 kg-1, c_η = 250
 # kg m-3, and the overburden is half the cell's own weight, σ = ½·ρ·dz·g with g = 9.81.
 function _one_cell(mp; ρ=150.0, dz=0.08, T=263.15, water=0.0, dt=3600.0)
@@ -70,7 +71,8 @@ function _one_cell(mp; ρ=150.0, dz=0.08, T=263.15, water=0.0, dt=3600.0)
         precipitation=0.0, wind_speed=0.0, vapor_pressure=100.0, temperature_air_mean=T,
         wind_speed_mean=0.0, precipitation_mean=300.0, temperature_observation_height=2.0,
         wind_observation_height=10.0)
-    return GEMB.calculate_density([T], [dz], [ρ], [0.05], [water], cfs, mp)
+    return GEMB.calculate_density([T], [dz], [ρ], [0.05], [water], cfs, mp;
+        grain_dendricity=[1.0], grain_sphericity=[0.5])
 end
 
 function _one_cell_big(; ρ, dz, T, dt, dm::Bool)
