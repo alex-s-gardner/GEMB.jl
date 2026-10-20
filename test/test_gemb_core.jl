@@ -237,6 +237,61 @@ end
     @test lhf * 3600.0 ≈ GEMB.LS * ec rtol = 1e-12
 end
 
+@testset "Sublimation larger than the surface cell is supplied by the cells below" begin
+    # A Greenland margin band under band wind × 2 (C-kfit-table-w2, N60_W048, ΔT 3 K): a 0.77 mm,
+    # 0.408 kg m-2 surface layer of 527 kg m-3 snow over 882 kg m-3 firn and ice loses 0.416 kg m-2
+    # in an hour, a latent heat flux of about 330 W m-2, above the 262 W m-2 a
+    # `snow_layer_min_mass` layer covers.
+    mp = _make_core_mp()
+    n = 6
+    function col()
+        dz = [0.000774299884896985, 0.05236410171003491, 0.045, 0.05, 0.05, 0.05]
+        ρ = [526.9061080205456, 881.5853409714182, 917.0, 917.0, 917.0, 917.0]
+        T = [262.2079961800943, 262.5, 263.0, 263.5, 264.0, 264.5]
+        w = [0.019731192872351207; zeros(n - 1)]
+        cols = GEMB.column_state(T, dz, ρ, w, fill(0.5, n), zeros(n), ones(n), collect(1.0:n))
+        return cols
+    end
+    ec, ec_liquid = -0.4159663397101932, -0.0038105098446434005
+
+    cols = col()
+    M0 = sum(cols.dz .* cols.density) + sum(cols.water)
+    E0 = GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water)
+    @test_throws "removes the whole surface cell" GEMB.apply_vapor_exchange!(
+        copy(cols.temperature), copy(cols.dz), copy(cols.density), copy(cols.water), ec, ec_liquid, mp)
+
+    @test GEMB.expose_vapor_exchange_layer!(cols, ec, ec_liquid, mp) == 1
+    @test length(cols.dz) == n - 1
+    # The merge conserves mass and enthalpy, and keeps the firn below at its density.
+    @test sum(cols.dz .* cols.density) + sum(cols.water) ≈ M0 rtol = 1e-14
+    @test GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water) ≈ E0 rtol = 1e-13
+    @test cols.density[1] == 881.5853409714182
+    # The exchange then takes the whole loss from the merged cell, and the column's mass and
+    # enthalpy change by exactly the vapor mass and the enthalpy it carried.
+    E = GEMB.apply_vapor_exchange!(cols.temperature, cols.dz, cols.density, cols.water, ec, ec_liquid, mp)
+    @test sum(cols.dz .* cols.density) + sum(cols.water) ≈ M0 + ec rtol = 1e-13
+    @test GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water) ≈ E0 + E rtol = 1e-12
+    @test cols.dz[1] > 0.0
+
+    # A loss the surface cell covers merges nothing, so every other run is unchanged.
+    cols = col()
+    dz0 = copy(cols.dz)
+    @test GEMB.expose_vapor_exchange_layer!(cols, -0.1, 0.0, mp) == 0
+    @test cols.dz == dz0
+    @test GEMB.expose_vapor_exchange_layer!(cols, 0.2, 0.0, mp) == 0
+
+    # A loss larger than the top two cells merges both into the third.
+    cols = col()
+    loss = cols.dz[1] * cols.density[1] + cols.dz[2] * cols.density[2] + 1.0
+    @test GEMB.expose_vapor_exchange_layer!(cols, -loss, 0.0, mp) == 2
+    @test length(cols.dz) == n - 2
+    @test cols.dz[1] * cols.density[1] > loss
+
+    # A one-cell column is left to apply_vapor_exchange!, which throws.
+    cols = GEMB.column_state([262.0], [0.0005], [500.0], [0.0], [0.5], [0.0], [1.0], [1.0])
+    @test GEMB.expose_vapor_exchange_layer!(cols, -1.0, 0.0, mp) == 0
+end
+
 @testset "Evaporation at the melting point never draws more than the surface cell can give" begin
     # The THU_L state of station-suite.md §8 (station forcing with the ERA5-Land-scaled wind,
     # up to 38.5 m s-1): a 1 mm, 0.55 kg m-2 surface cell of dry bare ice at the melting point,

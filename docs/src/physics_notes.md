@@ -489,6 +489,14 @@ Consequences for consumers of the output:
   flux exactly. Its negation is surface elevation change against a datum fixed in the ice;
   see [`trim_bottom!`](@ref) for the identity.
 
+**A timestep's vapor loss larger than the surface cell** is supplied by the cells below it:
+[`expose_vapor_exchange_layer!`](@ref) merges the surface cell into the cell below, as the
+thickness controller merges a thin cell, until the top cell holds the loss, and
+[`apply_vapor_exchange!`](@ref) then takes it from that cell. A surface snow layer can be as
+light as [`snow_layer_min_mass`](@ref)`(dt)`, which covers a sublimation flux of 262 W m⁻²
+sustained over the step; fluxes beyond that occur over thin snow on ablating ice under strong
+wind. Steps whose loss the surface cell covers are unchanged.
+
 **`horizontal_strain_rate`** [yr⁻¹, default 0] is the trace of the horizontal strain-rate
 tensor `ε̇_xx + ε̇_yy`. By incompressibility it thins (positive, divergence) or thickens
 (negative, convergence) every cell at constant density by `exp(−D·dt)`. The mass it exports

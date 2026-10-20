@@ -62,6 +62,46 @@ function apply_vapor_exchange!(temperature::Vector{Float64}, dz::Vector{Float64}
     return E
 end
 
+# Net ice mass change of the surface cell under `apply_vapor_exchange!` [kg m-2]: the part
+# exchanged at LS, less the ice evaporation beyond `water[1]` takes.
+@inline function _vapor_ice_change(evaporation_condensation::Float64,
+    evaporation_condensation_liquid::Float64, water_surface::Float64)
+    ice_change = evaporation_condensation - evaporation_condensation_liquid
+    evaporation_condensation_liquid < 0.0 &&
+        (ice_change -= max(-evaporation_condensation_liquid - water_surface, 0.0))
+    return ice_change
+end
+
+"""
+    expose_vapor_exchange_layer!(cols, evaporation_condensation,
+                                 evaporation_condensation_liquid, mp) -> n_merged
+
+Merge the surface cell into the cell below, as [`manage_layer_thickness`](@ref) merges a thin
+cell, while the timestep's vapor loss would remove all of the surface cell's ice; return the
+number of cells merged. Mass, enthalpy and pore water are conserved, so
+[`apply_vapor_exchange!`](@ref) then takes the loss from the merged cell.
+
+The surface cell can be as light as [`snow_layer_min_mass`](@ref)`(dt)`, which covers a
+sublimation flux of 262 W m-2 sustained over the step. Larger fluxes occur over thin snow on
+ablating ice under strong wind, and the step's loss is then supplied by the cell below as well.
+A column of one cell is left unchanged, and `apply_vapor_exchange!` throws.
+"""
+function expose_vapor_exchange_layer!(cols::NamedTuple, evaporation_condensation::Float64,
+    evaporation_condensation_liquid::Float64, mp::ModelParameters)
+    (; dz, density, water) = cols
+    n_merged = 0
+    while length(dz) > 1
+        ice_change = _vapor_ice_change(evaporation_condensation,
+            evaporation_condensation_liquid, water[1])
+        M1 = dz[1] * density[1]
+        (M1 + ice_change > 0.0 && dz[1] + ice_change / density[1] > 0.0) && break
+        _merge_thin_cell!(cols, 1, 2, M1, dz[2] * density[2], mp)
+        close_slot!(cols, 1)
+        n_merged += 1
+    end
+    return n_merged
+end
+
 """
     gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
               n_target=length(state.dz), z_target=sum(state.dz),
@@ -147,6 +187,11 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     #    Deposition and condensation (positive) are new mass at age 0, so they dilute the
     #    surface cell's age; removal takes a fraction of the cell and is age-neutral, which
     #    `dilute_age` handles by returning the age unchanged for a non-positive input.
+    #    A loss larger than the surface cell's ice is supplied by the cells below it; the cell
+    #    count this removes is restored at step 9.
+    expose_vapor_exchange_layer!(column_state(temperature, dz, density, water, grain_radius,
+            grain_dendricity, grain_sphericity, age),
+        evaporation_condensation, evaporation_condensation_liquid, mp)
     S_surface = dz[1] * density[1] + water[1]
     E_evaporation_condensation = apply_vapor_exchange!(temperature, dz, density, water,
         evaporation_condensation, evaporation_condensation_liquid, mp)
