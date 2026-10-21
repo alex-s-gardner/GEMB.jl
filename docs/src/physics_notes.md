@@ -492,7 +492,9 @@ Consequences for consumers of the output:
 **A timestep's vapor loss larger than the surface cell** is supplied by the cells below it:
 [`expose_vapor_exchange_layer!`](@ref) merges the surface cell into the cell below, as the
 thickness controller merges a thin cell, until the top cell holds the loss, and
-[`apply_vapor_exchange!`](@ref) then takes it from that cell. A surface snow layer can be as
+[`apply_vapor_exchange!`](@ref) then takes it from that cell. The same merge applies when
+evaporation beyond the surface cell's pore water, which takes LF per kg of its ice from its
+enthalpy, would take the cell below `WET_HANDOFF_TEMPERATURE_MIN`. A surface snow layer can be as
 light as [`snow_layer_min_mass`](@ref)`(dt)`, which covers a sublimation flux of 262 W m⁻²
 sustained over the step; fluxes beyond that occur over thin snow on ablating ice under strong
 wind. Steps whose loss the surface cell covers are unchanged.

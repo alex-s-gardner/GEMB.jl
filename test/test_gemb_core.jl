@@ -292,6 +292,50 @@ end
     @test GEMB.expose_vapor_exchange_layer!(cols, -1.0, 0.0, mp) == 0
 end
 
+@testset "Evaporation the surface cell's enthalpy cannot pay for is supplied by the cells below" begin
+    # A Greenland margin band (C-kfit-table-w2, N66_W050, ΔT 1.5 K): a 9.7 mm, 124 kg m-3 surface
+    # layer at 272.7 K with no pore water evaporates 0.22 kg m-2 at LV, here with 0.25 kg m-2
+    # sublimated at LS in the same step. Taken from its ice, the evaporation costs
+    # LF·0.22 = 73.6 kJ m-2, more than the 0.95 kg m-2 left after sublimation can give above
+    # 223.15 K, though the cell holds the mass: only the enthalpy test merges it.
+    mp = _make_core_mp()
+    n = 6
+    col() = GEMB.column_state([272.74146787005026, 271.0, 268.0, 265.0, 263.0, 262.0],
+        [0.009683123707120817, 0.05, 0.05, 0.05, 0.05, 0.05],
+        [124.10592904997176, 600.0, 917.0, 917.0, 917.0, 917.0], zeros(n), fill(0.5, n),
+        zeros(n), ones(n), collect(1.0:n))
+    ec_liquid = -0.219918229915523
+    ec = ec_liquid - 0.25
+
+    cols = col()
+    M1 = cols.dz[1] * cols.density[1]
+    @test M1 + GEMB._vapor_ice_change(ec, ec_liquid, cols.water[1]) > 0.0
+    M0 = sum(cols.dz .* cols.density) + sum(cols.water)
+    E0 = GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water)
+    @test_throws "which would take it below" GEMB.apply_vapor_exchange!(copy(cols.temperature),
+        copy(cols.dz), copy(cols.density), copy(cols.water), ec, ec_liquid, mp)
+    @test !GEMB._vapor_latent_draw_supported(cols.temperature[1], cols.dz[1] * cols.density[1],
+        cols.water[1], ec, ec_liquid, mp)
+
+    @test GEMB.expose_vapor_exchange_layer!(cols, ec, ec_liquid, mp) == 1
+    @test sum(cols.dz .* cols.density) + sum(cols.water) ≈ M0 rtol = 1e-14
+    @test GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water) ≈ E0 rtol = 1e-13
+    E = GEMB.apply_vapor_exchange!(cols.temperature, cols.dz, cols.density, cols.water, ec, ec_liquid, mp)
+    @test sum(cols.dz .* cols.density) + sum(cols.water) ≈ M0 + ec rtol = 1e-13
+    @test GEMB.column_enthalpy(mp, cols.dz .* cols.density, cols.temperature, cols.water) ≈ E0 + E rtol = 1e-12
+    @test cols.temperature[1] >= GEMB.WET_HANDOFF_TEMPERATURE_MIN
+
+    # Evaporation the pore water covers draws no LF, and a draw the cell can pay is left to it.
+    cols = col()
+    cols.water[1] = 0.3
+    @test GEMB.expose_vapor_exchange_layer!(cols, ec, ec_liquid, mp) == 0
+    cols = col()
+    @test GEMB.expose_vapor_exchange_layer!(cols, ec_liquid, ec_liquid, mp) == 0
+    @test GEMB._vapor_latent_draw_supported(cols.temperature[1], M1, 0.0, ec_liquid, ec_liquid, mp)
+    # Sublimation alone (charged at LS) draws no LF either.
+    @test GEMB._vapor_latent_draw_supported(250.0, 1.0, 0.0, -0.1, 0.0, mp)
+end
+
 @testset "Evaporation at the melting point never draws more than the surface cell can give" begin
     # The THU_L state of station-suite.md §8 (station forcing with the ERA5-Land-scaled wind,
     # up to 38.5 m s-1): a 1 mm, 0.55 kg m-2 surface cell of dry bare ice at the melting point,

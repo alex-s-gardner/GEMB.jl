@@ -72,14 +72,33 @@ end
     return ice_change
 end
 
+# Whether the surface cell's enthalpy can pay the LF that `apply_vapor_exchange!` draws from it
+# for evaporation beyond `water[1]` and stay at or above `WET_HANDOFF_TEMPERATURE_MIN`; the same
+# test as that function's guard. True when no ice is evaporated.
+@inline function _vapor_latent_draw_supported(temperature1::Float64, M1::Float64,
+    water_surface::Float64, evaporation_condensation::Float64,
+    evaporation_condensation_liquid::Float64, mp::ModelParameters)
+    from_ice = max(-evaporation_condensation_liquid - water_surface, 0.0)
+    from_ice > 0.0 || return true
+    h_ice = specific_enthalpy(mp, temperature1)
+    sublimated = evaporation_condensation - evaporation_condensation_liquid
+    M1_new = M1 + sublimated - from_ice
+    H1_new = M1 * h_ice + sublimated * h_ice - from_ice * (h_ice + LF)
+    return M1_new > 0.0 && H1_new >= M1_new * specific_enthalpy(mp, WET_HANDOFF_TEMPERATURE_MIN)
+end
+
 """
     expose_vapor_exchange_layer!(cols, evaporation_condensation,
                                  evaporation_condensation_liquid, mp) -> n_merged
 
 Merge the surface cell into the cell below, as [`manage_layer_thickness`](@ref) merges a thin
-cell, while the timestep's vapor loss would remove all of the surface cell's ice; return the
-number of cells merged. Mass, enthalpy and pore water are conserved, so
-[`apply_vapor_exchange!`](@ref) then takes the loss from the merged cell.
+cell, while the surface cell cannot supply the timestep's vapor loss; return the number of
+cells merged. Mass, enthalpy and pore water are conserved, so [`apply_vapor_exchange!`](@ref)
+then takes the loss from the merged cell. The surface cell cannot supply the loss when
+
+- the loss would remove all of its ice, or
+- evaporation beyond its pore water takes LF per kg of its ice from its enthalpy, and that
+  would take it below `WET_HANDOFF_TEMPERATURE_MIN`.
 
 The surface cell can be as light as [`snow_layer_min_mass`](@ref)`(dt)`, which covers a
 sublimation flux of 262 W m-2 sustained over the step. Larger fluxes occur over thin snow on
@@ -88,13 +107,15 @@ A column of one cell is left unchanged, and `apply_vapor_exchange!` throws.
 """
 function expose_vapor_exchange_layer!(cols::NamedTuple, evaporation_condensation::Float64,
     evaporation_condensation_liquid::Float64, mp::ModelParameters)
-    (; dz, density, water) = cols
+    (; temperature, dz, density, water) = cols
     n_merged = 0
     while length(dz) > 1
         ice_change = _vapor_ice_change(evaporation_condensation,
             evaporation_condensation_liquid, water[1])
         M1 = dz[1] * density[1]
-        (M1 + ice_change > 0.0 && dz[1] + ice_change / density[1] > 0.0) && break
+        (M1 + ice_change > 0.0 && dz[1] + ice_change / density[1] > 0.0 &&
+         _vapor_latent_draw_supported(temperature[1], M1, water[1], evaporation_condensation,
+             evaporation_condensation_liquid, mp)) && break
         _merge_thin_cell!(cols, 1, 2, M1, dz[2] * density[2], mp)
         close_slot!(cols, 1)
         n_merged += 1
