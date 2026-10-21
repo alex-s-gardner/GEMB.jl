@@ -221,9 +221,8 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     # marched age and the grain growth driven by it cannot disagree about how long a step was.
     # `hi` is unreachable given the tail pushed above (which extends past `max_depth`); the
     # surface is age 0 by construction.
-    days_per_year = SECONDS_PER_YEAR / 86400.0
-    age_profile = _interp_curve(age_curve .* days_per_year, z_curve, depth;
-        lo=0.0, hi=age_curve[end] * days_per_year)
+    age_profile = _interp_curve(age_curve .* DAYS_PER_YEAR, z_curve, depth;
+        lo=0.0, hi=age_curve[end] * DAYS_PER_YEAR)
 
     temperature = Vector{Float64}(undef, m)
     water = Vector{Float64}(undef, m)
