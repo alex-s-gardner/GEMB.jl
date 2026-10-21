@@ -18,11 +18,17 @@ Returns `(state, flux)` where `state` is the updated column state and
 [`ThermalWorkspace`](@ref)). The default allocates a fresh one per call; [`gemb`](@ref)
 passes one down so the buffers are grown once for the whole run. One workspace belongs to
 one column being stepped — give each concurrent thread its own.
+
+`diagnostics = false` skips the column scans behind the instantaneous `ice_slab_*` and
+`aquifer_*` fields of `flux` and returns them as `NaN` — indistinguishable from "no slab" or
+"dry column", so a caller passing `false` must not read them. They take no part in the
+budgets, so the column state is identical either way; [`gemb`](@ref) asks for them only on
+the timesteps it writes to the output.
 """
 function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool;
     n_target::Int=length(state.dz), z_target::Float64=sum(state.dz),
     thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
-    column_workspace::ColumnWorkspace=ColumnWorkspace())
+    column_workspace::ColumnWorkspace=ColumnWorkspace(), diagnostics::Bool=true)
 
     # Destructure state - arrays are mutated in-place by physics functions, and the names are
     # rebound to the new arrays the physics functions return. This is safe because gemb_driver
@@ -179,10 +185,11 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # 13. Ice-slab diagnostics. Taken here, after every step that can change `dz` or
     # `density`, so they describe the same column the profile output records at this
     # timestamp — a user recomputing slab depth from the output `dz`/`density` gets this
-    # answer. Run unconditionally: a slab is a property of the column, present whether or not
-    # anything melted this timestep. Read-only, and absent from the budgets above.
-    ice_slab_thickness, ice_slab_depth = ice_slab_diagnostics(dz, density, mp)
-    aquifer_thickness, aquifer_depth = aquifer_diagnostics(dz, density, water, mp)
+    # answer. Read-only, and absent from the budgets above; skipped when `diagnostics = false`.
+    ice_slab_thickness, ice_slab_depth =
+        diagnostics ? ice_slab_diagnostics(dz, density, mp) : (NaN, NaN)
+    aquifer_thickness, aquifer_depth =
+        diagnostics ? aquifer_diagnostics(dz, density, water, mp) : (NaN, NaN)
 
     if verbose
         dt = cfs.dt
