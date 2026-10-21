@@ -152,6 +152,8 @@ end
 
 # Split out so `_resize_workspace!` stays a single method over both workspace types. `fieldnames`
 # would need a generated function to stay type-stable; an explicit tuple is clearer and inlines.
+# Every tuple holds only `Vector{Float64}`: a `for` over a tuple of mixed element types boxes each
+# element and allocates on every call, which is why `ColumnWorkspace.delete_cell` is resized apart.
 _workspace_buffers(ws::_ExplicitWorkspace) = (ws.M_inv, ws.H, ws.Q_sw, ws.A_face)
 _workspace_buffers(ws::_ImplicitWorkspace) =
     (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it)
@@ -278,8 +280,16 @@ ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[],
     (Float64[] for _ in 1:9)..., Int[], Int[])
 
 _workspace_buffers(ws::ColumnWorkspace) =
-    (ws.dzmin, ws.dzmax, ws.mass, ws.delete_cell, ws.shortwave, ws.water_delta, ws.t_excess,
+    (ws.dzmin, ws.dzmax, ws.mass, ws.shortwave, ws.water_delta, ws.t_excess,
      ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age)
+
+function _resize_workspace!(ws::ColumnWorkspace, n::Int)
+    for buffer in _workspace_buffers(ws)
+        length(buffer) < n && resize!(buffer, n)
+    end
+    length(ws.delete_cell) < n && resize!(ws.delete_cell, n)
+    return ws
+end
 
 """
     ModelParameters

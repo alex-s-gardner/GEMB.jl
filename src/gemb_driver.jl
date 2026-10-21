@@ -496,9 +496,12 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
+        t = times[i]
+        is_output_step = t in output_times
         state, flux = gemb_core(state, forcing_step, model_parameters, verbose;
             n_target=profile_size, z_target=z_target,
-            thermal_workspace=thermal_workspace, column_workspace=column_workspace)
+            thermal_workspace=thermal_workspace, column_workspace=column_workspace,
+            diagnostics=is_output_step)
 
         # Basal ice flux over this interval, in metres of ice. An interval *sum*, like every
         # other mass flux in the output, so `cumsum` recovers the cumulative flux exactly;
@@ -534,9 +537,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         # 1000) is what makes this metres of air rather than metres of water equivalent — see
         # upstream GEMB issue #198. The depth-limited variants are what the firn-core
         # literature reports and are the only form comparable to it.
-        cum_firn_air_content += firn_air_content(state.dz, state.density, density_ice)
-        cum_firn_air_content_10m += firn_air_content(state.dz, state.density, density_ice, 10.0)
-        cum_firn_air_content_20m += firn_air_content(state.dz, state.density, density_ice, 20.0)
+        fac, fac10, fac20 = _firn_air_content_whole_10_20(state.dz, state.density, density_ice)
+        cum_firn_air_content += fac
+        cum_firn_air_content_10m += fac10
+        cum_firn_air_content_20m += fac20
         max_percolation_depth = max(max_percolation_depth, flux.percolation_depth)
         cum_temperature_air += forcing_step.temperature_air
         cum_precipitation += forcing_step.precipitation
@@ -552,8 +556,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         end
 
         # Store output at designated intervals
-        t = times[i]
-        if t in output_times
+        if is_output_step
             oi += 1
 
             @inbounds begin

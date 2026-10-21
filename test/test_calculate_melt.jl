@@ -499,6 +499,16 @@ end
     @test fac_10 <= fac_20 <= fac_all
     @test fac_10 > 0.0
 
+    # The `gemb` loop's fused one-pass form is bit-identical to the three separate calls,
+    # including with a cell straddling each cutoff.
+    dz_uneven = [0.3, 0.45, 0.6, 1.1, 2.3, 4.7, 6.2, 8.9]
+    density_uneven = [350.0, 420.0, 505.0, 610.0, 700.0, 790.0, 880.0, 925.0]
+    for (z, ρ) in ((dz, density_grading), (dz_uneven, density_uneven))
+        @test GEMB._firn_air_content_whole_10_20(z, ρ, ρi) ===
+              (firn_air_content(z, ρ, ρi), firn_air_content(z, ρ, ρi, 10.0),
+               firn_air_content(z, ρ, ρi, 20.0))
+    end
+
     # `z_max` beyond the column bottom is the whole column — no partial-cell artefact.
     @test firn_air_content(dz, density_grading, ρi, 1000.0) ≈ fac_all rtol = 1e-14
 
