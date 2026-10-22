@@ -662,6 +662,45 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # 0.0 (the default) disables it. See `apply_prescribed_drift!`.
     drift_rate::Float64 = 0.0
 
+    # --- Lower Boundary ---
+    # What lies below the snow. `:ice` (the default) is the glacier column: snow, firn and ice
+    # down to a fixed-temperature bottom cell, at a fixed depth held by `trim_bottom!`. `:ground`
+    # places the snow on a fixed soil column of `ground_depth` metres, whose bottom cell is held
+    # at `ground_temperature_deep`; the snow above it varies in thickness and cell count and may
+    # be absent. See `gemb_core_ground` and `docs/src/physics_notes.md`. Every `ground_*` field is
+    # read only under `:ground`.
+    lower_boundary::Symbol = :ice
+    # Depth of the soil column [m] (ISBA-DIF's 20-layer grid reaches 10 m).
+    ground_depth::Float64 = 10.0
+    # Soil porosity φ [m3 m-3] and volumetric pore water θ [m3 m-3], liquid plus ice, θ ≤ φ.
+    # θ is held constant: snowmelt reaching the ground runs off and the soil has no hydrology.
+    ground_porosity::Float64 = 0.45
+    ground_water::Float64 = 0.25
+    # Conductivity [W m-1 K-1], density [kg m-3] and specific heat capacity [J kg-1 K-1] of the
+    # soil solids. 2700 and 733 are ISBA's `XDRYWGHT` and `XSPHSOIL`; ISBA's solids conductivity
+    # is a geometric mean of quartz (7.7) and other minerals (2.0 or 3.0) weighted by quartz
+    # content, 3.0 corresponding to a quartz fraction of about 0.3 (Peters-Lidard et al., 1998).
+    ground_solid_conductivity::Float64 = 3.0
+    ground_solid_density::Float64 = 2700.0
+    ground_solid_heat_capacity::Float64 = 733.0
+    # Albedo of snow-free ground, and the albedo thin snow over ground blends to.
+    ground_albedo::Float64 = 0.20
+    # Longwave emissivity of snow-free ground: ISBA `XEMISSOIL` (`modd_isba_par.F90:80`).
+    ground_emissivity::Float64 = 0.94
+    # Momentum roughness length of snow-free ground [m], 1 cm for short grass and bare soil
+    # (Stull, 1988, Fig. 9.6). The scalar roughness is `surface_roughness_effective_ratio` of it.
+    ground_roughness::Float64 = 0.01
+    # Factor β ∈ [0, 1] on the latent heat flux of snow-free ground, the "beta" form of bare-soil
+    # evaporation; ISBA's surface humidity `0.5(1 − cos(π·min(θ/θ_fc, 1)))` (`drag.F90:253`,
+    # Noilhan and Planton, 1989) is 1 at field capacity. The vapor exchanged with the ground does
+    # not change its pore water, which the soil column holds fixed.
+    ground_evaporation_factor::Float64 = 1.0
+    # Temperature of the bottom ground cell [K], the mean annual ground temperature at depth, and
+    # the initial temperature of the whole soil column. No default: it is a site constant.
+    ground_temperature_deep::Float64 = NaN
+    # Most snow cells the column may hold over the ground; snow beyond it is merged.
+    ground_snow_cells_max::Int = 100
+
     # --- Thermal Solver ---
     # Which scheme advances the temperature profile. Selected by type, not by symbol, so the
     # choice is resolved at compile time and a new scheme needs no branch here — see

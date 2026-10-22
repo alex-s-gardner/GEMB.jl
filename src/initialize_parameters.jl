@@ -158,4 +158,27 @@ function validate_parameters(mp::ModelParameters)
     # Slope as a gradient, not degrees. The bound is far above any ice-sheet surface slope
     # (the RetMIP sites reach ~0.010 m m-1) and is there to catch degrees passed by mistake.
     @assert 0 <= mp.surface_slope <= 1 "surface_slope must be in [0, 1] m m-1 (a gradient, not degrees)"
+
+    # Lower boundary
+    @assert mp.lower_boundary in (:ice, :ground) "lower_boundary must be ice or ground"
+    mp.lower_boundary === :ground && validate_ground_parameters(mp)
+end
+
+function validate_ground_parameters(mp::ModelParameters)
+    @assert mp.thermal_solver isa ExplicitThermal "lower_boundary=:ground requires thermal_solver=ExplicitThermal()"
+    @assert mp.horizontal_strain_rate == 0 "lower_boundary=:ground requires horizontal_strain_rate = 0 (the ground does not strain)"
+    @assert isfinite(mp.ground_temperature_deep) && 200 <= mp.ground_temperature_deep <= 320 "lower_boundary=:ground requires ground_temperature_deep, the mean annual ground temperature [K], in [200, 320] (got $(mp.ground_temperature_deep))"
+    @assert 1 <= mp.ground_depth <= 100 "ground_depth must be in [1, 100] m (got $(mp.ground_depth))"
+    @assert 0 < mp.ground_porosity < 1 "ground_porosity must be in (0, 1) (got $(mp.ground_porosity))"
+    @assert 0 <= mp.ground_water <= mp.ground_porosity "ground_water must be in [0, ground_porosity] (got $(mp.ground_water), porosity $(mp.ground_porosity))"
+    @assert 0.5 <= mp.ground_solid_conductivity <= 8 "ground_solid_conductivity must be in [0.5, 8] W m-1 K-1 (quartz is 7.7)"
+    @assert 1000 <= mp.ground_solid_density <= 3500 "ground_solid_density must be in [1000, 3500] kg m-3"
+    @assert 500 <= mp.ground_solid_heat_capacity <= 2000 "ground_solid_heat_capacity must be in [500, 2000] J kg-1 K-1"
+    @assert 0.05 <= mp.ground_albedo <= 0.5 "ground_albedo must be in [0.05, 0.5]"
+    @assert 0.8 <= mp.ground_emissivity <= 1 "ground_emissivity must be in [0.8, 1]"
+    @assert 1e-4 <= mp.ground_roughness <= 0.5 "ground_roughness must be in [1e-4, 0.5] m"
+    @assert 0 <= mp.ground_evaporation_factor <= 1 "ground_evaporation_factor must be in [0, 1]"
+    @assert 3 <= mp.ground_snow_cells_max <= 1000 "ground_snow_cells_max must be in [3, 1000] (the count controller merges pairs below the surface cell)"
+    @assert mp.drift_rate == 0 "lower_boundary=:ground requires drift_rate = 0 (prescribed erosion of a thin seasonal pack is not supported)"
+    return nothing
 end

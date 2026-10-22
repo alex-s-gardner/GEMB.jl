@@ -79,35 +79,86 @@ function calculate_albedo(dz::Vector{Float64},
 
     elseif (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
         albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
-
-        if depth_snow == 0.0
-            # Exposed firn or ice.
-            albedo = albedo_under
-            albedo_diffuse = albedo_under
-
-        elseif mp.albedo_method == :GardnerSharp
-            # `z_we` is Inf when no firn or ice lies under the snow (semi-infinite snow).
-            z_we = mass_snow / DENSITY_WATER
-            albedo_diffuse = _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness, albedo_under, z_we)
-            # With the sun at or below the horizon there is no direct beam; see the docstring.
-            albedo = cfs.solar_zenith_angle < 90.0 ?
-                     _albedo_gardner(grain_radius[1], cfs.black_carbon_snow,
-                         cfs.solar_zenith_angle, cfs.cloud_optical_thickness, albedo_under,
-                         z_we) :
-                     albedo_diffuse
-
-        else
-            albedo = _albedo_brun_lefebre(grain_radius[1])
-            if depth_snow < ALBEDO_SNOW_DEPTH_THICK
-                albedo = albedo_under +
-                         (albedo - albedo_under) * (depth_snow / ALBEDO_SNOW_DEPTH_THICK)
-            end
-            albedo_diffuse = albedo
-        end
+        albedo, albedo_diffuse = _albedo_snow_over(albedo_under, depth_snow, mass_snow,
+            grain_radius[1], cfs, mp)
     end
 
-    # Check for erroneous values
+    _check_albedo(albedo)
+    return albedo, albedo_diffuse
+end
+
+# `:GardnerSharp` and `:BrunLefebre` albedos of snow `depth_snow` [m] thick, of matrix mass
+# `mass_snow` [kg m-2], over a surface of albedo `albedo_under`; see `calculate_albedo`.
+@inline function _albedo_snow_over(albedo_under::Float64, depth_snow::Float64,
+    mass_snow::Float64, grain_radius_surface::Float64, cfs::ClimateForcingStep,
+    mp::ModelParameters)
+
+    if depth_snow == 0.0
+        # Exposed firn or ice.
+        albedo = albedo_under
+        albedo_diffuse = albedo_under
+
+    elseif mp.albedo_method == :GardnerSharp
+        # `z_we` is Inf when no firn or ice lies under the snow (semi-infinite snow).
+        z_we = mass_snow / DENSITY_WATER
+        albedo_diffuse = _albedo_gardner(grain_radius_surface, cfs.black_carbon_snow,
+            ALBEDO_DIFFUSE_ZENITH_ANGLE, cfs.cloud_optical_thickness, albedo_under, z_we)
+        # With the sun at or below the horizon there is no direct beam; see the docstring.
+        albedo = cfs.solar_zenith_angle < 90.0 ?
+                 _albedo_gardner(grain_radius_surface, cfs.black_carbon_snow,
+                     cfs.solar_zenith_angle, cfs.cloud_optical_thickness, albedo_under,
+                     z_we) :
+                 albedo_diffuse
+
+    else
+        albedo = _albedo_brun_lefebre(grain_radius_surface)
+        if depth_snow < ALBEDO_SNOW_DEPTH_THICK
+            albedo = albedo_under +
+                     (albedo - albedo_under) * (depth_snow / ALBEDO_SNOW_DEPTH_THICK)
+        end
+        albedo_diffuse = albedo
+    end
+    return albedo, albedo_diffuse
+end
+
+"""
+    calculate_albedo_ground(dz, density, grain_radius, cfs, mp) -> (albedo, albedo_diffuse)
+
+[`calculate_albedo`](@ref) for the snow over the ground of `lower_boundary = :ground`. `dz`,
+`density` and `grain_radius` are the snow cells only and may be empty.
+
+- Snow-free ground takes `mp.ground_albedo` for both streams.
+- Under `:GardnerSharp` and `:BrunLefebre`, snow over the ground blends to `mp.ground_albedo` by
+  the same thin-snow rules that blend snow over firn or ice to [`firn_ice_albedo`](@ref): Gardner
+  and Sharp (2010) eq. 13, and the linear depth weighting of Lefebre et al. (2003). A firn or ice
+  layer within the snow (a refrozen lens at or above `DENSITY_PORE_CLOSEOFF`) is the surface
+  underneath, as over a glacier.
+- `:None` and `:GreuellKonzelmann` treat snow over the ground as `calculate_albedo` does.
+"""
+function calculate_albedo_ground(dz::Vector{Float64}, density::Vector{Float64},
+    grain_radius::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
+    isempty(dz) && return mp.ground_albedo, mp.ground_albedo
+    if (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
+        if !((mp.albedo_density_threshold - density[1]) < D_TOLERANCE)
+            albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
+            if isinf(depth_snow)
+                albedo_under = mp.ground_albedo
+                depth_snow = sum(dz)
+                mass_snow = 0.0
+                for i in eachindex(dz, density)
+                    mass_snow += dz[i] * density[i]
+                end
+            end
+            albedo, albedo_diffuse = _albedo_snow_over(albedo_under, depth_snow, mass_snow,
+                grain_radius[1], cfs, mp)
+            _check_albedo(albedo)
+            return albedo, albedo_diffuse
+        end
+    end
+    return calculate_albedo(dz, density, grain_radius, cfs, mp)
+end
+
+@inline function _check_albedo(albedo::Float64)
     if albedo > (1 + T_TOLERANCE)
         @warn "albedo > 1.0"
     elseif albedo < (0 - D_TOLERANCE)
@@ -115,8 +166,7 @@ function calculate_albedo(dz::Vector{Float64},
     elseif isnan(albedo)
         error("albedo == NAN")
     end
-
-    return albedo, albedo_diffuse
+    return nothing
 end
 
 """

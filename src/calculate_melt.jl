@@ -246,6 +246,10 @@ than the loop index. The companion slab diagnostics are taken in
 
 Arrays may shrink (cells deleted when mass=0).
 
+`basal_surplus`, when given, is a column resting on ground (`lower_boundary = :ground`): energy
+beyond what melts the deepest cell entirely is added to `basal_surplus[]` [J m-2] for the ground
+to take, and the deepest cell melts out. Without it that case is an error.
+
 # References
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
@@ -266,7 +270,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
-    mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace())
+    mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace(),
+    basal_surplus::Union{Nothing,Base.RefValue{Float64}}=nothing)
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
@@ -402,6 +407,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
                     T_surplus[i+1] = max(0.0, T_excess[i+1] - T_full_melt)
                     E_surplus[i+1] = surplus_energy(mp, T_excess[i+1], T_surplus[i+1], M[i+1])
+                elseif basal_surplus !== nothing
+                    # The column rests on ground, which takes the energy beyond melting the
+                    # deepest cell.
+                    basal_surplus[] += E_surplus[i]
                 else
                     error("surplus energy reached the base of gemb column (i.e. entire column melted out in a single time step)")
                 end
@@ -633,6 +642,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         M_delta = M_total_initial - M_total_final
         E_delta = E_total_initial - E_total_final - E_total_runoff
+        basal_surplus === nothing || (E_delta -= basal_surplus[])
 
         E_tol = energy_tolerance(E_total_initial)
 
