@@ -1,6 +1,7 @@
 # The `lower_boundary = :ground` soil column: properties, analytic solutions, budgets and the
 # variable snow column over it.
 
+using Dates: month
 using GEMB: ClimateForcingStep, CtoK, LF, HEAT_CAPACITY_WATER, MATERIAL_SNOW, MATERIAL_GROUND,
     MATERIAL_EMPTY, ThermalWorkspace
 
@@ -236,4 +237,90 @@ end
     o2 = gemb(p, cf, mpg)
     @test all(k -> isequal(parent(o1[k]), parent(o2[k])), keys(o1))
     @test !haskey(o1, :material)
+end
+
+# The idealized snow–soil conduction model of the SNOTEL test design (§3.4): 5 cm cells of moist
+# soil (θ = 0.25, k 1.0 unfrozen and 1.6 W m-1 K-1 frozen, the pore water freezing linearly over
+# −1…0 °C as an apparent heat capacity, solids 2700 kg m-3 at 733 J kg-1 K-1), its surface coupled
+# to a prescribed snow-surface temperature `Ts` [K] through a snow resistance `R` [m2 K W-1], and
+# its base at `MAGT` [°C] 10 m down. Returns the hourly upward flux into the snow [W m-2] and the
+# snow-base temperature [°C].
+function _idealized_soil(Ts, R, dt, MAGT, T0; dz=0.05, nsub=6)
+    function props(Tc)
+        fliq = clamp(Tc + 1.0, 0.0, 1.0)
+        kc = fliq * 1.0 + (1 - fliq) * 1.6
+        cc = 2700 * 733 * 0.55 + 0.25 * (fliq * 4.18e6 + (1 - fliq) * 1.9e6)
+        Lc = (Tc > -1.0 && Tc < 0.0) ? 0.25 * 1000 * 3.34e5 : 0.0
+        return kc, cc + Lc
+    end
+    T = copy(T0)
+    n = length(T)
+    h = dt / nsub
+    G = zeros(length(Ts))
+    Tb = zeros(length(Ts))
+    k = similar(T)
+    C = similar(T)
+    for s in eachindex(Ts)
+        for _ in 1:nsub
+            for i in 1:n
+                k[i], C[i] = props(T[i])
+            end
+            Gtop = (T[1] - (Ts[s] - CtoK)) / (R[s] + dz / 2 / k[1])
+            Tn = copy(T)
+            for i in 1:n
+                Fup = i == 1 ? Gtop : (T[i] - T[i-1]) / (dz / 2 / k[i] + dz / 2 / k[i-1])
+                Fdn = i == n ? (MAGT - T[i]) / (dz / 2 / k[i]) :
+                      (T[i+1] - T[i]) / (dz / 2 / k[i] + dz / 2 / k[i+1])
+                Tn[i] = T[i] + h * (Fdn - Fup) / (C[i] * dz)
+            end
+            T = Tn
+            G[s] += Gtop / nsub
+        end
+        Tb[s] = T[1] - G[s] * dz / 2 / props(T[1])[1]
+    end
+    return G, Tb
+end
+
+# Seasonal snow on soil (Colorado-like: mean air −0.2 °C, ±9 K, 900 kg m-2 yr-1, MAGT +3.1 °C),
+# spun up on the deep-soil temperature. GEMB's snow base must sit near 0 °C over a zero curtain in
+# the top soil, and agree with the idealized model of the design driven by GEMB's own snow-surface
+# temperature and snow thermal resistance, which isolates the soil physics.
+@testset "ground: seasonal snow on soil against the idealized model" begin
+    MAGT = 276.25
+    cf = synthetic_seasonal_forcing(years=1, temperature_mean=272.95, amplitude=9.0,
+        precipitation_annual=900.0, emissivity_clear=0.85)
+    mp = GEMB.initialize_parameters(lower_boundary=:ground, ground_temperature_deep=MAGT)
+    sp = gemb_spinup_ground(initialize_profile(mp, cf), cf, mp; simulation_years_maximum=30)
+    @test GEMB.DD.metadata(sp).spinup_converged
+    o = gemb(sp, cf, mp)
+    g = GEMB.ground_column(mp, GEMB.ground_grid(mp.ground_depth))
+    mat = parent(o[:material]); Tp = parent(o[:temperature]); dz = parent(o[:dz])
+    ρ = parent(o[:density]); W = parent(o[:water]); Gg = parent(o[:heat_flux_ground])
+    nt = size(mat, 2)
+    R = zeros(nt)
+    Tb = zeros(nt)
+    for j in 1:nt
+        for i in axes(mat, 1)
+            mat[i, j] == MATERIAL_SNOW &&
+                (R[j] += dz[i, j] / GEMB.thermal_conductivity(Tp[i, j], ρ[i, j], mp))
+        end
+        i = findfirst(==(MATERIAL_GROUND), mat[:, j])
+        k1 = GEMB.ground_conductivity(g, W[i, j], g.water_total[1])
+        Tb[j] = Tp[i, j] + Gg[j] * g.dz[1] / (2k1) - CtoK
+    end
+    Tg0 = parent(sp[:temperature])[parent(sp[:material]) .== MATERIAL_GROUND]
+    T0 = [GEMB.ground_soil_temperature(Tg0, g, (i - 0.5) * 0.05) - CtoK for i in 1:200]
+    Gi, Tbi = _idealized_soil(Tp[1, :], R, 3600.0, MAGT - CtoK, T0)
+    t = collect(GEMB.DD.dims(o, Ti))
+    djf = findall(x -> month(x) in (12, 1, 2), t)
+    mean(x) = sum(x) / length(x)
+    # Measured: snow base −1.77 °C (idealized −1.83), G 5.19 W m-2 (idealized 4.77), 47 days
+    # with the 5 cm soil within 0.01 K of 0 °C.
+    @test all(>(0.0), R[djf])
+    @test -2.5 < mean(Tb[djf]) < 0.0
+    @test abs(mean(Tb[djf]) - mean(Tbi[djf])) < 0.25
+    @test abs(mean(Gg[djf]) - mean(Gi[djf])) < 0.15 * mean(Gi[djf])
+    @test mean(Gg[djf]) > 0
+    T5 = parent(o[:soil_temperature_005]) .- CtoK
+    @test count(x -> abs(x) < 0.01, T5) / 24 > 20
 end

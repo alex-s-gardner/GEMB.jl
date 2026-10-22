@@ -6,12 +6,13 @@
 # ±4 K diurnal and ±3 K of weather from two incommensurate periods (5.3 and 11.9 d). 700 kg m-2
 # yr-1 of precipitation falling only in storms, as snow when the air is at or below 0 °C. Snow
 # builds from November, peaks in spring and melts out by early summer, leaving the ground bare
-# into autumn.
+# into autumn. The downward longwave is that of an atmosphere of emissivity `emissivity_clear`
+# (0.70) under clear sky, rising with cloud.
 
 using Dates: DateTime, Hour, Year, value
 
 function synthetic_seasonal_forcing(; years::Int=2, temperature_mean::Real=273.5,
-    amplitude::Real=10.0, precipitation_annual::Real=700.0)
+    amplitude::Real=10.0, precipitation_annual::Real=700.0, emissivity_clear::Real=0.70)
     t0 = DateTime(2001, 10, 1)
     time = collect(t0:Hour(1):(t0 + Year(years) - Hour(1)))
     day = [value(t - t0) / 86_400_000 for t in time]          # days since t0
@@ -37,7 +38,7 @@ function synthetic_seasonal_forcing(; years::Int=2, temperature_mean::Real=273.5
     sza = [acosd(clamp(m, -1.0, 1.0)) for m in μ]
     overcast = [(c - 0.2) / 0.8 for c in cloud]
     σ = 5.67e-8
-    lw = [σ * t^4 * (0.70 + 0.26 * c) for (t, c) in zip(T, cloud)]
+    lw = [σ * t^4 * min(emissivity_clear + 0.26 * c, 1.0) for (t, c) in zip(T, cloud)]
     vapor = [(0.55 + 0.4 * c) * 611.2 * exp(17.67 * (t - 273.15) / (t - 29.65))
              for (t, c) in zip(T, cloud)]
     wind = [2.5 + 2.0 * s + 0.5 * sin(2π * d / 3.1) for (s, d) in zip(storm, day)]
