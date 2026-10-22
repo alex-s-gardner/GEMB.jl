@@ -174,6 +174,47 @@ function vankampenhout_density_wind(wind_speed_10m::Real)
 end
 
 """
+    fresh_snow_properties(cfs, mp, z0) -> (density, grain_radius, grain_dendricity, grain_sphericity)
+
+Density [kg m-3] and grain state of the snow falling in step `cfs`, onto a surface of roughness
+`z0` [m] (read by `new_snow_method = :vanKampenhout2017` only): [`fresh_snow_density`](@ref)
+clamped to `[1, mp.density_ice]`, and GEMB's fresh-grain constants, or under `:Fausto`,
+`:FaustoFit` and `:Pahaut` the wind-dependent grains of Crocus (Vionnet et al., 2012). Shared
+by [`calculate_accumulation`](@ref) and the snow-free ground of `lower_boundary = :ground`.
+"""
+function fresh_snow_properties(cfs::ClimateForcingStep, mp::ModelParameters, z0::Real)
+    # Specify constants (shared with the steady-state initial guess, so a freshly
+    # initialized column and freshly fallen snow agree by construction)
+    re_new_snow = RE_NEW_SNOW    # new snow grain size [mm]
+    gdn_new_snow = GDN_NEW_SNOW  # new snow dendricity
+    gsp_new_snow = GSP_NEW_SNOW  # new snow sphericity
+
+    # Density of fresh snow [kg m-3] (shared with initialize_profile). The instantaneous air
+    # temperature and wind speed are passed as the fifth and sixth arguments, for `:FaustoFit`,
+    # `:Pahaut` and `:vanKampenhout2017`; the other methods ignore them. The wind height and
+    # the roughness of the surface the snow lands on are read by `:vanKampenhout2017` only.
+    # Clamped for the same reason `steady_state_profile` clamps its own call: the Fausto fit
+    # is a linear regression with no bounds, so a sufficiently cold forcing step would
+    # otherwise hand a non-positive density to the `dz = mass/density` below. (`:Pahaut`
+    # carries its own published floor.)
+    density_new_snow = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
+            cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air,
+            cfs.wind_speed; wind_observation_height=cfs.wind_observation_height,
+            z0=z0),
+        1.0, mp.density_ice)
+    if mp.new_snow_method == :Fausto || mp.new_snow_method == :FaustoFit ||
+       mp.new_snow_method == :Pahaut
+        # From Vionnet et al., 2012 (Crocus): wind-dependent grain properties. `:Pahaut` takes
+        # these too, being the fresh-snow density Crocus itself pairs them with.
+        gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
+        gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)
+        re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, GDN_TOLERANCE)
+    end
+
+    return density_new_snow, re_new_snow, gdn_new_snow, gsp_new_snow
+end
+
+"""
     calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Add precipitation and deposition to the model column.
@@ -233,11 +274,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
     # snow is deep enough to warrant its own layer.
 
-    # Specify constants (shared with the steady-state initial guess, so a freshly
-    # initialized column and freshly fallen snow agree by construction)
-    re_new_snow = RE_NEW_SNOW    # new snow grain size [mm]
-    gdn_new_snow = GDN_NEW_SNOW  # new snow dendricity
-    gsp_new_snow = GSP_NEW_SNOW  # new snow sphericity
     rain = 0.0               # rainfall [mm w.e. or kg m^-2]
 
     if verbose
@@ -246,27 +282,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
         E_total_initial = column_enthalpy(mp, M, temperature, water)
     end
 
-    # Density of fresh snow [kg m-3] (shared with initialize_profile). The instantaneous air
-    # temperature and wind speed are passed as the fifth and sixth arguments, for `:FaustoFit`,
-    # `:Pahaut` and `:vanKampenhout2017`; the other methods ignore them. The wind height and
-    # the roughness of the surface the snow lands on are read by `:vanKampenhout2017` only.
-    # Clamped for the same reason `steady_state_profile` clamps its own call: the Fausto fit
-    # is a linear regression with no bounds, so a sufficiently cold forcing step would
-    # otherwise hand a non-positive density to the `dz = mass/density` below. (`:Pahaut`
-    # carries its own published floor.)
-    density_new_snow = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
-            cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air,
-            cfs.wind_speed; wind_observation_height=cfs.wind_observation_height,
-            z0=surface_roughness(mp, density[1], water[1])),
-        1.0, mp.density_ice)
-    if mp.new_snow_method == :Fausto || mp.new_snow_method == :FaustoFit ||
-       mp.new_snow_method == :Pahaut
-        # From Vionnet et al., 2012 (Crocus): wind-dependent grain properties. `:Pahaut` takes
-        # these too, being the fresh-snow density Crocus itself pairs them with.
-        gdn_new_snow = min(max(1.29 - 0.17 * cfs.wind_speed, 0.20), 1.0)
-        gsp_new_snow = min(max(0.08 * cfs.wind_speed + 0.38, 0.5), 0.9)
-        re_new_snow = max(1e-1 * (gdn_new_snow / 0.99 + (1.0 - 1.0 * gdn_new_snow / 0.99) * (gsp_new_snow / 0.99 * 3.0 + (1.0 - gsp_new_snow / 0.99) * 4.0)) / 2.0, GDN_TOLERANCE)
-    end
+    density_new_snow, re_new_snow, gdn_new_snow, gsp_new_snow =
+        fresh_snow_properties(cfs, mp, surface_roughness(mp, density[1], water[1]))
 
     M_surface = dz[1] * density[1]
     # Total mass of the surface cell, the weight for the age dilutions below. Captured here,

@@ -162,6 +162,7 @@ function validate_parameters(mp::ModelParameters)
     # Lower boundary
     @assert mp.lower_boundary in (:ice, :ground) "lower_boundary must be ice or ground"
     mp.lower_boundary === :ground && validate_ground_parameters(mp)
+    return nothing
 end
 
 function validate_ground_parameters(mp::ModelParameters)
