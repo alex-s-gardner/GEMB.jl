@@ -41,7 +41,8 @@ Two keywords serve the snow over the ground of `lower_boundary = :ground`, whose
 varies: `n_max > 0` replaces the fixed count by a ceiling, the count controller merging only
 while there are more than `n_max` cells, and `dirichlet_bottom = false` leaves the bottom cell's
 temperature alone, the snow's base not being a fixed-temperature boundary. A column of one cell
-is not merged.
+is not merged, and a column whose cells are all thinner than their bands merges into its bottom
+cell, which is kept.
 
 `age` needs no handling here beyond being in the bundle: all three passes go through
 [`merge_pair!`](@ref), [`merge_snow_pair!`](@ref) or [`absorb_snow!`](@ref) (which mass-weight
@@ -95,11 +96,14 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
             # A distinct snow layer at the surface is kept however thin, down to
             # `snow_layer_min_mass(dt)`.
             (i == 1 && m > 1 && _surface_layer_kept(cols, mp, dt)) && continue
-            delete_cell[i] = true
 
             # Merge downward, except for the bottom cell, which merges into the
-            # deepest surviving cell above it.
-            i_target = i == m ? findlast(!, delete_cell) : i + 1
+            # deepest surviving cell above it. When every cell above has merged downward
+            # (a column of thin cells only, as thin snow over the ground of
+            # `lower_boundary = :ground`), the bottom cell holds the whole column and is kept.
+            i_target = i == m ? findlast(!, view(delete_cell, 1:m-1)) : i + 1
+            i_target === nothing && continue
+            delete_cell[i] = true
             M[i_target] = _merge_thin_cell!(cols, i, i_target, M[i], M[i_target], mp)
         end
     end

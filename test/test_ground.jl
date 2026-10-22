@@ -227,6 +227,27 @@ end
     @test sum(parent(o[:heat_flux_ground])[covered]) / length(covered) > 0
 end
 
+# Thin snow over ground: every cell below its thickness band, so each merges downward and the
+# bottom cell has no surviving cell above it to merge into. It must hold the whole column.
+@testset "ground: a column of only sub-band snow cells merges into its bottom cell" begin
+    mp = GEMB.initialize_parameters(lower_boundary=:ground, ground_temperature_deep=275.0)
+    for n in (2, 3)
+        T = collect(range(269.0, 271.0; length=n)); dz = fill(0.004, n)
+        ρ = collect(range(300.0, 320.0; length=n)); W = zeros(n)
+        r = fill(0.1, n); d = zeros(n); s = ones(n); a = ones(n)
+        M0 = sum(dz .* ρ)
+        E0 = GEMB.column_mass_energy(GEMB.column_state(T, dz, ρ, W, r, d, s, a), mp)[2]
+        dzmin = zeros(n); GEMB.column_bands!(dzmin, zeros(n), dz, mp)
+        @test all(dz .< dzmin)
+        out = GEMB.manage_layer_thickness(T, dz, ρ, W, r, d, s, a, mp, true; dt=3600.0,
+            n_target=n, n_max=GEMB.ground_snow_slots(mp), dirichlet_bottom=false)
+        @test length(out[2]) == 1
+        @test out[2][1] * out[3][1] ≈ M0
+        E1 = GEMB.column_mass_energy(GEMB.column_state(out[1:8]...), mp)[2]
+        @test E1 ≈ E0 rtol = 1e-14
+    end
+end
+
 @testset "ground: glacier column is untouched by the ground fields" begin
     cf = synthetic_maritime_forcing(years=1)
     mp = GEMB.initialize_parameters(output_frequency=:daily)
