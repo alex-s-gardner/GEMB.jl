@@ -301,6 +301,7 @@ function forcing_climatology(cf::ClimateForcing; window=nothing,
         cf.temperature_observation_height,
         cf.wind_observation_height;
         snow_drift=_avg(cf.snow_drift),
+        temperature_ground=_avg(cf.temperature_ground),
         accumulation_mean=cf.accumulation_mean,
         temperature_air_effective=cf.temperature_air_effective,
         dataset=cf.dataset,
@@ -615,7 +616,7 @@ _year_slice(cf::ClimateForcing, cy, year::Integer) = _years_slice(cf, cy, (year,
 function _years_slice(cf::ClimateForcing, cy, years)
     # One composed index vector, then one gather per layer. Indexing with the two masks in
     # succession (`parent(a)[non_leap][forcing_index][keep]`) would allocate two *record-sized*
-    # temporaries per layer before producing the small result — 14 layers x 3 allocations per
+    # temporaries per layer before producing the small result — 15 layers x 3 allocations per
     # slice, and a slice happens once per candidate year plus once per selected block.
     keep = findall(in(Set(Int.(years))), cy.years_complete)
     idx = cy.complete_idx[keep]
@@ -631,6 +632,7 @@ function _years_slice(cf::ClimateForcing, cy, years)
         cf.time_step, cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
         cf.temperature_observation_height, cf.wind_observation_height;
         snow_drift=_slice(cf.snow_drift),
+        temperature_ground=_slice(cf.temperature_ground),
         accumulation_mean=cf.accumulation_mean,
         temperature_air_effective=cf.temperature_air_effective,
         dataset=cf.dataset, latitude=cf.latitude, longitude=cf.longitude,

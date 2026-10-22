@@ -189,6 +189,9 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
                      column_workspace::ColumnWorkspace=ColumnWorkspace())
 
+    mp.lower_boundary === :prescribed && throw(ArgumentError("lower_boundary = :prescribed " *
+        "has no state to spin up beyond the snow, which a seasonal site does not carry " *
+        "between years; start from `initialize_profile`"))
     if mp.lower_boundary === :ground
         (convergence_delta_density === nothing && convergence_drift_density === nothing &&
          convergence_delta_fac === nothing && convergence_drift_fac === nothing) ||

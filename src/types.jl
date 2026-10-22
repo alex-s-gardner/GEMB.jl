@@ -667,8 +667,12 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # down to a fixed-temperature bottom cell, at a fixed depth held by `trim_bottom!`. `:ground`
     # places the snow on a fixed soil column of `ground_depth` metres, whose bottom cell is held
     # at `ground_temperature_deep`; the snow above it varies in thickness and cell count and may
-    # be absent. See `gemb_core_ground` and `docs/src/physics_notes.md`. Every `ground_*` field is
-    # read only under `:ground`.
+    # be absent. See `gemb_core_ground` and `docs/src/physics_notes.md`. `:prescribed` places the
+    # snow, which may likewise be absent, on a fixed-temperature reservoir whose temperature is
+    # the `temperature_ground` forcing layer, with no soil column (see `gemb_core_prescribed`);
+    # of the `ground_*` fields it reads `ground_albedo`, `ground_emissivity`, `ground_roughness`,
+    # `ground_evaporation_factor` and `ground_snow_cells_max`. Every `ground_*` field is read only
+    # under `:ground` or `:prescribed`.
     lower_boundary::Symbol = :ice
     # Depth of the soil column [m] (ISBA-DIF's 20-layer grid reaches 10 m).
     ground_depth::Float64 = 10.0
@@ -730,7 +734,7 @@ Time-series surface meteorological forcing for GEMB, implemented as an
 date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
 — all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-# Layers (14 time-series `DimArray`s sharing a common `Ti` dimension)
+# Layers (15 time-series `DimArray`s sharing a common `Ti` dimension)
 Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
 `wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
 Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
@@ -739,6 +743,9 @@ Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
 Optional forcing: `snow_drift` [kg m-2 yr-1, positive for erosion], the prescribed
 drifting-snow divergence read by [`apply_prescribed_drift!`](@ref); `Fill`-backed zeros
 when the forcing carries no drift product, and superseded by `mp.drift_rate` in that case.
+`temperature_ground` [K], the temperature of the fixed-temperature reservoir below the snow
+under `lower_boundary = :prescribed` (see [`gemb_core_prescribed`](@ref)); `Fill`-backed `NaN`
+when not supplied, and read under no other lower boundary.
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -779,15 +786,16 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 14 forcing layers. The first 13 are in positional-constructor order; `snow_drift` is
-# keyword-only and trailing, so every existing 19-argument positional call site stays valid
-# and forcing built without a drift product carries a `Fill`-backed zero layer.
+# The 15 forcing layers. The first 13 are in positional-constructor order; `snow_drift` and
+# `temperature_ground` are keyword-only and trailing, so every existing 19-argument positional
+# call site stays valid; forcing built without them carries a `Fill`-backed zero drift layer and
+# a `Fill`-backed `NaN` ground-temperature layer.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
-    :snow_drift,
+    :snow_drift, :temperature_ground,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -819,6 +827,10 @@ The 14th layer, `snow_drift` [kg m-2 yr-1, positive for erosion], is keyword-onl
 defaults to `Fill`-backed zeros, so a forcing built without a drift product is valid and
 inert. Supply it to drive [`apply_prescribed_drift!`](@ref) from a drift product
 (e.g. RACMO's `SnowDrif`) rather than from the constant `mp.drift_rate`.
+
+The 15th layer, `temperature_ground` [K], is keyword-only and defaults to `Fill`-backed `NaN`.
+It is the base temperature of `lower_boundary = :prescribed` and is read under no other lower
+boundary.
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
@@ -856,7 +868,7 @@ function ClimateForcing(
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
-    snow_drift=nothing,
+    snow_drift=nothing, temperature_ground=nothing,
     accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
@@ -869,12 +881,16 @@ function ClimateForcing(
         tdim = dims(temperature_air, Ti)
         snow_drift = DimArray(Fill(0.0, length(tdim)), (tdim,))
     end
+    if temperature_ground === nothing
+        tdim = dims(temperature_air, Ti)
+        temperature_ground = DimArray(Fill(NaN, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        snow_drift,
+        snow_drift, temperature_ground,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,

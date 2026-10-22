@@ -160,8 +160,23 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.surface_slope <= 1 "surface_slope must be in [0, 1] m m-1 (a gradient, not degrees)"
 
     # Lower boundary
-    @assert mp.lower_boundary in (:ice, :ground) "lower_boundary must be ice or ground"
+    @assert mp.lower_boundary in (:ice, :ground, :prescribed) "lower_boundary must be ice, ground or prescribed"
     mp.lower_boundary === :ground && validate_ground_parameters(mp)
+    mp.lower_boundary === :prescribed && validate_prescribed_parameters(mp)
+    return nothing
+end
+
+# The `:prescribed` base has no soil column, so only the snow-over-ground settings apply; the
+# base temperature comes from the forcing.
+function validate_prescribed_parameters(mp::ModelParameters)
+    @assert mp.thermal_solver isa ExplicitThermal "lower_boundary=:prescribed requires thermal_solver=ExplicitThermal()"
+    @assert mp.horizontal_strain_rate == 0 "lower_boundary=:prescribed requires horizontal_strain_rate = 0"
+    @assert 0.05 <= mp.ground_albedo <= 0.5 "ground_albedo must be in [0.05, 0.5]"
+    @assert 0.8 <= mp.ground_emissivity <= 1 "ground_emissivity must be in [0.8, 1]"
+    @assert 1e-4 <= mp.ground_roughness <= 0.5 "ground_roughness must be in [1e-4, 0.5] m"
+    @assert 0 <= mp.ground_evaporation_factor <= 1 "ground_evaporation_factor must be in [0, 1]"
+    @assert 3 <= mp.ground_snow_cells_max <= 1000 "ground_snow_cells_max must be in [3, 1000] (the count controller merges pairs below the surface cell)"
+    @assert mp.drift_rate == 0 "lower_boundary=:prescribed requires drift_rate = 0 (prescribed erosion of a thin seasonal pack is not supported)"
     return nothing
 end
 

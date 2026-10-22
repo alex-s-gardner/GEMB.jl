@@ -44,6 +44,10 @@ Create a `ClimateForcing` struct from time-series vectors.
   forcing layer rather than a tunable: the IMAU-FDM path reads it from a drift product
   (RACMO's `SnowDrif`). `nothing` (the default) leaves the layer at zero, which is inert;
   `mp.drift_rate` is then the constant-rate fallback. Read by `apply_prescribed_drift!`.
+- `temperature_ground`: Optional per-timestep temperature [K] of the fixed-temperature
+  reservoir at the base of the snow under `lower_boundary = :prescribed`, typically a measured
+  near-surface soil temperature. `nothing` (the default) leaves the layer at `NaN`; it is read
+  under no other lower boundary.
 """
 function initialize_forcing(
     time::AbstractVector{DateTime},
@@ -69,6 +73,7 @@ function initialize_forcing(
     shortwave_downward_diffuse::Union{Real,AbstractVector{<:Real}}=0.0,
     cloud_fraction::Real=0.1,
     snow_drift::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    temperature_ground::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
@@ -102,6 +107,12 @@ function initialize_forcing(
     if snow_drift !== nothing
         @assert length(snow_drift) == n "All input variables must have the same size."
         @assert all(d -> -2000 <= d <= 2000, snow_drift) "snow_drift values unrealistic. Ensure units are kg/m^2/yr (an annual rate, positive for erosion)."
+    end
+    # Optional base temperature of `lower_boundary = :prescribed`; NaN marks a step without one,
+    # which `gemb` rejects under that boundary.
+    if temperature_ground !== nothing
+        @assert length(temperature_ground) == n "All input variables must have the same size."
+        @assert all(T -> isnan(T) || 200 <= T <= 330, temperature_ground) "temperature_ground values unrealistic. Ensure units are kelvin."
     end
 
     # Set defaults for metadata with warnings
@@ -204,6 +215,8 @@ function initialize_forcing(
         Float64(wind_observation_height);
         snow_drift=snow_drift === nothing ? nothing :
                    DimArray(Float64.(snow_drift), (tdim,)),
+        temperature_ground=temperature_ground === nothing ? nothing :
+                           DimArray(Float64.(temperature_ground), (tdim,)),
         accumulation_mean=Float64(accumulation_mean),
         temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
@@ -360,6 +373,8 @@ function initialize_forcing(stack::DimStack)
     # precipitation — unlike the optical properties below, which are scalars promoted to
     # `Fill` layers. Absent for every forcing that predates it, hence `nothing`.
     snow_drift = haskey(stack, :snow_drift) ? parent(stack[:snow_drift]) : nothing
+    temperature_ground = haskey(stack, :temperature_ground) ?
+                         parent(stack[:temperature_ground]) : nothing
 
     # Extract required metadata
     meta = metadata(stack)
@@ -437,6 +452,7 @@ function initialize_forcing(stack::DimStack)
         shortwave_downward_diffuse = shortwave_downward_diffuse,
         cloud_fraction = cloud_fraction,
         snow_drift = snow_drift,
+        temperature_ground = temperature_ground,
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,

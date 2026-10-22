@@ -121,6 +121,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.temperature_observation_height,
         climate_forcing.wind_observation_height;
         snow_drift=snow_drift_forcing,
+        temperature_ground=climate_forcing.temperature_ground,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -143,6 +144,10 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     if mp.lower_boundary === :ground
         validate_ground_parameters(mp)
         return _gemb_ground(profile, climate_forcing, mp, model_parameters; verbose,
+            thermal_workspace, column_workspace)
+    elseif mp.lower_boundary === :prescribed
+        validate_prescribed_parameters(mp)
+        return _gemb_prescribed(profile, climate_forcing, mp, model_parameters; verbose,
             thermal_workspace, column_workspace)
     end
 

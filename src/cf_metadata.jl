@@ -230,6 +230,10 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: point"; comment="Linear between ground-cell centres."),
     :soil_temperature_100 => CFAttrs("K", "soil temperature 1.0 m below the ground surface",
         "time: point"; comment="Linear between ground-cell centres."),
+    # ---- lower_boundary = :prescribed only ---------------------------------
+    :temperature_base => CFAttrs("K", "prescribed temperature at the base of the snow",
+        "time: mean"; comment="The forcing layer temperature_ground: the fixed-temperature " *
+        "reservoir below the snow, and the snow-free ground surface."),
     :material => CFAttrs("1", "cell material code", "time: point";
         comment="0 snow, firn or ice above the ground; 1 soil; 2 empty snow slot (zero " *
                 "thickness and mass). Ground cells: density is solids plus pore ice, water " *

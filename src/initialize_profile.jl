@@ -99,6 +99,10 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         (constant_density || constant_temperature) && throw(ArgumentError(
             "constant_density and constant_temperature do not apply under lower_boundary = :ground"))
         return initialize_profile_ground(mp)
+    elseif mp.lower_boundary === :prescribed
+        (constant_density || constant_temperature) && throw(ArgumentError(
+            "constant_density and constant_temperature do not apply under lower_boundary = :prescribed"))
+        return initialize_profile_prescribed(mp)
     end
 
     T_mean = Float64(cf.temperature_air_mean)

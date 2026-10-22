@@ -113,6 +113,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Ground lower boundary" begin
         include("test_ground.jl")
     end
+    @testset "Prescribed lower boundary" begin
+        include("test_prescribed.jl")
+    end
 
     @testset "Synthetic Regression" begin
         # Full-model regression pins at a cold site and a maritime site

@@ -52,6 +52,97 @@ function _merge_all_snow!(cols::NamedTuple, mp::ModelParameters)
 end
 
 """
+    _snow_after_thermal!(cols, EC, EC_liquid, cfs, mp, verbose, column_workspace,
+                         melt, runoff, refreeze)
+        -> (snow, melt, runoff, refreeze, rain, E_vapor, EC_ground, E_ground_added,
+            mass_blowing_snow, E_blowing_snow, melt_surface, percolation_depth, viscosity)
+
+Steps 5 to 8 of [`gemb_core_ground`](@ref), shared by every column whose snow rests on ground
+(`lower_boundary = :ground` and `:prescribed`): vapor exchange, snowfall and rain, blowing snow,
+melt and percolation, thickness bands and densification of the snow `cols`, after the thermal
+solve has supplied the step's vapor mass `EC` (of which `EC_liquid` at `LV`).
+
+`melt`, `runoff` and `refreeze` [kg m-2] are the step's totals so far, returned with this part
+added. `E_ground_added` [J m-2] is the energy the ground below receives: the sensible heat above
+the melting point of rain on snow-free ground, which runs off at 273.15 K, and the melt energy
+beyond what melts the deepest snow cell. `EC_ground` [kg m-2] is the vapor exchanged with the
+ground rather than the snow.
+"""
+function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
+    cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool,
+    column_workspace::ColumnWorkspace, melt::Float64, runoff::Float64, refreeze::Float64)
+
+    (; temperature, dz, density, water, grain_radius, grain_dendricity,
+       grain_sphericity, age) = cols
+    h_water = specific_enthalpy_water(mp)
+    rain = 0.0
+
+    # 5. Vapor exchange
+    E_vapor, EC_ground = _ground_vapor_exchange!(cols, EC, EC_liquid, mp)
+
+    # 6. Snowfall and rain
+    E_ground_added = 0.0
+    if isempty(dz)
+        if cfs.precipitation > 0
+            if cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE)
+                ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
+                push!(temperature, cfs.temperature_air); push!(dz, cfs.precipitation / ρ_new)
+                push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
+                push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
+            else
+                rain = cfs.precipitation
+                runoff += rain
+                E_ground_added = rain * (specific_enthalpy_water(mp, cfs.temperature_air) - h_water)
+            end
+        end
+    else
+        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+            age, rain = calculate_accumulation(temperature, dz, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
+    end
+    cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
+        grain_sphericity, age)
+
+    # 7. Blowing snow, melt and percolation
+    mass_blowing_snow = 0.0; E_blowing_snow = 0.0
+    if !isempty(dz)
+        m1, e1 = apply_blowing_snow!(cols, cfs, mp)
+        mass_blowing_snow += m1; E_blowing_snow += e1
+    end
+    basal_surplus = Ref(0.0)
+    melt_surface = 0.0
+    percolation_depth = 0.0
+    if !isempty(dz)
+        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+            age, melt_snow, melt_surface, runoff_snow, refreeze_snow, percolation_depth =
+            calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity,
+                grain_sphericity, age, mp, verbose; workspace=column_workspace, basal_surplus)
+        melt += melt_snow; runoff += runoff_snow; refreeze += refreeze_snow
+        runoff += apply_lateral_drainage!(column_state(temperature, dz, density, water,
+            grain_radius, grain_dendricity, grain_sphericity, age), cfs.dt, mp)
+    end
+    E_ground_added += basal_surplus[]
+
+    # 8. Thickness bands and densification of the snow
+    viscosity = NO_VISCOSITY
+    if !isempty(dz)
+        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
+            age, _ = manage_layer_thickness(temperature, dz, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, age, mp, verbose; dt=cfs.dt,
+                n_target=length(dz), workspace=column_workspace,
+                n_max=ground_snow_slots(mp), dirichlet_bottom=false)
+        viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
+        dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp;
+            grain_dendricity, grain_sphericity, viscosity)
+    end
+    snow_new = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
+        grain_sphericity, age)
+
+    return snow_new, melt, runoff, refreeze, rain, E_vapor, EC_ground, E_ground_added,
+        mass_blowing_snow, E_blowing_snow, melt_surface, percolation_depth, viscosity
+end
+
+"""
     gemb_core_ground(snow, temperature_ground, water_ground, g, cfs, mp, verbose;
                      thermal_workspace=ThermalWorkspace(), column_workspace=ColumnWorkspace())
         -> (snow, temperature_ground, water_ground, flux)
@@ -212,72 +303,17 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
             g.water_total[j], H_ground[j])
     end
 
-    # 5. Vapor exchange
-    E_vapor, EC_ground = _ground_vapor_exchange!(cols, EC, EC_liquid, mp)
-
-    # 6. Snowfall and rain
-    E_ground_added = 0.0
-    if isempty(dz)
-        if cfs.precipitation > 0
-            if cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE)
-                ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
-                push!(temperature, cfs.temperature_air); push!(dz, cfs.precipitation / ρ_new)
-                push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
-                push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
-            else
-                rain = cfs.precipitation
-                runoff += rain
-                E_ground_added = rain * (specific_enthalpy_water(mp, cfs.temperature_air) - h_water)
-            end
-        end
-    else
-        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, rain = calculate_accumulation(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
-    end
-    cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
-
-    # 7. Blowing snow, melt and percolation
-    mass_blowing_snow = 0.0; E_blowing_snow = 0.0
-    if !isempty(dz)
-        m1, e1 = apply_blowing_snow!(cols, cfs, mp)
-        mass_blowing_snow += m1; E_blowing_snow += e1
-    end
-    basal_surplus = Ref(0.0)
-    melt_surface = 0.0
-    percolation_depth = 0.0
-    if !isempty(dz)
-        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, melt_snow, melt_surface, runoff_snow, refreeze_snow, percolation_depth =
-            calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity,
-                grain_sphericity, age, mp, verbose; workspace=column_workspace, basal_surplus)
-        melt += melt_snow; runoff += runoff_snow; refreeze += refreeze_snow
-        runoff += apply_lateral_drainage!(column_state(temperature, dz, density, water,
-            grain_radius, grain_dendricity, grain_sphericity, age), cfs.dt, mp)
-    end
-    E_ground_added += basal_surplus[]
+    snow_new, melt, runoff, refreeze, rain, E_vapor, EC_ground, E_ground_added,
+        mass_blowing_snow, E_blowing_snow, melt_surface, percolation_depth, viscosity =
+        _snow_after_thermal!(cols, EC, EC_liquid, cfs, mp, verbose, column_workspace,
+            melt, runoff, refreeze)
+    (; temperature, dz, density, water) = snow_new
     if E_ground_added != 0.0
         H_ground[1] = ground_enthalpy(mp, g.C_solid[1], g.water_total[1], temperature_ground[1],
             water_ground[1]) + E_ground_added
         temperature_ground[1], water_ground[1] = ground_state(mp, g.C_solid[1],
             g.water_total[1], H_ground[1])
     end
-
-    # 8. Thickness bands and densification of the snow
-    viscosity = NO_VISCOSITY
-    if !isempty(dz)
-        temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, _ = manage_layer_thickness(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, mp, verbose; dt=cfs.dt,
-                n_target=length(dz), workspace=column_workspace,
-                n_max=ground_snow_slots(mp), dirichlet_bottom=false)
-        viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
-        dz, density = calculate_density(temperature, dz, density, grain_radius, water, cfs, mp;
-            grain_dendricity, grain_sphericity, viscosity)
-    end
-    snow_new = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
 
     temperature_ground[ng] == T_bottom || error("gemb_core_ground: the bottom ground cell's " *
         "temperature changed: $(T_bottom) K to $(temperature_ground[ng]) K")

@@ -520,6 +520,14 @@ and the conductive flux from the snow into the ground takes the snow side at no 
 273.15 K, as Crocus does, so melting snow no longer heats the soil. Before these, calm summer
 hours and thin melting snow under warm wind drove the top soil node past 332 K at 16 SNOTEL sites.
 
+**`lower_boundary = :prescribed`** (opt-in) puts the snow on a fixed-temperature reservoir whose
+temperature is the new optional forcing layer `temperature_ground` (`NaN`, and unread, unless
+supplied): no soil column, the deepest snow cell exchanging heat with the reservoir across its
+half-thickness, the snow side capped at 0 °C as in Crocus. Snow-free, the surface is the
+prescribed ground at `ground_albedo`, its balance evaluated at the prescribed temperature; trace
+snow takes that temperature, as Crocus hands a vanishing snow cover to the soil. For tests of
+snow physics where a measured near-surface soil temperature is the boundary condition.
+
 ## Initialization and spinup
 
 **Deep temperature.** The initialized deep temperature is the mean *surface* temperature,
