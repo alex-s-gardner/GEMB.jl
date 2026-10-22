@@ -513,6 +513,13 @@ deepest cell held at `ground_temperature_deep`, snow-free ground at `ground_albe
 leaving the snow base as runoff, and a variable snow cell count in fixed snow slots; spun up by
 `gemb_spinup_ground` on the mean ground temperature.
 
+**Snow-free ground surface fluxes (`:ground` only).** The turbulent transfer over snow-free
+ground uses the wind `√(U² + w*²)` with the free-convection velocity `w*` of Beljaars (1995)
+(ECMWF IFS eqs. 3.17-3.18, `z_i` = 1000 m), so a calm sunlit hour still loses heat to the air;
+and the conductive flux from the snow into the ground takes the snow side at no more than
+273.15 K, as Crocus does, so melting snow no longer heats the soil. Before these, calm summer
+hours and thin melting snow under warm wind drove the top soil node past 332 K at 16 SNOTEL sites.
+
 ## Initialization and spinup
 
 **Deep temperature.** The initialized deep temperature is the mean *surface* temperature,

@@ -1,7 +1,7 @@
 # The `lower_boundary = :ground` soil column: properties, analytic solutions, budgets and the
 # variable snow column over it.
 
-using Dates: month
+using Dates: month, hour, DateTime, Hour
 using GEMB: ClimateForcingStep, CtoK, LF, HEAT_CAPACITY_WATER, MATERIAL_SNOW, MATERIAL_GROUND,
     MATERIAL_EMPTY, ThermalWorkspace
 
@@ -248,6 +248,52 @@ end
     end
 end
 
+# Snow-free ground in calm, clear summer weather (E2 of the SNOTEL test): without free convection
+# the transfer coefficient of a calm hour vanishes and dry sunlit soil has no turbulent loss.
+@testset "ground: calm sunlit dry soil stays bounded (free convection)" begin
+    n = 24 * 5
+    t = [DateTime(2009, 6, 5) + Hour(h) for h in 0:n-1]
+    hr = hour.(t)
+    sw = [max(0.0, 950.0 * sin(π * (h - 6) / 14)) for h in hr]
+    Ta = [286.0 + 5.0 * sin(π * (h - 9) / 12) for h in hr]
+    cf = initialize_forcing(t, Ta, fill(73000.0, n), zeros(n), zeros(n), sw, fill(287.0, n),
+        fill(543.0, n); temperature_air_mean=280.0, wind_speed_mean=2.0,
+        precipitation_mean=500.0, temperature_observation_height=2.7,
+        wind_observation_height=10.0, solar_zenith_angle=fill(30.0, n),
+        cloud_optical_thickness=zeros(n), shortwave_downward_diffuse=0.1 .* sw)
+    mp = GEMB.initialize_parameters(lower_boundary=:ground, ground_temperature_deep=283.0,
+        ground_water=0.05, output_frequency=:all)
+    o = gemb(initialize_profile(mp, cf), cf, mp; verbose=true)
+    T5 = parent(o[:soil_temperature_005])
+    # Measured: the 5 cm soil peaks at 296.4 K; without free convection the surface node passes
+    # 332 K on the first afternoon and the run stops.
+    @test maximum(T5) < 305.0
+    # Free convection carries the midday heat away as sensible and latent flux.
+    noon = findall(==(13), hr)
+    @test all(<(-100.0), parent(o[:heat_flux_sensible])[noon] .+ parent(o[:heat_flux_latent])[noon])
+end
+
+# Melting snow over soil warmer than 0 °C under a strong warm wind (E2): snow cannot be warmer
+# than the melting point, so heat crosses the snow–ground face only from the soil upward, and the
+# turbulent heat the snow absorbs melts it rather than heating the soil below.
+@testset "ground: snow over warm soil does not heat the soil (interface cap)" begin
+    mp = GEMB.initialize_parameters(lower_boundary=:ground, ground_temperature_deep=276.0,
+        dt_divisors=GEMB.fast_divisors(3600 * 10000) ./ 10000)
+    g = GEMB.ground_column(mp, GEMB.ground_grid(mp.ground_depth))
+    Tg = fill(276.0, length(g.dz))
+    snow = GEMB.column_state([CtoK], [0.03], [700.0], [0.1], [0.16], [0.0], [0.0], [150.0])
+    cfs = ClimateForcingStep(; dt=3600.0, temperature_air=287.0, pressure_air=73760.0,
+        wind_speed=22.8, longwave_downward=256.0, vapor_pressure=1049.0,
+        temperature_observation_height=2.75, wind_observation_height=10.0,
+        precipitation_mean=320.0, temperature_air_mean=275.0, wind_speed_mean=10.0)
+    s, Tg1, _, flux = GEMB.gemb_core_ground(snow, copy(Tg), copy(g.water_total), g, cfs, mp, true)
+    # Measured: G = +58.7 W m-2 and the top soil cools to 274.5 K. Without the cap the 0 °C snow
+    # conducted 354 W m-2 into the soil, which warmed to 285.7 K.
+    @test flux.heat_flux_ground > 0.0
+    @test Tg1[1] < 276.0
+    @test flux.melt > 0.0
+end
+
 @testset "ground: glacier column is untouched by the ground fields" begin
     cf = synthetic_maritime_forcing(years=1)
     mp = GEMB.initialize_parameters(output_frequency=:daily)
@@ -335,8 +381,8 @@ end
     t = collect(GEMB.DD.dims(o, Ti))
     djf = findall(x -> month(x) in (12, 1, 2), t)
     mean(x) = sum(x) / length(x)
-    # Measured: snow base −1.77 °C (idealized −1.83), G 5.19 W m-2 (idealized 4.77), 47 days
-    # with the 5 cm soil within 0.01 K of 0 °C.
+    # Measured: snow base −1.91 °C, G 5.20 W m-2, 43 days with the 5 cm soil within 0.01 K of
+    # 0 °C.
     @test all(>(0.0), R[djf])
     @test -2.5 < mean(Tb[djf]) < 0.0
     @test abs(mean(Tb[djf]) - mean(Tbi[djf])) < 0.25

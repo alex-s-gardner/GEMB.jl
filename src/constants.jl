@@ -216,6 +216,17 @@ const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
 # implicit solver's Newton iteration needs.
 const ZETA_UNSTABLE_MIN = -100.0
 
+# Free convection over snow-free ground (`lower_boundary = :ground`): the boundary-layer scale
+# height `z_i` [m] of the free-convection velocity `w* = (z_i·g·Q_0v/T)^{1/3}`, set to 1000 m in
+# the ECMWF IFS "since only the order of magnitude matters" (ECMWF, 2018, Part IV, eq. 3.18;
+# Beljaars, 1995), and the fixed-point iteration that solves `w*` together with the fluxes it
+# sets: at most `FREE_CONVECTION_ITERATIONS` steps, stopping when `w*` changes by less than
+# `FREE_CONVECTION_TOLERANCE` [m s-1]. The iteration contracts (`w*³ ∝ U_e`, so the
+# fixed-point slope is about 1/3).
+const FREE_CONVECTION_HEIGHT = 1000.0
+const FREE_CONVECTION_ITERATIONS = 30
+const FREE_CONVECTION_TOLERANCE = 1e-6
+
 # Newton steps on ln|ζ| in `obukhov_stability`. Four steps from the neutral first guess reach
 # the converged Monin-Obukhov solution to 1e-12 in the transfer coefficient for -100 < ζ < 1
 # and to 5e-5 for any ζ reached with |Ri| ≤ 10^4; three steps leave errors of order 1e-6 and

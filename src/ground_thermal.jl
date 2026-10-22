@@ -3,23 +3,70 @@
 # Dirichlet reservoir.
 
 """
+    _ground_turbulent_heat_flux(T1, sfc, cfs, β)
+        -> (heat_flux_sensible, heat_flux_latent, latent_heat, dshf, dlhf)
+
+Turbulent fluxes [W m-2, positive into the surface] of a snow-free ground surface at `T1` [K] and
+their slopes at fixed wind, from the stability table of `sfc`, with the latent flux scaled by
+the bare-soil evaporation factor `β`.
+
+The wind in the transfer law is `U_e = √(U² + w*²)`, with `U` the forcing wind (floored as in
+`sfc`) and `w* = (z_i·g·Q_0v/T_a)^{1/3}` the free-convection velocity scale of a heated surface,
+`Q_0v = −H/(ρ_a c_p) − 0.61·T_a·LE/(ρ_a L)` the upward kinematic virtual-temperature flux and
+`z_i = FREE_CONVECTION_HEIGHT` (Beljaars, 1995; ECMWF, 2018, eqs. 3.17-3.18). Without it the
+transfer coefficient of a calm hour vanishes with `U`, and sunlit dry soil has no turbulent
+loss at all. `w*` depends on the fluxes it sets, so it is found by fixed-point iteration from
+`w* = 1 m s-1`; on a stable or neutral surface it is zero and `U_e = U`. A zero transfer factor
+`sfc.C` is a surface sealed from the air: every flux and slope is zero.
+
+# References
+- Beljaars, A. C. M. (1995). The parametrization of surface fluxes in large-scale models under
+  free convection. *Q. J. R. Meteorol. Soc.* 121, 255-270.
+- ECMWF (2018). IFS Documentation CY45R1, Part IV: Physical Processes, §3.2.1.
+"""
+@inline function _ground_turbulent_heat_flux(T1::Float64, sfc::_ThermalSurface,
+    cfs::ClimateForcingStep, β::Float64)
+    # A zero transfer factor is a surface that exchanges nothing with the air.
+    sfc.C == 0.0 && return 0.0, 0.0, LS, 0.0, 0.0
+    U2 = sfc.C / VON_KARMAN^2
+    U2 *= U2
+    k_q = GRAVITY * FREE_CONVECTION_HEIGHT / cfs.temperature_air
+    ρcp = sfc.density_air * HEAT_CAPACITY_AIR
+    w = 1.0
+    for _ in 1:FREE_CONVECTION_ITERATIONS
+        Ue = sqrt(U2 + w * w)
+        H, LE, Lh, _, _ = _table_turbulent_heat_flux(sfc.table, T1, sfc.density_air,
+            VON_KARMAN^2 * Ue, GRAVITY * cfs.wind_observation_height / (Ue * Ue), cfs)
+        Q0v = -H / ρcp - 0.61 * cfs.temperature_air * β * LE / (sfc.density_air * Lh)
+        w_new = Q0v > 0.0 ? cbrt(k_q * Q0v) : 0.0
+        converged = abs(w_new - w) <= FREE_CONVECTION_TOLERANCE
+        w = w_new
+        converged && break
+    end
+    Ue = sqrt(U2 + w * w)
+    heat_flux_sensible, heat_flux_latent, latent_heat, dshf, dlhf =
+        _table_turbulent_heat_flux(sfc.table, T1, sfc.density_air, VON_KARMAN^2 * Ue,
+            GRAVITY * cfs.wind_observation_height / (Ue * Ue), cfs)
+    return heat_flux_sensible, β * heat_flux_latent, latent_heat, dshf, β * dlhf
+end
+
+"""
     _ground_surface_fluxes_and_slopes(T1, emissivity, sfc, cfs, β)
         -> (longwave_upward, heat_flux_sensible, heat_flux_latent, latent_heat, dlw, dshf, dlhf)
 
 Surface fluxes [W m-2, positive into the column] of a ground surface at surface-cell temperature
 `T1` [K] and their slopes with respect to `T1`, as [`_surface_fluxes_and_slopes`](@ref) gives them
-for snow, with two differences: the surface temperature is `T1` itself, not `min(T1, 273.15)`,
-since ground warms above the melting point; and the latent heat flux is scaled by the bare-soil
-evaporation factor `β`. The latent heat is `LV` with saturation over water at or above the
-melting point and `LS` over ice below it. The turbulent slope pair is set to zero when its sum
-would be positive, so the total slope is `≤ 0`.
+for snow, with three differences: the surface temperature is `T1` itself, not `min(T1, 273.15)`,
+since ground warms above the melting point; the latent heat flux is scaled by the bare-soil
+evaporation factor `β`; and the turbulent transfer includes free convection
+([`_ground_turbulent_heat_flux`](@ref)). The latent heat is `LV` with saturation over water at
+or above the melting point and `LS` over ice below it. The turbulent slope pair is set to zero
+when its sum would be positive, so the total slope is `≤ 0`.
 """
 @inline function _ground_surface_fluxes_and_slopes(T1::Float64, emissivity::Float64,
     sfc::_ThermalSurface, cfs::ClimateForcingStep, β::Float64)
     heat_flux_sensible, heat_flux_latent, latent_heat, dshf, dlhf =
-        _table_turbulent_heat_flux(sfc.table, T1, sfc.density_air, sfc.C, sfc.ri_scale, cfs)
-    heat_flux_latent *= β
-    dlhf *= β
+        _ground_turbulent_heat_flux(T1, sfc, cfs, β)
     T2 = T1 * T1
     longwave_upward = -(SB * T2 * T2 * emissivity + (1.0 - emissivity) * cfs.longwave_downward)
     dlw = -4 * SB * emissivity * T2 * T1
@@ -81,6 +128,12 @@ evaporation factor `β`.
 Snow cells use GEMB's enthalpy maps, including the freezing plateau of a wet cell
 ([`_wet_cell_temperature`](@ref)) and [`_wet_cell_handoff!`](@ref) at the end. Ground nodes use
 [`ground_state`](@ref), whose plateau freezes and thaws their water at 273.15 K.
+
+The flux across the snow–ground face takes the snow side at `min(T, 273.15)`. A snow cell's
+temperature above the melting point is energy that [`calculate_melt`](@ref) turns into melt
+after the solve; conducting it into the soil instead would heat the ground from snow at 0 °C.
+Crocus evaluates its basal flux the same way (`snowcro.F90`, "Lower boundary flux": `PGBAS` with
+`MIN(XTT, ZSNOWTEMP)`).
 
 `heat_flux_ground` [W m-2, positive upward] is the step mean of the conductive flux from the top
 ground node into the snow cell above it; with no snow cell it is minus the energy the surface
@@ -214,13 +267,15 @@ function _thermal_solve_ground!(temperature::Vector{Float64}, dz::Vector{Float64
         ns == 0 && (ground_cum -= Q_sw[1] + Q_surface)
         F_prev = 0.0
         for i in 1:m-2
-            F = A[i] * (T_pre[i+1] - T_pre[i])
+            # The snow side of the snow–ground face is at most the melting point.
+            F = A[i] * (T_pre[i+1] - (i == ns ? min(T_pre[i], CtoK) : T_pre[i]))
             H[i] += F - F_prev
             H[i+1] += Q_sw[i+1]
             i == ns && (ground_cum += F)
             F_prev = F
         end
-        F_basal = A[m-1] * (T_bottom - T_pre[m-1])
+        F_basal = A[m-1] * (T_bottom - (m - 1 == ns ? min(T_pre[m-1], CtoK) : T_pre[m-1]))
+        m - 1 == ns && (ground_cum += F_basal)
         basal_cum += F_basal
         H[m-1] += F_basal - F_prev
 
