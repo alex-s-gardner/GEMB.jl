@@ -144,3 +144,102 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
     end
     return output
 end
+
+"""
+    ground_mean_temperature(profile) -> T [K]
+
+Thickness-weighted mean temperature of the ground cells of a `lower_boundary = :ground`
+profile, the quantity [`gemb_spinup_ground`](@ref) converges.
+"""
+function ground_mean_temperature(profile::DimStack)
+    mat = parent(profile[:material]); dz = parent(profile[:dz]); T = parent(profile[:temperature])
+    s = 0.0; z = 0.0
+    for i in eachindex(mat)
+        mat[i] == MATERIAL_GROUND || continue
+        s += T[i] * dz[i]; z += dz[i]
+    end
+    return s / z
+end
+
+"""
+    _remove_snow(profile, mp) -> profile
+
+`profile` with its snow removed and the ground unchanged: every snow slot empty.
+"""
+function _remove_snow(profile::DimStack, mp::ModelParameters)
+    g = ground_column(mp, ground_grid(mp.ground_depth))
+    full = NamedTuple(l => Vector{Float64}(parent(profile[l])) for l in GROUND_PROFILE_LAYERS)
+    _, Tg, Wg = _ground_state_split(full, g)
+    col = _ground_state_vectors(mp, g, Float64[], Float64[], Float64[], Float64[], Float64[],
+        Float64[], Float64[], Float64[], Tg, Wg)
+    zdim = Z(1:length(col.dz); metadata=cf_layer_index_attributes())
+    layers = NamedTuple(l => DimArray(getfield(col, l), (zdim,)) for l in GROUND_PROFILE_LAYERS)
+    return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
+end
+
+"""
+    gemb_spinup_ground(profile, cf, mp; simulation_years_maximum=100,
+                       convergence_delta_ground_temperature=0.05, require_convergence=false,
+                       remove_snow=true, verbose=false, thermal_workspace=ThermalWorkspace(),
+                       column_workspace=ColumnWorkspace()) -> profile
+
+Spin up a `lower_boundary = :ground` column by repeating `cf` until the thickness-weighted mean
+temperature of the ground ([`ground_mean_temperature`](@ref)) changes by less than
+`convergence_delta_ground_temperature` [K] between cycles, or `simulation_years_maximum` years
+have run. [`gemb_spinup`](@ref) calls this under `:ground`.
+
+With `remove_snow` (the default) the snow is removed at the start of every cycle, so each cycle
+starts from snow-free ground. For a cycle that begins on 1 October, the start of a water year,
+this is the design's "snow removed at each cycle's 1 October": at a seasonal site any snow left
+then carries no information, and removing it keeps a forcing error from accumulating snow across
+cycles.
+
+The returned profile's metadata records `spinup_cycles`, `spinup_converged`,
+`spinup_final_delta_ground_temperature`, the convergence tolerance, `spinup_years_per_cycle`
+and `spinup_years_simulated`.
+"""
+function gemb_spinup_ground(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
+    simulation_years_maximum::Real=100, convergence_delta_ground_temperature::Real=0.05,
+    require_convergence::Bool=false, remove_snow::Bool=true, verbose::Bool=false,
+    thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
+    column_workspace::ColumnWorkspace=ColumnWorkspace())
+
+    years_per_cycle = _years_per_cycle(cf)
+    simulation_years_maximum > 0 ||
+        error("simulation_years_maximum must be positive, got $simulation_years_maximum")
+    max_iterations = max(1, ceil(Int, simulation_years_maximum / years_per_cycle))
+    mp_spinup = ModelParameters(;
+        (field => getfield(mp, field) for field in fieldnames(ModelParameters)
+         if field != :output_frequency)..., output_frequency=:last)
+
+    current = profile
+    previous = ground_mean_temperature(current)
+    delta = NaN
+    cycles = 0
+    converged = false
+    for cycle in 1:max_iterations
+        cycles = cycle
+        remove_snow && (current = _remove_snow(current, mp))
+        out = gemb(current, cf, mp_spinup; thermal_workspace, column_workspace)
+        current = gemb_profile(out)
+        Tm = ground_mean_temperature(current)
+        delta = abs(Tm - previous)
+        previous = Tm
+        verbose && @info "gemb_spinup_ground cycle $cycle" mean_ground_temperature=Tm delta
+        if delta < convergence_delta_ground_temperature
+            converged = true
+            break
+        end
+    end
+    if !converged
+        msg = "gemb_spinup_ground did not converge in $(cycles) cycles: Δ⟨T_ground⟩ = $(delta) K"
+        require_convergence && error(msg)
+        @warn msg
+    end
+    prov = (spinup_cycles=cycles, spinup_converged=converged,
+        spinup_final_delta_ground_temperature=delta,
+        spinup_convergence_delta_ground_temperature=Float64(convergence_delta_ground_temperature),
+        spinup_years_per_cycle=years_per_cycle, spinup_years_simulated=cycles * years_per_cycle,
+        spinup_simulation_years_maximum=simulation_years_maximum)
+    return rebuild(current; metadata=prov)
+end

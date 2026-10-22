@@ -78,6 +78,7 @@ export AbstractThermalSolver, ExplicitThermal, ImplicitThermal, ThermalWorkspace
     ColumnWorkspace
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
+export gemb_spinup_ground, ground_mean_temperature
 export plot_output
 export dz2z, firn_air_content, close_off_age, fast_divisors, decyear2datenum, datetime2decyear
 export CFAttrs, GEMB_CF_ATTRIBUTES, GEMB_CF_GLOBAL_ATTRIBUTES, cf_attributes

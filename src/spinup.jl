@@ -189,6 +189,15 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
                      column_workspace::ColumnWorkspace=ColumnWorkspace())
 
+    if mp.lower_boundary === :ground
+        (convergence_delta_density === nothing && convergence_drift_density === nothing &&
+         convergence_delta_fac === nothing && convergence_drift_fac === nothing) ||
+            throw(ArgumentError("lower_boundary = :ground converges on the deep-soil " *
+                "temperature; call gemb_spinup_ground for its criteria"))
+        return gemb_spinup_ground(profile, cf, mp; simulation_years_maximum,
+            require_convergence, verbose, thermal_workspace, column_workspace)
+    end
+
     require_convergence && convergence_delta_density === nothing &&
         convergence_drift_density === nothing && convergence_delta_fac === nothing &&
         convergence_drift_fac === nothing &&
