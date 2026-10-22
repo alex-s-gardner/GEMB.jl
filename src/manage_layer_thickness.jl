@@ -37,6 +37,12 @@ Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
 grain_sphericity, age, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
 
+Two keywords serve the snow over the ground of `lower_boundary = :ground`, whose cell count
+varies: `n_max > 0` replaces the fixed count by a ceiling, the count controller merging only
+while there are more than `n_max` cells, and `dirichlet_bottom = false` leaves the bottom cell's
+temperature alone, the snow's base not being a fixed-temperature boundary. A column of one cell
+is not merged.
+
 `age` needs no handling here beyond being in the bundle: all three passes go through
 [`merge_pair!`](@ref), [`merge_snow_pair!`](@ref) or [`absorb_snow!`](@ref) (which mass-weight
 it) and [`split_cell!`](@ref) (for which duplication is already correct, age being
@@ -48,7 +54,8 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
     mp::ModelParameters, verbose::Bool; dt::Float64, n_target::Int=length(dz),
-    workspace::ColumnWorkspace=ColumnWorkspace())
+    workspace::ColumnWorkspace=ColumnWorkspace(), n_max::Int=0,
+    dirichlet_bottom::Bool=true)
 
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
@@ -84,7 +91,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     delete_cell = view(workspace.delete_cell, 1:m)
     fill!(delete_cell, false)
     for i in 1:m
-        if dz[i] < (column_dzmin2[i] - D_TOLERANCE)
+        if m > 1 && dz[i] < (column_dzmin2[i] - D_TOLERANCE)
             # A distinct snow layer at the surface is kept however thin, down to
             # `snow_layer_min_mass(dt)`.
             (i == 1 && m > 1 && _surface_layer_kept(cols, mp, dt)) && continue
@@ -126,14 +133,18 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     ## COUNT CONTROL — restore the fixed cell count (exactly conservative)
+    n_max > 0 && (n_target = min(length(dz), n_max))
     enforce_column_length!(cols, n_target, mp; workspace)
 
     # The count controller conserves mass and energy exactly, and depth is pinned by
     # `trim_bottom!` later in the timestep, so the only budget term arising here is the
     # Dirichlet bottom boundary condition.
-    E_added = (dz[end] * density[end]) *
-              (specific_enthalpy(mp, T_bottom) - specific_enthalpy(mp, temperature[end]))
-    temperature[end] = T_bottom
+    E_added = 0.0
+    if dirichlet_bottom
+        E_added = (dz[end] * density[end]) *
+                  (specific_enthalpy(mp, T_bottom) - specific_enthalpy(mp, temperature[end]))
+        temperature[end] = T_bottom
+    end
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose

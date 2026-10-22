@@ -210,6 +210,30 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "the epoch is the start of spinup rather than the start of the transient " *
                 "run. Under sustained ablation the deepest cell is a lower bound: basal " *
                 "accretion inherits that cell's own age."),
+    # ---- lower_boundary = :ground only -------------------------------------
+    :heat_flux_ground => CFAttrs("W m-2", "conductive heat flux from the ground into the snow",
+        "time: mean";
+        comment="Positive upward, across the snow–ground interface (SNOWPACK's Qg0). With " *
+                "no snow, minus the energy the surface balance delivers to the ground. " *
+                "Excludes shortwave transmitted through the snow to the ground."),
+    :snow_depth => CFAttrs("m", "depth of the snow above the ground", "time: point";
+        standard_name="surface_snow_thickness"),
+    :snow_water_equivalent => CFAttrs("kg m-2", "mass of the snow above the ground, ice " *
+        "matrix and pore water", "time: point"; standard_name="surface_snow_amount"),
+    :soil_temperature_005 => CFAttrs("K", "soil temperature 0.05 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_010 => CFAttrs("K", "soil temperature 0.1 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_020 => CFAttrs("K", "soil temperature 0.2 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_050 => CFAttrs("K", "soil temperature 0.5 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_100 => CFAttrs("K", "soil temperature 1.0 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :material => CFAttrs("1", "cell material code", "time: point";
+        comment="0 snow, firn or ice above the ground; 1 soil; 2 empty snow slot (zero " *
+                "thickness and mass). Ground cells: density is solids plus pore ice, water " *
+                "the unfrozen pore water."),
 )
 
 """

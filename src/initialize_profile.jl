@@ -94,6 +94,13 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     density_seed in (:steady_state, :HerronLangway) || throw(ArgumentError(
         "density_seed must be :steady_state or :HerronLangway, got :$(density_seed)"))
 
+    # The ground column is set by its parameters alone: no snow, soil at the deep temperature.
+    if mp.lower_boundary === :ground
+        (constant_density || constant_temperature) && throw(ArgumentError(
+            "constant_density and constant_temperature do not apply under lower_boundary = :ground"))
+        return initialize_profile_ground(mp)
+    end
+
     T_mean = Float64(cf.temperature_air_mean)
 
     @assert T_mean > 0 "temperature_air_mean must exceed 0 K."

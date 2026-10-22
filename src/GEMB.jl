@@ -55,6 +55,9 @@ include("manage_layer_thickness.jl")
 # Integration
 include("gemb_core.jl")
 include("gemb_driver.jl")
+include("ground_column.jl")
+include("ground_core.jl")
+include("ground_driver.jl")
 
 # Utilities
 include("spinup.jl")

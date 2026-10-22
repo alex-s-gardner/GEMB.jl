@@ -140,6 +140,12 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         dt_divisors=fast_divisors(dt_int * 10000) ./ 10000
     )
 
+    if mp.lower_boundary === :ground
+        validate_ground_parameters(mp)
+        return _gemb_ground(profile, climate_forcing, mp, model_parameters; verbose,
+            thermal_workspace, column_workspace)
+    end
+
     # Initialize column state from profile. Every layer read here is in `RESTART_LAYERS`, which
     # `_assert_restart_layers` has already checked for above — so a profile that reaches this point
     # cannot fail on a missing name.

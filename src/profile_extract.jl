@@ -45,7 +45,9 @@ function _extract_profile_at_index(out::DimStack, col_idx::Int)
     # absent from it by design, so the extracted profile matches the output layout (a slice of
     # it); recompute via `dz2z(profile[:dz])` if needed. Carrying `age` is what makes it
     # accumulate across `gemb_spinup` cycles, which round-trip the column through here.
-    layers = NamedTuple(l => DimArray(parent(out[l])[:, col_idx], (zdim,)) for l in RESTART_LAYERS)
+    # A `lower_boundary = :ground` column also carries `material`.
+    names = haskey(out, :material) ? (RESTART_LAYERS..., :material) : RESTART_LAYERS
+    layers = NamedTuple(l => DimArray(parent(out[l])[:, col_idx], (zdim,)) for l in names)
 
     # Carry the CF attributes through, minus `cell_methods`: the extracted column has no
     # `Ti` dimension, so an interval reduction referencing a `time` coordinate that isn't
