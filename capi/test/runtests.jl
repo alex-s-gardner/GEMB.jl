@@ -109,8 +109,10 @@ end
     @testset "every in-scope option field is declared" begin
         # Nothing a column step reads may be missing from the spec arrays. `output_frequency` and
         # `initialize_age` select output cadence and profile initialization, which a single step
-        # does not consult; `thermal_solver` is a type parameter, not a code.
-        out_of_scope = (:output_frequency, :initialize_age, :thermal_solver)
+        # does not consult; `thermal_solver` is a type parameter, not a code. `lower_boundary`
+        # selects `gemb_core_ground`, a different step over a different column layout; the C API
+        # steps `gemb_core`, the `:ice` column, only.
+        out_of_scope = (:output_frequency, :initialize_age, :thermal_solver, :lower_boundary)
         declared = (GEMBCApi.OPTION_FIELDS..., GEMBCApi.FLAG_FIELDS...)
         for field in fieldnames(GEMB.ModelParameters)
             fieldtype(GEMB.ModelParameters, field) in (Symbol, Bool) || continue

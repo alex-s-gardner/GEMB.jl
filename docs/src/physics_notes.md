@@ -504,6 +504,15 @@ tensor `ε̇_xx + ε̇_yy`. By incompressibility it thins (positive, divergence)
 (negative, convergence) every cell at constant density by `exp(−D·dt)`. The mass it exports
 leaves laterally and is reported as `strain_thinning`, separately from the basal flux.
 
+## Ground lower boundary
+
+**`lower_boundary = :ground`** (opt-in; `:ice` is the default and is unchanged) puts the snow on
+a fixed 10 m soil column instead of glacier ice: Johansen (1975) conductivity as ISBA implements
+it, solids-plus-pore-water heat capacity, pore water freezing at 0 °C on an enthalpy plateau, the
+deepest cell held at `ground_temperature_deep`, snow-free ground at `ground_albedo`, meltwater
+leaving the snow base as runoff, and a variable snow cell count in fixed snow slots; spun up by
+`gemb_spinup_ground` on the mean ground temperature.
+
 ## Initialization and spinup
 
 **Deep temperature.** The initialized deep temperature is the mean *surface* temperature,
