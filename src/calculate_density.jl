@@ -288,10 +288,12 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
             else
                 # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
-                # midpoint: the paper states the half-own-weight rule for the uppermost
-                # layer, which is the same convention applied uniformly here. For every cell
-                # but the first the self term is a per-mille correction to the overlying
-                # load; for the first it is the difference between compacting and not.
+                # midpoint: every cell carries the overlying load plus half its own weight.
+                # Crocus adds the half-own-weight term to the uppermost layer only (the paper's
+                # note under eq. 6; `snowcro.F90` SNOWCROCOMPACTN), so a lower cell there is
+                # loaded at its top. The midpoint stress converges to the continuous profile
+                # from closer as cells coarsen; with fine layering the two agree. For the first
+                # cell the self term is the difference between compacting and not.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
                 η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i],
                     crocus_f2_applies(grain_dendricity[i], grain_sphericity[i], water[i],
