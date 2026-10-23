@@ -36,6 +36,8 @@ fresh_snow_density
 ```@docs
 gemb
 gemb_spinup
+gemb_spinup_ground
+ground_mean_temperature
 ```
 
 ## Post-processing

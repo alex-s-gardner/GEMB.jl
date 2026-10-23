@@ -21,6 +21,11 @@ Pages = [
     "snicar_aging.jl",
     "thermal_conductivity.jl",
     "turbulent_heat_flux.jl",
+    "stability_table.jl",
+    "ground_properties.jl",
+    "ground_thermal.jl",
+    "ground_core.jl",
+    "prescribed_core.jl",
 ]
 Order = [:module, :type, :constant, :function, :macro]
 ```
