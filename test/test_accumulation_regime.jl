@@ -34,6 +34,9 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
         temperature_air_mean=248.0, wind_speed_mean=4.0,
         precipitation_mean=0.6 * 365.25)
 
+    # Under an accumulation-driven law. Under `:Crocus` with destructive metamorphism (the
+    # default) fresh snow compacts faster than it arrives on some days, so the column shortens
+    # and the basal flux is positive on those days; the testset below checks the default.
     mp = ModelParameters(; output_frequency=:daily, CFM_SNOW...)
     profile = initialize_profile(mp, cf)
 
@@ -161,3 +164,37 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
     @test sum(parent(spun[:dz])) ≈ Z_fixed atol = 1e-9
     @test all(parent(spun[:water]) .== 0.0)
 end
+
+@testset "Accumulation regime: default snow set" begin
+    # The same site under the default snow set. The column gains mass at the top and loses it at
+    # the base in net, the whole-run budget and the elevation identity close, and the steady-state
+    # initial guess is the Crocus march, so the column starts near the state it runs to.
+    n = 365 * 3
+    time = DateTime(2000, 1, 1) .+ Day.(0:n-1)
+    temp = 248.0 .+ 15.0 .* cos.(2π .* collect(1:n) ./ 365.0 .- π)
+    cf = initialize_forcing(
+        time, temp, fill(75000.0, n), fill(0.6, n), fill(4.0, n),
+        fill(110.0, n), fill(185.0, n), fill(60.0, n);
+        temperature_air_mean=248.0, wind_speed_mean=4.0,
+        precipitation_mean=0.6 * 365.25)
+    mp = ModelParameters(output_frequency=:daily)
+    profile = initialize_profile(mp, cf)
+    out = gemb(profile, cf, mp; verbose=true)
+
+    @test sum(parent(out[:melt])) == 0.0
+    flux = parent(out[:ice_flux])
+    @test all(isfinite, flux)
+    @test sum(flux) < 0.0                        # net mass leaves at the base
+    net_surface = sum(parent(out[:precipitation])) +
+                  sum(parent(out[:evaporation_condensation])) - sum(parent(out[:runoff]))
+    fac = parent(out[:firn_air_content])
+    @test -sum(flux) ≈ net_surface / mp.density_ice + (fac[end] - fac[1]) atol = 1e-2
+
+    # The guess and the column after three years agree below the seasonal layer (measured: within
+    # 9 kg m-3 from 5 to 80 m), where the column carries no memory of a single season.
+    z = -GEMB.dz2z(parent(profile[:dz]))
+    ρ0 = parent(profile[:density]); ρ3 = parent(out[:density])[:, end]
+    deep = 5.0 .<= z .<= 80.0
+    @test maximum(abs.(ρ3[deep] .- ρ0[deep])) < 15.0
+end
+

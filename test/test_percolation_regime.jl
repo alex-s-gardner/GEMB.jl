@@ -15,7 +15,6 @@
 # `verbose=true` throughout, so the per-timestep mass/energy checks, the grid invariants, and
 # the whole-run mass budget are enforced rather than merely exercised.
 
-isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
 
 @testset "Percolation regime" begin
     # Warm-but-accumulating site: 2 kg m-2 d-1 of precipitation against a mean of 263 K with a
@@ -33,7 +32,7 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
         temperature_air_mean=263.0, wind_speed_mean=4.0,
         precipitation_mean=2.0 * 365.25)
 
-    mp = ModelParameters(; output_frequency=:daily, CFM_SNOW...)
+    mp = ModelParameters(; output_frequency=:daily)
     profile = initialize_profile(mp, cf)
 
     # --- The regime, as the summary sees it ----------------------------------------

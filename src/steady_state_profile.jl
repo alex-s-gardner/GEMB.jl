@@ -28,7 +28,9 @@ seeds:
   `densification_accumulation`, which must be the mean accumulation the transient
   [`calculate_density`](@ref) uses (`cf.accumulation_mean` or `cf.precipitation_mean`, per
   `mp.densification_accumulation`), so that the guess is the transient model's own steady
-  state.
+  state. Under `:Crocus` and `:CrocusPure` it compacts instead by their viscous strain rate
+  under the overburden the parcel's age implies, with destructive metamorphism when set
+  ([`_march_crocus_step`](@ref)).
 - **depth** follows from mass balance, `z(t) = b·∫₀ᵗ ds/ρ(s)`, where
   `b = cs.balance` [kg m-2 yr-1] is the mass buried per year.
 - **temperature** is a damped annual wave about the mean surface temperature, warmed
@@ -142,6 +144,10 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
     gs_gdn   = fill(GDN_NEW_SNOW, 3)
     gs_gsp   = fill(GSP_NEW_SNOW, 3)
 
+    # `:Crocus` and `:CrocusPure` settle by viscosity, not by an accumulation-driven rate; the
+    # march evaluates their own strain rate (see `_march_crocus_step`).
+    viscous = mp.densification_method === :Crocus || mp.densification_method === :CrocusPure
+
     ice_depth = 0.0
     iter = 0
     dz_step = _march_step_depth(max_depth, n_age)
@@ -152,7 +158,10 @@ function steady_state_profile(dz::AbstractVector, cs::ClimateSummary,
         # density kernel so this march and `steady_state_density` cannot diverge
         # in the density law.
         dt = _march_age_step(dz_step, ρ, b)
-        z, ρ = _march_density_step(p, ρ, z, b, ρi, dt, gs_T[2])
+        z, ρ = viscous ?
+            _march_crocus_step(p, ρ, z, b, ρi, dt, gs_T[2], age, gs_re[2], gs_gdn[2], gs_gsp[2],
+                               cs, mp) :
+            _march_density_step(p, ρ, z, b, ρi, dt, gs_T[2])
         dt_seconds = dt * SECONDS_PER_YEAR
         # The march's own time coordinate. `dt` is exactly the interval over which the parcel
         # was buried from the previous depth to this one, so accumulating it *is* the residence
@@ -279,6 +288,75 @@ to reproduce the classic Herron & Langway discretization bit-for-bit.
 
     ρ_mid = 0.5 * (ρ + ρ_next)
     return z + b * dt / ρ_mid, ρ_next
+end
+
+# Phases of the annual temperature wave the Crocus march averages its strain rate over, and the
+# largest log-strain of one sub-step of its density integration.
+const CROCUS_MARCH_PHASES = 24
+const CROCUS_MARCH_MAX_STRAIN = 0.05
+
+"""
+    _march_crocus_step(p, ρ, z, b, ρi, dt, T, age, grain_radius, dendricity, sphericity, cs, mp)
+        -> (z, ρ)
+
+One age step `dt` [yr] of the steady-state march under `densification_method = :Crocus` or
+`:CrocusPure`, by the law [`calculate_density`](@ref) integrates. In steady state the parcel of
+age `t` [yr] carries the snow buried since, so its overburden stress is `σ = g·b·t`, and it
+compacts at the strain rate `σ/η` with `η` from [`_crocus_viscosity`](@ref) (dry; `f2` by
+[`crocus_f2_applies`](@ref) on the marched grain state), plus
+[`destructive_metamorphism_rate`](@ref) when `mp.destructive_metamorphism` is set. Both rates
+rise steeply with temperature, so the rate is averaged over the annual temperature wave at the
+parcel's depth (the wave of [`_steady_state_temperature`](@ref), sampled at
+`CROCUS_MARCH_PHASES` phases), not taken at the mean temperature `T`: near the surface the
+seasonal mean of the rate is several times its value at the mean temperature. The step is
+integrated in sub-steps of `ρ ← ρ·exp(rate·h)` (the exact integral at fixed rate), each moving
+the density by at most `CROCUS_MARCH_MAX_STRAIN` in log, with the rate and the overburden
+re-evaluated at each, and the density capped at `ρi`. Under `:Crocus` a
+parcel at or above `CROCUS_HYBRID_DENSITY` steps by the `:GSFC2020` relaxation of
+[`_march_density_step`](@ref), as the transient run hands such cells over.
+
+Depth advances by mass balance with the trapezoidal density, as in `_march_density_step`.
+"""
+@inline function _march_crocus_step(p, ρ::Float64, z::Float64, b::Float64, ρi::Float64,
+    dt::Float64, T::Float64, age::Float64, grain_radius::Float64, dendricity::Float64,
+    sphericity::Float64, cs::ClimateSummary, mp::ModelParameters)
+
+    if mp.densification_method === :Crocus && ρ >= CROCUS_HYBRID_DENSITY - D_TOLERANCE
+        return _march_density_step(p, ρ, z, b, ρi, dt, T)
+    end
+    f2 = crocus_f2_applies(dendricity, sphericity, 0.0, grain_radius)
+    # The annual wave about the mean at this depth (`_steady_state_temperature` without the
+    # phase, which a seasonal mean does not depend on).
+    amplitude = cs.temperature_amplitude * exp(-z / thermal_damping_depth(T, ρ, mp))
+    # Sub-stepped so the density changes by at most `CROCUS_MARCH_MAX_STRAIN` per sub-step: the
+    # rate falls steeply as fresh snow densifies (destructive metamorphism tapers above `ρ_dm`),
+    # so one step at the rate of its start would overshoot.
+    ρ_start, ρ_now, t, t_left = ρ, ρ, age, dt
+    while t_left > 0.0 && ρ_now < ρi
+        rate = _crocus_march_rate(ρ_now, T, GRAVITY * b * t, amplitude, grain_radius, f2, mp)
+        h = rate > 0.0 ? min(t_left, CROCUS_MARCH_MAX_STRAIN / (rate * SECONDS_PER_YEAR)) : t_left
+        ρ_now = min(ρ_now * exp(rate * h * SECONDS_PER_YEAR), ρi)
+        t += h
+        t_left -= h
+    end
+    ρ_mid = 0.5 * (ρ_start + ρ_now)
+    return z + b * dt / ρ_mid, ρ_now
+end
+
+# The Crocus strain rate [s-1] of a dry parcel of density `ρ` under stress `σ` [Pa], averaged
+# over `CROCUS_MARCH_PHASES` phases of an annual wave of `amplitude` [K] about `T`.
+@inline function _crocus_march_rate(ρ::Float64, T::Float64, σ::Float64, amplitude::Float64,
+    grain_radius::Float64, f2::Bool, mp::ModelParameters)
+    rate = 0.0
+    for k in 1:CROCUS_MARCH_PHASES
+        Tk = min(T + amplitude * cos(2π * (k - 0.5) / CROCUS_MARCH_PHASES), CtoK)
+        r = σ / _crocus_viscosity(ρ, Tk, 0.0, 1.0, grain_radius, f2)
+        if mp.destructive_metamorphism
+            r += destructive_metamorphism_rate(ρ, Tk, false, mp.destructive_metamorphism_density)
+        end
+        rate += r / CROCUS_MARCH_PHASES
+    end
+    return rate
 end
 
 """

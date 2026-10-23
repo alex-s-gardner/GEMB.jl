@@ -864,14 +864,14 @@ Densification rate coefficient for the method in `p`, dispatching on
 once per age step rather than once per cell. `calculate_density`'s hot loop calls
 the per-method functions directly, so it takes the branch once per call.
 
-The stress-driven schemes cannot be evaluated here: the march carries neither overburden
-stress, grain radius, nor water, and it only produces an initial guess that the spinup then
-relaxes. Each therefore falls back to the nearest accumulation-driven law — `:Crocus` to
-`:GSFC2020`, which is already its own above-threshold branch and so governs most of the
-column the march builds; `:Barnola1991` to `:HerronLangway`, whose stage 1 *is* its own
-below-threshold branch, so the two agree exactly below `DENSITY_STAGE_TRANSITION` and the
-fallback is only an approximation above it; `:ArthernB` and `:CrocusPure` to `:Arthern`. The
-transient run uses the real law in every case.
+The stress-driven schemes cannot be evaluated from a rate coefficient alone. `steady_state_profile`
+marches `:Crocus` and `:CrocusPure` by their own strain rate ([`_march_crocus_step`](@ref)), and
+calls this function only for `:Crocus` cells above `CROCUS_HYBRID_DENSITY`, where the transient
+run also uses `:GSFC2020`. Otherwise each stress-driven scheme falls back to the nearest
+accumulation-driven law — `:Crocus` to `:GSFC2020`; `:Barnola1991` to `:HerronLangway`, whose
+stage 1 *is* its own below-threshold branch, so the two agree exactly below
+`DENSITY_STAGE_TRANSITION` and the fallback is only an approximation above it; `:ArthernB` and
+`:CrocusPure` to `:Arthern`. That fallback is what `steady_state_density` uses for every scheme.
 """
 @inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
     if p.method == :HerronLangway || p.method == :Barnola1991
