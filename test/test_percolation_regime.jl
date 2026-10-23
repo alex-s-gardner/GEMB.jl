@@ -15,6 +15,7 @@
 # `verbose=true` throughout, so the per-timestep mass/energy checks, the grid invariants, and
 # the whole-run mass budget are enforced rather than merely exercised.
 
+
 @testset "Percolation regime" begin
     # Warm-but-accumulating site: 2 kg m-2 d-1 of precipitation against a mean of 263 K with a
     # 12 K seasonal amplitude, so summer crosses the melt point while the annual balance stays
@@ -31,7 +32,7 @@
         temperature_air_mean=263.0, wind_speed_mean=4.0,
         precipitation_mean=2.0 * 365.25)
 
-    mp = ModelParameters(output_frequency=:daily)
+    mp = ModelParameters(; output_frequency=:daily)
     profile = initialize_profile(mp, cf)
 
     # --- The regime, as the summary sees it ----------------------------------------

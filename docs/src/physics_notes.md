@@ -11,7 +11,10 @@ function that implements it.
 
 ## Densification
 
-**`:Arthern`** (Arthern et al., 2010) is the default: `dρ/dt = c(ρᵢ − ρ)` in two stages
+The default is **`:Crocus`** with destructive metamorphism (below), part of the snow set described
+on the Model Parameters page.
+
+**`:Arthern`** (Arthern et al., 2010), the Community Firn Model's scheme: `dρ/dt = c(ρᵢ − ρ)` in two stages
 either side of 550 kg m⁻³, driven by mean accumulation and an Arrhenius factor in mean
 annual temperature.
 
@@ -46,14 +49,21 @@ Overburden is the `Σ(ρdz + water)·g` integral taken at the cell midpoint — 
 half-own-weight rule for the surface layer, applied uniformly. Integration uses
 `D·exp(−σ/η·dt)`, eq. 5's exact solution at constant σ and η.
 
+`f2` applies only to cells that are non-dendritic (dendricity 0 and Crocus's optical-diameter
+test `d_opt ≥ 1e-4·(4 − S)`), angular (sphericity below 51/99) and dry; every other cell gets
+`f2 = 1`. This follows the Crocus 3.0.1 code (`SNOWCROCOMPACTN`, `snowcro.F90:2112-2121`),
+which applies eq. 9 only to such layers whose historical tracker also says they have been
+faceted and never wet (Lafaysse et al., 2026, Table 2). Neither Vionnet et al. (2012) eq. 9 nor
+Lafaysse et al. (2026) eq. 55 prints the history condition. The optical-diameter test admits
+only grains of at least 0.33 mm, where eq. 9 is 3.7–4. GEMB has no historical tracker, so the
+gate reads the present state: it also stiffens coarse angular snow that never fully faceted
+and refrozen snow that faceted again, and it skips a faceted cell while it holds water.
+
 Two departures from the published law:
 
-- `f2` is floored at 1. Eq. 9 is bounded above but not below, so it *softens* fine-grained
-  snow — 0.368, a 2.7× speedup, at GEMB's 0.05 mm fresh-snow radius. Crocus never reaches
-  that regime because eq. 9 applies only to non-dendritic snow, whose grain size the paper
-  puts at 0.3–0.4 mm where eq. 9 gives 2.7–4. GEMB carries one grain radius for both
-  regimes, so the floor keeps `f2` a stiffening correction over the domain eq. 9 covers and
-  inert below it.
+- `f2` is floored at 1. Eq. 9 is bounded above but not below, so it would *soften* grains
+  finer than 0.2 mm. The gate admits no grain that fine, so the floor binds only for a direct
+  call of the viscosity with the factor forced on.
 - `:Crocus` hands cells at or above 450 kg m⁻³ to `:GSFC2020`. Eq. 7 is fitted to a 1–2 m
   alpine snowpack and `exp(b_η·ρ)` saturates in firn: unblended, the law gives 0.7–0.8×
   `:Arthern`'s compaction rate in the top few metres but only 0.02–0.09× below 20 m.
@@ -61,8 +71,19 @@ Two departures from the published law:
   handover is a branch rather than a weighted blend, since neither paper prescribes a
   blending function. `:CrocusPure` applies eq. 5 at every density.
 
-The paper's `c_η = 250` and its `f2` are used, where the Community Firn Model hardcodes
-`f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
+The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
+Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
+
+**`destructive_metamorphism`** [default `true` under `:Crocus` and `:CrocusPure`, else `false`] adds the destructive-metamorphism settling
+of fresh snow (Anderson, 1976) to the `:Crocus`/`:CrocusPure` strain rate, as CLM5 does:
+`r = c3·c2·c1·exp(−c4·(T_frz − T))` with `c3 = 2.777×10⁻⁶ s⁻¹`, `c4 = 0.04 K⁻¹`, `c2 = 2`
+when the cell holds liquid water (van Kampenhout et al., 2017, eq. 5, p. 2587), and
+`c1 = exp(−0.046·(ρ − ρ_dm))` above `ρ_dm = destructive_metamorphism_density`, default
+100 kg m⁻³ (CLM5 uses 175; Schneider et al., 2022, eq. 3, p. 3). The two strain rates are summed and the step
+is `D·exp(−(σ/η + r)·dt)`. Cells `:Crocus` hands to `:GSFC2020` do not get the term, which is
+below 3.2×10⁻⁶ of its fresh-snow value there. The switch is rejected with any other
+densification scheme. At −10 °C it takes dry snow below 175 kg m⁻³ to that density at
+0.67 % h⁻¹; above it the rate falls by `e` every 21.7 kg m⁻³.
 
 **`:Barnola1991`** is Herron and Langway (1980) stage 1 below 550 kg m⁻³ and Barnola et al.
 (1991) pressure sintering above, `dρ/dt = ρ·A₀·exp(−Q/RT)·f(ρ)·σ³` with
@@ -141,12 +162,36 @@ independently of the albedo scheme.
   identically zero above 400 kg m⁻³ and its gradient factor is meaningless where `∇T → 0`,
   so it does not evolve grain radius in deep firn.
 - **`:Arthern`** — Arthern et al. (2010) normal growth, `dr²/dt = k_gr·exp(−E_g/RT)`,
-  density-independent. This is the default and what the Community Firn Model uses.
+  density-independent. This is what the Community Firn Model uses; fitted to firn, it
+  barely coarsens dry surface snow.
 - **`:hybrid`** — Marbouty below 400 kg m⁻³ and Arthern at or above it, keeping the
   temperature-gradient physics in seasonal snow while grains continue to coarsen in firn.
+  This is the default.
+- **`:Taillandier2007`** — below 400 kg m⁻³, the specific-surface-area decay of dry snow
+  measured by Taillandier et al. (2007), `SSA = B − A·ln(t + Δt)` with equitemperature
+  (eq. 13) or temperature-gradient (eq. 9, above 15 K m⁻¹) coefficients, advanced from the
+  current SSA at the cell temperature; Arthern above.
+- **`:FlannerZender2006`** — the snow aging of SNICAR in CLM5.0 (CLM5.0 Technical Note
+  §2.3.2.3; `SnowAge_grain` in CTSM's `SnowSnicarMod.F90`). Dry growth is
+  `dr/dt = (dr/dt)₀·(τ/(r − r₀ + τ))^(1/κ)`, `r₀ = 54.526 µm`, the radius form of the SSA
+  decay of Flanner and Zender (2006, eq. 16), with τ, κ and (dr/dt)₀ from the nearest node of
+  the table Flanner fitted to their microphysical model (`snicar_drdt_bst_fit_60_c070416.nc`,
+  copied to `data/`; 223–273 K, 0–300 K m⁻¹, 50–400 kg m⁻³). Wet growth is Brun (1989)
+  without its dry term, refrozen water enters at 1000 µm, and radii are capped at 1500 µm.
+  It ages every dendritic cell and every cell below 400 kg m⁻³; the radius of dendritic snow
+  is then state of its own, not diagnosed from dendricity and sphericity, which still evolve
+  for the schemes that read them. Arthern applies at or above 400 kg m⁻³. CLM 5.1 and 6.0
+  multiply the dry rate by 5 (`xdrdt`) and raise the refrozen radius to 1500 µm as tuning;
+  this option uses the CLM5.0 values.
+
+Under `:Marbouty` and `:hybrid`, dry non-dendritic surface snow does not coarsen at gradients
+below 16 K m⁻¹, and at GEMB's 350 kg m⁻³ fresh-snow density Marbouty's density factor is 0.2,
+as in Brun et al. (1992) and Crocus (Vionnet et al., 2012, Table 1). In cold, low-gradient
+weather the surface radius then stays near that of fresh snow mixed into the top cell;
+`:Taillandier2007` and `:FlannerZender2006` coarsen it at the measured and modeled rates.
 
 The dendritic and wet (Brun, 1989) branches and the `GRAIN_DIAMETER_MAX` cap are common to
-all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growth densifies
+every setting but `:FlannerZender2006`. Because `:ArthernB` densification goes as `1/r²`, faster grain growth densifies
 *more* slowly: on synthetic forcing with `:ArthernB`, final mean column density is
 902.6 kg m⁻³ under `:Marbouty` (median grain radius 0.41 mm), 891.4 under `:hybrid`
 (0.589 mm) and 889.3 under `:Arthern` (0.592 mm).
@@ -157,11 +202,14 @@ all three. Because `:ArthernB` densification goes as `1/r²`, faster grain growt
 
 | Option | Form |
 |---|---|
-| `:Constant350` (default), `:Constant315`, `:Constant150` | Bare constants; 350 is what the Community Firn Model ships |
+| `:Constant350`, `:Constant315`, `:Constant150` | Bare constants; 350 is what the Community Firn Model ships |
+| `:Constant` | `new_snow_density`, a bare constant in [50, 550] kg m⁻³ |
 | `:Fausto` | 315 kg m⁻³, the Fausto et al. (2018) regression at 256.2 K |
 | `:FaustoFit` | `362.1 + 2.78·(T_air − 273.15)`, the regression itself, clamped to `[1, ρᵢ]` since it reaches zero near 143 K |
 | `:Pahaut` | `max(50, 109 + 6·(T_air − 273.15) + 26·√U)` |
 | `:Kaspers`, `:KuipersMunneke` | Temperature-dependent polar fits |
+| `:vanKampenhout2017` | `ρ_T(T_air) + 266.861·(½(1 + tanh(U₁₀/5)))^8.8`, van Kampenhout et al. (2017) eqs. 2–4 |
+| `:vanKampenhout2017SNOTEL` (default) | `56 + 0.85·(clamp(ΔT, −8, 2) + 15)^1.5 + ρ_W(U₁₀)`: the vK17 form refitted to SNOTEL snowfall days |
 
 `:Pahaut` is Pahaut (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35. It is
 the only option fitted to alpine seasonal snow rather than to a polar ice sheet, and it is
@@ -172,19 +220,58 @@ regressed on. Prefer it for temperate and mid-latitude glaciers, where the polar
 overestimate fresh-snow density, suppressing new-snow albedo and speeding its burial. The
 published 50 kg m⁻³ floor is retained; it binds below about −10 °C in calm air.
 
+`:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017, p. 2587).
+`ρ_T` is Anderson (1976) between −15 and +2 °C, constant at 169.16 kg m⁻³ above +2 °C, and
+`−3.8328·ΔT − 0.0333·ΔT²` at or below −15 °C, so it rises again in very cold air. The wind
+term is defined on the 10 m wind: the forcing wind is carried from `wind_observation_height`
+to 10 m through a neutral log profile over the surface roughness the turbulent fluxes use.
+The formula spans 50–436 kg m⁻³. It is a deposition density, not a near-surface density, so
+it needs a settling scheme: with `densification_method = :Crocus` (which includes destructive
+metamorphism by default) the snow settles within days, while with an accumulation-driven
+scheme the top metre stays near the deposition density for years. It keeps the default fresh-grain properties.
+
+`:vanKampenhout2017SNOTEL` keeps the vK17 wind term and replaces `ρ_T` by
+`56 + 0.85·(clamp(ΔT, −8, 2) + 15)^1.5`: the vK17 middle-branch form, refitted, and level at
+71.74 kg m⁻³ at and below −8 °C instead of falling to 50 at −15 °C. It was fitted to the
+density of new snow on calm snowfall days (gain in pillow mass over gain in depth) at 23 SNOTEL
+stations in Alaska and Colorado, storm air temperatures −16 to 0 °C, net of the same-day
+settling of `:Crocus` with destructive metamorphism at `destructive_metamorphism_density = 100`,
+so it is calibrated for that settling. Observed there, new-snow density rises by about
+3 kg m⁻³ K⁻¹ above −8 °C and is level below; the published term rises by about 7. The wind term
+is not constrained by those calm storms, and below about −25 °C the published cold branch is
+denser than the floor, where the calibration has no data.
+
 `:Fausto`, `:FaustoFit` and `:Pahaut` also select the Crocus (Vionnet et al., 2012)
 wind-dependent fresh-grain dendricity and sphericity, those being what Crocus itself pairs
 these densities with. `fresh_snow_density` takes instantaneous air temperature and wind
 speed where they are available and the climatological means in the steady-state march, so the
 initial guess is well defined at every setting.
 
+Snowfall is layered as in Crocus (Vionnet et al., 2012, p. 778; Lafaysse et al., 2026,
+eqs. 7–11). Fresh snow joins the top cell only if the two are similar: the Crocus distance of
+eq. 7, `D = 50·(|ΔS| + 2000·|Δd| + δ_h)` of sphericity `S`, optical diameter `d` [m] (eqs. D1
+and D5, from dendricity, sphericity and grain size) and wetting (present liquid water stands in
+for Crocus's wetting history), is 200 when the upper layer is 300 days or more older than the
+lower one and infinite against firn or ice. Snowfall merges when it is small enough that a
+layer `z` thick is not distinct, `D·z < 5·column_dztop`. Otherwise snowfall of at least
+`snow_layer_min_mass(dt)` (1 kg m-2 per 3 hours of forcing step; Crocus's own minimum is a 5 mm
+surface layer) forms its own top cell, even one thinner than `column_dzmin`, and
+`manage_layer_thickness` keeps it while it stays distinct from the cell below and holds that
+mass. Merges conserve mass and enthalpy and mix the
+grain state by mass (sphericity mass-weighted; dendricity too if both are dendritic; otherwise a
+non-dendritic radius that conserves the mass-weighted Gardner–Sharp pure-snow albedo). A
+surface snow layer over firn or ice that melts or sublimates below that mass is absorbed at the
+firn or ice density. A trace snowfall therefore moves the surface grain state, and the albedo
+read from it, by `O(f)` with `f = P/(M + P)`.
+
 ## Thermal physics
 
-**Heat capacity.** `heat_capacity_method = :constant` holds `heat_capacity_ice`
-(2102 J kg⁻¹ K⁻¹, the value at the melting point), matching the Community Firn Model's
-melt-enabled path. `:CuffeyPaterson` is `c_p(T) = 152.5 + 7.122·T` (Cuffey and Paterson,
-2010, eq. 9.1); the constant form overstates the cold content of firn at 240 K by 12.9% and
-at 210 K by 27.5%.
+**Heat capacity.** `heat_capacity_method = :CuffeyPaterson`, the default, is
+`c_p(T) = 152.5 + 7.122·T` (Cuffey and Paterson, 2010, eq. 9.1, p. 400), which reproduces
+their Table 9.1 (2097 and 1741 J kg⁻¹ K⁻¹ at 0 and −50 °C). `:constant` holds
+`heat_capacity_ice` (2102 J kg⁻¹ K⁻¹, the value at the melting point) at every temperature,
+matching the Community Firn Model's melt-enabled path; it overstates the cold content of firn
+at 240 K by 12.9% and at 210 K by 27.5%.
 
 **Internal energy is the enthalpy integral `∫c_p dT`**, not `M·T·c_p`. The latter is valid
 only for constant `c_p`; under `:CuffeyPaterson` it overstates enthalpy by `(b/2)T²`, which
@@ -193,19 +280,18 @@ work in enthalpy. Absolute column enthalpy is not comparable between the two met
 (574 061 against 307 385 J kg⁻¹ at 273.15 K), so reported thermal energy shifts when
 switching.
 
-**Thermal conductivity.** `thermal_conductivity_method = :Calonne2019` is the default,
+**Thermal conductivity.** `thermal_conductivity_method = :Calonne2019Air` is the default,
 Calonne et al. (2019) eq. 5 — a sigmoid blend at ρ = 450 kg m⁻³ between the Calonne (2011)
-snow quadratic and a firn branch, scaled by the temperature-dependent conductivity of ice.
-It is continuous into ice by construction and so is deliberately not short-circuited at
-`density_ice`; the `917` in its firn branch is the paper's fitted pure-ice density, not
-`mp.density_ice`. RetMIP Sect. 5.1 recommends it by name, and it is what both the Community
-Firn Model and IMAU-FDM ship.
+snow quadratic, scaled by the temperature-dependent conductivities of ice and air (Reid, 1966,
+for air), and a firn branch scaled by that of ice. It is continuous into ice by construction
+and so is deliberately not short-circuited at `density_ice`; the `917` in its firn branch is
+the paper's fitted pure-ice density, not `mp.density_ice`. RetMIP Sect. 5.1 recommends it by
+name, and both the Community Firn Model and IMAU-FDM ship it.
 
-`:Calonne2019Air` additionally carries eq. 5's air-conductivity ratio on the snow branch,
-using Reid (1966) for air. See [the IMAU-FDM comparison](imau_fdm_comparison.md) for the
-magnitude. `:Marchenko2019` is Marchenko et al. (2019) eq. 30, `k = 0.301e-2·ρ − 0.724`,
+`:Calonne2019` is the Community Firn Model's form, without the air-conductivity ratio on the
+snow branch. See [the IMAU-FDM comparison](imau_fdm_comparison.md) for the magnitude. `:Marchenko2019` is Marchenko et al. (2019) eq. 30, `k = 0.301e-2·ρ − 0.724`,
 fitted over ρ = 350–900 and floored at the Calonne (2011) value below their crossing near
-ρ = 321, where the bare fit heads negative. Both `:Calonne2019` and `:Marchenko2019` are
+ρ = 321, where the bare fit heads negative. The 2019 forms and `:Marchenko2019` are
 higher than `:Sturm`/`:Calonne` in firn, the direction RetMIP's cold bias at Summit and
 Dye-2 implies.
 
@@ -249,17 +335,24 @@ Both branches — this one and the stable Beljaars and Holtslag (1991) eqs. 28 a
 checked against the definition directly, by numerically integrating their own published `φ`
 and comparing to the closed form, agreeing to 6 decimal places at `ζ = ±0.01, ±0.1, ±1, ±5`.
 
+**Stability from the bulk Richardson number.** `ζ = z_w/L` at the wind height solves
+`z_w/L = Ri_b·F_m²/F_h`, with `Ri_b = g·Δθ·z_w/(θ̄·U²)`, `Ψ_m` evaluated at `z_w/L` and
+`z₀/L`, and `Ψ_h` at `z_T/L` and `z_T0/L`, so differing wind and temperature heights enter
+through the stability functions rather than through an effective height. The relation is
+solved by four Newton steps on `ln|ζ|` from the neutral first guess, a fixed sequence of
+operations with no convergence test: `ζ` is a smooth function of `Ri_b` through neutral, and
+the transfer coefficient matches the converged solution to 1e-12 for `−100 < ζ < 1`.
+Potential temperature is referenced to the surface pressure, so no pressure factor enters
+the sensible flux or `Ri_b`.
+
 **`ζ` is bounded below by −100 on the unstable branch.** This is a numerical guard on the
-bulk formulation, not a change to the physics. `ζ` is diagnosed from the bulk Richardson
-number, which carries `wind_speed⁻²`, so at the `min_wind_speed = 0.01 m s⁻¹` floor over a
-melting surface under very cold air the synthetic forcing reaches `ζ ≈ −4.9e5`. That is the
-wind floor showing through rather than a stability regime, and Monin–Obukhov theory has no
-observational support anywhere near it (Högström's fits span `|ζ| ≲ 2`). Unbounded, `Ψ_h`
-grows past `log(z_T/z_Q)`, so `coefHT` crosses zero and the flux diverges and changes sign.
-−100 is two orders of magnitude beyond the calibration range, so it never binds in physically
-meaningful conditions, and it keeps the transfer coefficients positive for every roughness
-GEMB uses. Bounding `ζ` rather than clamping the coefficients keeps the fluxes a continuous,
-monotone function of `T_surface`, which the implicit solver needs.
+bulk formulation, not a change to the physics. `Ri_b` carries `wind_speed⁻²`, so at the
+`min_wind_speed = 0.01 m s⁻¹` floor over a melting surface under very cold air it reaches
+~−10⁵. That is the wind floor showing through rather than a stability regime, and
+Monin–Obukhov theory has no observational support anywhere near it (Högström's fits span
+`|ζ| ≲ 2`). −100 is two orders of magnitude beyond the calibration range, so it never binds in
+physically meaningful conditions. Bounding `ζ` rather than clamping the coefficients keeps the
+fluxes a continuous, monotone function of `T_surface`, which the implicit solver needs.
 
 ## Meltwater
 
@@ -347,6 +440,22 @@ uses instantaneous liquid water rather than "has ever been wet", which leaves
 refrozen-but-now-dry layers more driftable; and melt-style thickness bookkeeping is not
 applied, the compaction being density-only.
 
+**`blowing_snow_method = :Keenan2021`** is the SNOWPACK erosion–redeposition scheme of
+Keenan et al. (2021, eqs. 3–4, pp. 1067–1068). When the 5 m gust speed exceeds the drift
+threshold of the surface cell, a saltation mass flux
+`Φ = 0.0014·ρ_a·u*·(u* − u*_t)·(u* + 7.6·u*_t + 205)/L` is eroded from the top of the column
+(`L = drift_fetch_length`, 10 m; `u* = κ·U₁₀/ln(10/0.002)`) and redeposited at
+`ρ_rd = 361·log₁₀(U₁₀) + 33`, never lowering a cell's density; erosion stops at the first wet
+or non-drifting cell. The reworked mass stays in its own cell, so mass, temperature, water and
+age are unchanged and no cell is created. Dendritic cells take Wever et al.'s (2023, Table 1)
+high-wind microstructure in proportion to the reworked mass. It replaces the `:Crocus`
+compaction (both represent the packing of wind-transported snow) and cannot be combined with
+`blowing_snow_sublimation`. Departures from SNOWPACK: the threshold comes from the Crocus
+mobility index, because GEMB carries no bond radius or coordination number for Lehning and
+Fierz (2008) eq. 2; `u*` is neutral; `ρ_a` is the forcing air density rather than the
+1.1 kg m⁻³ Keenan et al. quote. The redeposited density reaches 394 kg m⁻³ at 10 m s⁻¹, above
+the 350 kg m⁻³ ceiling of the `:Crocus` compaction.
+
 **`blowing_snow_sublimation`** [default `false`] sublimates the suspended fraction after
 Gordon et al. (2006) as Crocus implements it (eqs. 67–68), read only under
 `blowing_snow_method = :Crocus`. Off is Crocus's own default. This is the only part of the
@@ -386,14 +495,52 @@ Consequences for consumers of the output:
   `:BrunLefebre`, `:GreuellKonzelmann`) are diagnostic functions of the current column, so
   `calculate_albedo` returns two scalars rather than per-cell vectors. The surface series
   `albedo_broadband` is recorded from the value used in that timestep's shortwave balance.
+- **Thin snow over firn or ice** under `:GardnerSharp` is Gardner & Sharp (2010) eq. 13 with
+  the zenith and cloud increments (eqs. 9, 11) multiplied by eq. 13's weight `A`. The albedo
+  therefore reaches the exposed firn or ice albedo exactly as the snow goes, at every sun angle
+  and cloud cover; where `A = 1` it is eqs. 7–12 unchanged.
 - **`ice_flux` is a signed per-interval basal flux**, so `cumsum(ice_flux)` is the cumulative
   flux exactly. Its negation is surface elevation change against a datum fixed in the ice;
   see [`trim_bottom!`](@ref) for the identity.
+
+**A timestep's vapor loss larger than the surface cell** is supplied by the cells below it:
+[`expose_vapor_exchange_layer!`](@ref) merges the surface cell into the cell below, as the
+thickness controller merges a thin cell, until the top cell holds the loss, and
+[`apply_vapor_exchange!`](@ref) then takes it from that cell. The same merge applies when
+evaporation beyond the surface cell's pore water, which takes LF per kg of its ice from its
+enthalpy, would take the cell below `WET_HANDOFF_TEMPERATURE_MIN`. A surface snow layer can be as
+light as [`snow_layer_min_mass`](@ref)`(dt)`, which covers a sublimation flux of 262 W m⁻²
+sustained over the step; fluxes beyond that occur over thin snow on ablating ice under strong
+wind. Steps whose loss the surface cell covers are unchanged.
 
 **`horizontal_strain_rate`** [yr⁻¹, default 0] is the trace of the horizontal strain-rate
 tensor `ε̇_xx + ε̇_yy`. By incompressibility it thins (positive, divergence) or thickens
 (negative, convergence) every cell at constant density by `exp(−D·dt)`. The mass it exports
 leaves laterally and is reported as `strain_thinning`, separately from the basal flux.
+
+## Ground lower boundary
+
+**`lower_boundary = :ground`** (opt-in; `:ice` is the default and is unchanged) puts the snow on
+a fixed 10 m soil column instead of glacier ice: Johansen (1975) conductivity as ISBA implements
+it, solids-plus-pore-water heat capacity, pore water freezing at 0 °C on an enthalpy plateau, the
+deepest cell held at `ground_temperature_deep`, snow-free ground at `ground_albedo`, meltwater
+leaving the snow base as runoff, and a variable snow cell count in fixed snow slots; spun up by
+`gemb_spinup_ground` on the mean ground temperature.
+
+**Snow-free ground surface fluxes (`:ground` only).** The turbulent transfer over snow-free
+ground uses the wind `√(U² + w*²)` with the free-convection velocity `w*` of Beljaars (1995)
+(ECMWF IFS eqs. 3.17-3.18, `z_i` = 1000 m), so a calm sunlit hour still loses heat to the air;
+and the conductive flux from the snow into the ground takes the snow side at no more than
+273.15 K, as Crocus does, so melting snow no longer heats the soil. Before these, calm summer
+hours and thin melting snow under warm wind drove the top soil node past 332 K at 16 SNOTEL sites.
+
+**`lower_boundary = :prescribed`** (opt-in) puts the snow on a fixed-temperature reservoir whose
+temperature is the new optional forcing layer `temperature_ground` (`NaN`, and unread, unless
+supplied): no soil column, the deepest snow cell exchanging heat with the reservoir across its
+half-thickness, the snow side capped at 0 °C as in Crocus. Snow-free, the surface is the
+prescribed ground at `ground_albedo`, its balance evaluated at the prescribed temperature; trace
+snow takes that temperature, as Crocus hands a vanishing snow cover to the soil. For tests of
+snow physics where a measured near-surface soil temperature is the boundary condition.
 
 ## Initialization and spinup
 

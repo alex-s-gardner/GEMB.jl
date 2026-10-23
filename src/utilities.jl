@@ -13,34 +13,56 @@ and the initial-guess one (`_seb_annual_melt`), so both use one expression.
 """
     saturation_vapor_pressure_ice(T) -> e_s [Pa]
 
-Saturation vapour pressure over ice, Bolton (1980), `610.78·exp(21.8745584·(T-273.16)/(T-7.66))`
-with `T` in kelvin.
+Saturation vapor pressure over ice, Murphy & Koop (2005) eq. 7, with `T` in kelvin:
+
+    ln(e_s) = 9.550426 − 5723.265/T + 3.53068·ln(T) − 0.00728332·T
+
+valid above 110 K; 611.657 Pa at the triple point.
 
 Shared by the latent-heat flux in [`turbulent_heat_flux`](@ref) (evaluated at the surface
 temperature, for a sub-freezing surface) and by [`blowing_snow_sublimation_rate`](@ref)
 (evaluated at the air temperature). Companion of
-[`saturation_vapor_pressure_water`](@ref), which the flux uses above freezing.
+[`saturation_vapor_pressure_water`](@ref), which the flux uses at the melting point.
 
 # References
-- Bolton, D. (1980). The computation of equivalent potential temperature.
-  *Mon. Weather Rev.* 108, 1046-1053.
+- Murphy, D. M. and Koop, T. (2005). Review of the vapor pressures of ice and supercooled
+  water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565. Eq. 7.
 """
 @inline saturation_vapor_pressure_ice(T::Real) =
-    610.78 * exp(21.8745584 * (T - CtoK - 0.01) / (T - 7.66))
+    exp(9.550426 - 5723.265 / T + 3.53068 * log(T) - 0.00728332 * T)
 
 """
     saturation_vapor_pressure_water(T) -> e_s [Pa]
 
-Saturation vapour pressure over liquid water, Murray (1967),
-`610.78·exp(17.2693882·(T-273.16)/(T-35.86))` with `T` in kelvin. The above-freezing
-counterpart of [`saturation_vapor_pressure_ice`](@ref).
+Saturation vapor pressure over liquid water, supercooled below the triple point, Murphy &
+Koop (2005) eq. 10 (p. 1552), with `T` in kelvin:
+
+    ln(e_s) = 54.842763 − 6763.22/T − 4.210·ln(T) + 0.000367·T
+              + tanh(0.0415·(T − 218.8))·(53.878 − 1331.22/T − 9.44523·ln(T) + 0.014025·T)
+
+valid for 123 < T < 332 K; outside that range it throws a `DomainError`. Its Table C1
+(p. 1561) gives 611.213 Pa at 273.15 K and 611.657 Pa at the triple point, where it meets
+[`saturation_vapor_pressure_ice`](@ref) (eq. 7 of the same paper); below the triple point it
+lies above the ice curve.
+
+The latent-heat flux ([`turbulent_heat_flux`](@ref)) uses it only for a surface at the melting
+point, where the exchanging phase is liquid water; every colder surface exchanges vapor with
+ice.
 
 # References
-- Murray, F. W. (1967). On the computation of saturation vapor pressure.
-  *J. Appl. Meteorol.* 6, 203-204.
+- Murphy, D. M. and Koop, T. (2005). Review of the vapor pressures of ice and supercooled
+  water for atmospheric applications. *Q. J. R. Meteorol. Soc.* 131, 1539-1565. Eq. 10.
 """
-@inline saturation_vapor_pressure_water(T::Real) =
-    610.78 * exp(17.2693882 * (T - CtoK - 0.01) / (T - 35.86))
+@inline function saturation_vapor_pressure_water(T::Real)
+    123 < T < 332 || _saturation_vapor_pressure_water_domain(T)
+    return exp(54.842763 - 6763.22 / T - 4.210 * log(T) + 0.000367 * T +
+               tanh(0.0415 * (T - 218.8)) *
+               (53.878 - 1331.22 / T - 9.44523 * log(T) + 0.014025 * T))
+end
+
+@noinline _saturation_vapor_pressure_water_domain(T) = throw(DomainError(T,
+    "Murphy & Koop (2005) eq. 10 for the vapor pressure over liquid water is valid for " *
+    "123 < T < 332 K"))
 
 """
     specific_humidity(vapor_pressure, pressure_air) -> q [kg kg-1]
@@ -93,9 +115,9 @@ Effective grain radius of dendritic snow diagnosed from its dendricity and spher
 et al. (1992) as GEMB carries it: grain *size* (diameter) is not independent state while
 `dendricity > 0`, so any scheme that changes `(δ, S)` must re-derive the radius.
 
-Three inline copies of this expression predate the helper —
-[`calculate_grain_size`](@ref) (the dendritic branch), and two in
-[`calculate_accumulation`](@ref) (fresh snow). They are left in place because they floor at
+Two inline copies of this expression predate the helper —
+[`calculate_grain_size`](@ref) (the dendritic branch), and the wind-dependent fresh-snow radius
+in [`calculate_accumulation`](@ref). They are left in place because they floor at
 `GDN_TOLERANCE` on the radius where this floors at `GDN_TOLERANCE*2` on the diameter, and the
 two differ in the degenerate branch only; unifying them is not bit-identical. New callers
 should use this.
@@ -108,6 +130,19 @@ should use this.
     max(0.1 * (dendricity / 0.99 + (1.0 - 1.0 * dendricity / 0.99) *
                (sphericity / 0.99 * 3.0 + (1.0 - sphericity / 0.99) * 4.0)),
         GDN_TOLERANCE * 2) / 2
+
+"""
+    independent_grain_radius(mp) -> Bool
+
+Whether the grain radius of dendritic snow is state of its own rather than
+[`dendritic_grain_radius`](@ref) of its dendricity and sphericity: true under
+`grain_growth_method = :FlannerZender2006`, whose SNICAR aging carries one prognostic radius
+from fresh snow on (see [`calculate_grain_size`](@ref)). Where this holds, mixing and drift
+leave the radius to [`mix_grains`](@ref)'s non-dendritic rule or unchanged instead of
+re-deriving it.
+"""
+@inline independent_grain_radius(mp::ModelParameters) =
+    mp.grain_growth_method === :FlannerZender2006
 
 """
     fast_divisors(n::Integer)
@@ -289,3 +324,32 @@ function decyear2datenum(decyear)
     return datenum_out
 end
 
+
+"""
+    saturation_vapor_pressure_ice_derivative(T) -> de_s/dT [Pa K-1]
+
+Temperature derivative of [`saturation_vapor_pressure_ice`](@ref),
+`e_s·(5723.265/T² + 3.53068/T − 0.00728332)`.
+"""
+@inline saturation_vapor_pressure_ice_derivative(T::Real) =
+    saturation_vapor_pressure_ice(T) * (5723.265 / T^2 + 3.53068 / T - 0.00728332)
+
+"""
+    saturation_vapor_pressure_water_derivative(T) -> de_s/dT [Pa K-1]
+
+Temperature derivative of [`saturation_vapor_pressure_water`](@ref), the analytic derivative
+of Murphy & Koop (2005) eq. 10: with `s = 0.0415·(T − 218.8)` and
+`g(T) = 53.878 − 1331.22/T − 9.44523·ln(T) + 0.014025·T`,
+
+    de_s/dT = e_s·(6763.22/T² − 4.210/T + 0.000367 + 0.0415·sech²(s)·g(T)
+                   + tanh(s)·(1331.22/T² − 9.44523/T + 0.014025))
+
+Valid over the same 123 < T < 332 K, and throws the same `DomainError` outside it.
+"""
+@inline function saturation_vapor_pressure_water_derivative(T::Real)
+    s = 0.0415 * (T - 218.8)
+    g = 53.878 - 1331.22 / T - 9.44523 * log(T) + 0.014025 * T
+    dlog_es = 6763.22 / T^2 - 4.210 / T + 0.000367 + 0.0415 * g / cosh(s)^2 +
+              tanh(s) * (1331.22 / T^2 - 9.44523 / T + 0.014025)
+    return saturation_vapor_pressure_water(T) * dlog_es
+end

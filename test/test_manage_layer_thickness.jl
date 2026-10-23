@@ -50,7 +50,7 @@ _col_energy(temperature, dz, density, water, mp=_layer_mp()) =
     (t_out, dz_out, d_out, _, _, _, _, _, e_add) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age,
-            mp, true)
+            mp, true; dt=10800.0)
 
     # Every cell is inside its band and the count already matches, so nothing moves.
     @test length(dz_out) == 10
@@ -74,7 +74,7 @@ end
     (t_out, dz_out, d_out, w_out, _, _, _, _, e_add) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age,
-            mp, true)
+            mp, true; dt=10800.0)
 
     # Count control restores the length the merge took away (by splitting a deep cell).
     @test length(dz_out) == 10
@@ -98,7 +98,7 @@ end
     (t_out, dz_out, d_out, w_out, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age,
-            mp, true)
+            mp, true; dt=10800.0)
 
     # The split adds a cell; count control reclaims the slot with a deep merge.
     @test length(dz_out) == 10
@@ -117,7 +117,7 @@ end
     temperature, dz, density, water, gr, gd, gs, ag = _make_layer_inputs(n=8)
     (_, dz_out, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag,
-            mp, true; n_target=10)
+            mp, true; dt=10800.0, n_target=10)
     @test length(dz_out) == 10
     @test sum(dz_out) ≈ 0.8 atol = 1e-10   # splitting preserves total depth
 
@@ -125,7 +125,7 @@ end
     temperature, dz, density, water, gr, gd, gs, ag = _make_layer_inputs(n=13)
     (_, dz_out, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag,
-            mp, true; n_target=10)
+            mp, true; dt=10800.0, n_target=10)
     @test length(dz_out) == 10
     @test sum(dz_out) ≈ 1.3 atol = 1e-10   # merging preserves total depth
 end
@@ -140,7 +140,7 @@ end
     (t_out, _, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age,
-            mp, true)
+            mp, true; dt=10800.0)
 
     @test t_out[end] == t_orig_bottom
 end
@@ -156,7 +156,7 @@ end
     (_, dz_out, d_out, w_out, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, age,
-            mp, true)
+            mp, true; dt=10800.0)
 
     # The bottom cell merges *upward* into the deepest surviving cell above it, and count
     # control then restores the length.
@@ -311,7 +311,7 @@ end
 @testset "ColumnWorkspace reuse" begin
     mp = _layer_mp()
 
-    run_with(ws) = GEMB.manage_layer_thickness(_make_layer_inputs(n = 10)..., mp, true; workspace = ws)
+    run_with(ws) = GEMB.manage_layer_thickness(_make_layer_inputs(n = 10)..., mp, true; dt=10800.0, workspace = ws)
 
     @testset "a dirty, oversized workspace gives the fresh-workspace answer" begin
         fresh = run_with(ColumnWorkspace())
@@ -330,9 +330,9 @@ end
 
     @testset "one workspace across a long column then a short one" begin
         ws = ColumnWorkspace()
-        long_fresh = GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true;
+        long_fresh = GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true; dt=10800.0,
                                            workspace = ColumnWorkspace())
-        @test GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true;
+        @test GEMB.manage_layer_thickness(_make_layer_inputs(n = 30)..., mp, true; dt=10800.0,
                                      workspace = ws) == long_fresh
         # The buffers are now 30-long; a 10-cell column must not read the stale tail.
         @test run_with(ws) == run_with(ColumnWorkspace())
@@ -343,5 +343,114 @@ end
         GEMB._resize_workspace!(ws, 40)
         GEMB._resize_workspace!(ws, 10)
         @test all(length(b) == 40 for b in GEMB._workspace_buffers(ws))
+    end
+end
+
+# A distinct thin surface snow layer (see `manage_layer_thickness` and `snow_layers_distinct`):
+# kept while distinct and holding at least the minimum mass (3-hour step here), merged with the grain state
+# mixed by mass once it is not, absorbed at the firn or ice density over firn or ice.
+# Cells 2… are 0.05 m of old snow (400 kg m-3, r 0.6 mm, sphericity 0.9, 200 days) over ice
+# from cell 6; `under` sets cells 2–5 to firn or ice instead.
+function _surface_layer_column(; dz1=0.008, ρ1=200.0, r1=0.05, d1=1.0, s1=0.5, age1=1.0,
+    T1=265.0, n=12, under=400.0)
+    return ([T1; fill(260.0, n - 1)], [dz1; fill(0.05, n - 1)],
+        [ρ1; fill(under, 4); fill(917.0, n - 5)], zeros(n),
+        [r1; fill(0.6, 4); fill(GEMB.GRAIN_RADIUS_ICE, n - 5)], [d1; zeros(n - 1)],
+        [s1; fill(0.9, n - 1)], [age1; fill(200.0, n - 1)])
+end
+_snow_mp(; kw...) = GEMB.ModelParameters(; column_dzmin=0.025, column_dzmax=0.075,
+    column_ztop=10.0, kw...)
+
+@testset "Mixing grain states (Crocus aggregation)" begin
+    # Two dendritic states: dendricity and sphericity mass-weighted, the Brun radius of the mix.
+    d, s, r = GEMB.mix_grains(0.6, 0.4, 0.09, 3.0, 1.0, 0.5, 0.05, 1.0)
+    @test d ≈ (3 * 0.6 + 1.0) / 4 rtol = 1e-15
+    @test s ≈ (3 * 0.4 + 0.5) / 4 rtol = 1e-15
+    @test r == GEMB.dendritic_grain_radius(d, s)
+    # Otherwise non-dendritic, conserving the mass-weighted Gardner–Sharp α_S of eq. 7.
+    for (r1, M1, r2, M2) in ((1.0, 1.0, 0.05, 1.0), (0.6, 20.0, 0.05, 1.5), (2.0, 3.0, 0.3, 7.0))
+        d, s, r = GEMB.mix_grains(0.0, 0.9, r1, M1, 1.0, 0.5, r2, M2)
+        @test d == 0.0
+        @test s ≈ (M1 * 0.9 + M2 * 0.5) / (M1 + M2) rtol = 1e-15
+        αS(x) = big"1.48" - (3 / (big"0.091" * big(x)))^big"-0.07"
+        @test GEMB._albedo_gardner(r, 0.0, 0.0, 0.0) ≈
+              Float64((M1 * αS(r1) + M2 * αS(r2)) / (M1 + M2)) rtol = 1e-14
+    end
+    # Weight lost to rounding: the first state bit for bit.
+    @test GEMB.mix_grains(0.0, 0.9, 0.6, 20.0, 1.0, 0.5, 0.05, 5e-324) === (0.0, 0.9, 0.6)
+    @test GEMB.mix_grains(0.7, 0.4, 0.081, 2.0, 1.0, 0.5, 0.05, 5e-324) === (0.7, 0.4, 0.081)
+end
+
+@testset "A distinct thin surface layer is kept, then merges once it is not" begin
+    mp = _snow_mp(heat_capacity_method=:constant)
+    col = _surface_layer_column()
+    before = deepcopy(col)
+    D = GEMB.snow_layer_distance(1.0, 0.5, 0.05, false, 1.0, 200.0, 0.0, 0.9, 0.6, false, 200.0,
+        400.0)
+    @test GEMB.snow_layers_distinct(0.008, D, mp)
+    out = GEMB.manage_layer_thickness(deepcopy(col)..., mp, true; dt=10800.0)
+    @test all(out[k] == before[k] for k in 1:8)
+
+    # The layer has aged toward the snow below (r 0.55 mm, sphericity 0.88, non-dendritic):
+    # it is no longer distinct, so it merges. Closed forms, with c·T under :constant.
+    col = _surface_layer_column(r1=0.55, d1=0.0, s1=0.88, age1=150.0)
+    D = GEMB.snow_layer_distance(0.0, 0.88, 0.55, false, 150.0, 200.0, 0.0, 0.9, 0.6, false, 200.0,
+        400.0)
+    @test !GEMB.snow_layers_distinct(0.008, D, mp)
+    M1, M2 = 0.008 * 200.0, 0.05 * 400.0
+    m0, e0 = _col_mass(col[2], col[3], col[4]), _col_energy(col[1], col[2], col[3], col[4], mp)
+    out = GEMB.manage_layer_thickness(deepcopy(col)..., mp, true; dt=10800.0, n_target=11)
+    @test length(out[2]) == 11
+    @test out[2][1] ≈ 0.058 rtol = 1e-14
+    @test out[3][1] ≈ (M1 + M2) / 0.058 rtol = 1e-14
+    @test out[1][1] ≈ (M1 * 265.0 + M2 * 260.0) / (M1 + M2) rtol = 1e-14
+    @test out[8][1] ≈ (M1 * 150.0 + M2 * 200.0) / (M1 + M2) rtol = 1e-14
+    @test out[7][1] ≈ (M1 * 0.88 + M2 * 0.9) / (M1 + M2) rtol = 1e-14
+    @test out[6][1] == 0.0
+    @test out[5][1] ≈ Float64(((M1 * big(0.55)^big"0.07" + M2 * big(0.6)^big"0.07") /
+                              (M1 + M2))^(1 / big"0.07")) rtol = 1e-13
+    @test _col_mass(out[2], out[3], out[4]) ≈ m0 rtol = 1e-14
+    @test _col_energy(out[1], out[2], out[3], out[4], mp) ≈ e0 rtol = 1e-14
+    @test all(out[k][2:end] == col[k][3:end] for k in 1:8)
+
+    # Under :CuffeyPaterson the merge conserves enthalpy too.
+    mp_cp = _snow_mp()
+    e0 = _col_energy(col[1], col[2], col[3], col[4], mp_cp)
+    out = GEMB.manage_layer_thickness(deepcopy(col)..., mp_cp, true; dt=10800.0, n_target=11)
+    @test _col_energy(out[1], out[2], out[3], out[4], mp_cp) ≈ e0 rtol = 1e-14
+end
+
+@testset "A surface layer below the minimum mass merges however distinct" begin
+    mp = _snow_mp()
+    z = 0.999 * GEMB.snow_layer_min_mass(10800.0) / 200.0     # cell 1 is 200 kg m-3
+    # Into snow: by mass, the fresh grains count by their mass.
+    col = _surface_layer_column(dz1=z)
+    m0, e0 = _col_mass(col[2], col[3], col[4]), _col_energy(col[1], col[2], col[3], col[4], mp)
+    out = GEMB.manage_layer_thickness(deepcopy(col)..., mp, true; dt=10800.0, n_target=11)
+    @test out[2][1] ≈ z + 0.05 rtol = 1e-14
+    @test out[6][1] == 0.0
+    @test out[5][1] ≈ Float64(((z * 200 * big(0.05)^big"0.07" + 20 * big(0.6)^big"0.07") /
+                              (z * 200 + 20))^(1 / big"0.07")) rtol = 1e-13
+    @test _col_mass(out[2], out[3], out[4]) ≈ m0 rtol = 1e-14
+    @test _col_energy(out[1], out[2], out[3], out[4], mp) ≈ e0 rtol = 1e-14
+
+    # Over firn or ice: kept at any thickness above the minimum, absorbed below it at the firn
+    # or ice density, whose albedo is therefore unchanged.
+    for ρ_under in (870.0, 917.0)
+        col = _surface_layer_column(dz1=1.5 * GEMB.snow_layer_min_mass(10800.0) / 200.0, under=ρ_under,
+            r1=0.6, d1=0.0, s1=0.9, age1=200.0)
+        out = GEMB.manage_layer_thickness(deepcopy(col)..., mp, true; dt=10800.0)
+        @test all(out[k] == col[k] for k in 1:8)
+        col = _surface_layer_column(dz1=z, under=ρ_under)
+        m0, e0 = _col_mass(col[2], col[3], col[4]), _col_energy(col[1], col[2], col[3], col[4], mp)
+        out = GEMB.manage_layer_thickness(deepcopy(col)..., mp, true; dt=10800.0, n_target=11)
+        @test out[3][1] === ρ_under
+        @test out[2][1] ≈ 0.05 + z * 200.0 / ρ_under rtol = 1e-14
+        @test (out[5][1], out[6][1], out[7][1]) == (col[5][2], col[6][2], col[7][2])
+        @test _col_mass(out[2], out[3], out[4]) ≈ m0 rtol = 1e-14
+        @test _col_energy(out[1], out[2], out[3], out[4], mp) ≈ e0 rtol = 1e-14
+        cfs = GEMB.ClimateForcingStep(; dt=3600.0, solar_zenith_angle=60.0)
+        @test GEMB.calculate_albedo(out[2], out[3], out[5], cfs, mp)[1] ===
+              GEMB.firn_ice_albedo(ρ_under, mp)
     end
 end

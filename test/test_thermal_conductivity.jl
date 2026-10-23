@@ -125,6 +125,42 @@ end
     end
 end
 
+@testset "The default conductivity is Calonne et al. (2019) eq. 5 as published" begin
+    @test GEMB.ModelParameters().thermal_conductivity_method === :Calonne2019Air
+    @test initialize_parameters().thermal_conductivity_method === :Calonne2019Air
+    mp = GEMB.ModelParameters()
+    mp_noair = GEMB.ModelParameters(thermal_conductivity_method=:Calonne2019)
+
+    # Eq. 5 (p. 13,087) in BigFloat with the paper's own constituent conductivities at the three
+    # temperatures it computed (p. 13,081): k_i = 2.107, 2.330, 2.900 and k_a = 0.024, 0.023,
+    # 0.019 W m-1 K-1 at -3, -20 and -60 °C; k_i^ref, k_a^ref are the -3 °C values, a = 0.02,
+    # ρ_transition = 450, ρ_i = 917.
+    function k_eq5(ρ, k_i, k_a)
+        ρ, k_i, k_a = big.((ρ, k_i, k_a))
+        k_i_ref, k_a_ref = big"2.107", big"0.024"
+        θ = 1 / (1 + exp(-2 * big"0.02" * (ρ - 450)))
+        k_snow = big"0.024" - big"1.23e-4" * ρ + big"2.5e-6" * ρ^2
+        k_firn = big"2.107" + big"0.003618" * (ρ - 917)
+        return (1 - θ) * (k_i * k_a) / (k_i_ref * k_a_ref) * k_snow + θ * (k_i / k_i_ref) * k_firn
+    end
+    paper = ((-3.0, "2.107", "0.024"), (-20.0, "2.330", "0.023"), (-60.0, "2.900", "0.019"))
+    # GEMB's ice (Yen 1981) and air (Reid 1966) conductivities differ from the paper's tabulated
+    # ones by up to 2.5% at -60 °C; within that, the default reproduces eq. 5 at every density.
+    for (T_C, k_i, k_a) in paper, ρ in (100.0, 200.0, 300.0, 450.0, 600.0, 800.0)
+        ref = Float64(k_eq5(ρ, parse(BigFloat, k_i), parse(BigFloat, k_a)))
+        @test GEMB.thermal_conductivity(T_C + 273.15, ρ, mp) ≈ ref rtol = 0.03
+    end
+    # At the reference temperature the constituent ratios are 1 to within 1.2e-4.
+    for ρ in (100.0, 200.0, 450.0, 800.0)
+        @test GEMB.thermal_conductivity(270.15, ρ, mp) ≈ Float64(k_eq5(ρ, 2.107, 0.024)) rtol = 2e-4
+    end
+    # The air-free form drops eq. 5's k_a(T)/k_a^ref and is far off in cold light snow:
+    # 27% high at -60 °C and ρ = 200.
+    ref = Float64(k_eq5(200.0, big"2.900", big"0.019"))
+    @test GEMB.thermal_conductivity(213.15, 200.0, mp_noair) / ref - 1 > 0.25
+    @test abs(GEMB.thermal_conductivity(213.15, 200.0, mp) / ref - 1) < 0.03
+end
+
 @testset "Marchenko2019 method" begin
     mp = GEMB.ModelParameters(density_ice=917.0, thermal_conductivity_method=:Marchenko2019)
     k_marchenko(ρ) = 0.301e-2 * ρ - 0.724

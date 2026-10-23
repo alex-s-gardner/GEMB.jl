@@ -5,6 +5,8 @@ using Dates
 using InteractiveUtils   # code_typed, for the type-stability guard in test_heat_capacity.jl
 using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
 
+include("cfm_snow_configuration.jl")
+
 @testset "GEMB.jl" begin
     @testset "Heat Capacity" begin
         include("test_heat_capacity.jl")
@@ -30,8 +32,23 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Density" begin
         include("test_calculate_density.jl")
     end
+    @testset "Destructive Metamorphism" begin
+        include("test_destructive_metamorphism.jl")
+    end
+    @testset "Crocus f2 gate" begin
+        include("test_crocus_f2_gate.jl")
+    end
     @testset "Accumulation" begin
         include("test_calculate_accumulation.jl")
+    end
+    @testset "Fresh Snow: van Kampenhout 2017" begin
+        include("test_fresh_snow_vankampenhout.jl")
+    end
+    @testset "Fresh Snow: van Kampenhout 2017, SNOTEL temperature term" begin
+        include("test_fresh_snow_snotel.jl")
+    end
+    @testset "Fresh Snow: constant of choice" begin
+        include("test_fresh_snow_constant.jl")
     end
     @testset "Melt" begin
         include("test_calculate_melt.jl")
@@ -87,13 +104,26 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     @testset "Blowing Snow" begin
         include("test_blowing_snow.jl")
     end
+    @testset "Redeposition: Keenan 2021" begin
+        include("test_redeposition.jl")
+    end
+    @testset "Fresh-Snow Options: Whole Model" begin
+        include("test_fresh_snow_design.jl")
+    end
 
     @testset "Hydrology" begin
         include("test_hydrology.jl")
     end
 
+    @testset "Ground lower boundary" begin
+        include("test_ground.jl")
+    end
+    @testset "Prescribed lower boundary" begin
+        include("test_prescribed.jl")
+    end
+
     @testset "Synthetic Regression" begin
-        # Full model validation with relaxed tolerances for cross-platform reproducibility
+        # Full-model regression pins at a cold site and a maritime site
         include("test_synthetic_regression.jl")
     end
 end

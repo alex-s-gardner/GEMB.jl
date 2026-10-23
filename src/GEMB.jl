@@ -3,7 +3,7 @@ module GEMB
 using DimensionalData
 using Dates
 using Statistics
-using FillArrays: Fill
+using FillArrays: Fill, Zeros
 import DataInterpolations
 
 # Physical constants
@@ -29,7 +29,9 @@ include("initialize_profile.jl")
 # Leaf physics
 include("heat_capacity.jl")
 include("thermal_conductivity.jl")
+include("ground_properties.jl")
 include("turbulent_heat_flux.jl")
+include("stability_table.jl")
 include("densification_lookup.jl")
 
 # Shared vertical-grid primitives (used by the accumulation / melt / layer-management
@@ -37,10 +39,12 @@ include("densification_lookup.jl")
 include("grid_ops.jl")
 
 # Core physics modules
+include("snicar_aging.jl")
 include("calculate_grain_size.jl")
 include("calculate_albedo.jl")
 include("calculate_shortwave_radiation.jl")
 include("calculate_temperature.jl")
+include("ground_thermal.jl")
 include("calculate_accumulation.jl")
 include("calculate_melt.jl")
 include("hydrology.jl")
@@ -51,6 +55,11 @@ include("manage_layer_thickness.jl")
 # Integration
 include("gemb_core.jl")
 include("gemb_driver.jl")
+include("ground_column.jl")
+include("ground_core.jl")
+include("ground_driver.jl")
+include("prescribed_core.jl")
+include("prescribed_driver.jl")
 
 # Utilities
 include("spinup.jl")
@@ -71,6 +80,7 @@ export AbstractThermalSolver, ExplicitThermal, ImplicitThermal, ThermalWorkspace
     ColumnWorkspace
 export initialize_parameters, initialize_forcing, forcing_climatology, initialize_profile
 export gemb, gemb_spinup, gemb_profile, gemb_interp
+export gemb_spinup_ground, ground_mean_temperature
 export plot_output
 export dz2z, firn_air_content, close_off_age, fast_divisors, decyear2datenum, datetime2decyear
 export CFAttrs, GEMB_CF_ATTRIBUTES, GEMB_CF_GLOBAL_ATTRIBUTES, cf_attributes

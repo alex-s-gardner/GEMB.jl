@@ -50,12 +50,16 @@ central branch to extend.
 The interface a subtype must implement is
 
     _thermal_solve!(solver, temperature, dz, density, K, shortwave_flux,
-                    water_surface, grain_radius, sfc, cfs, mp, verbose, workspace)
+                    water_surface, grain_radius, sfc, cfs, mp, verbose, workspace, water)
         -> (longwave_upward, heat_flux_sensible, heat_flux_latent,
-            heat_flux_basal, evaporation_condensation)
+            heat_flux_basal, evaporation_condensation, evaporation_condensation_liquid)
 
 updating `temperature` in place and returning forcing-step averages (the first four in W m-2,
-the last in kg m-2 accumulated over the step). Three invariants bind every implementation: the
+the last two in kg m-2 accumulated over the step; the last is the part exchanged at `LV`).
+`water` is the per-cell pore water (`Zeros` for a dry column); a wet cell is held at the
+melting point while its water freezes (see [`calculate_temperature`](@ref)). A wet cell is
+returned through [`_wet_cell_handoff!`](@ref), which may freeze some of its water, changing
+`water`, `density` and `dz` and recording the mass in `workspace.refrozen`. Three invariants bind every implementation: the
 bottom cell is a Dirichlet reservoir whose temperature must be returned bit-unchanged; the
 returned fluxes must be the ones actually applied to the column, since `gemb_core` closes its
 energy and mass budgets against them; and every buffer entry drawn from `workspace` must be
@@ -70,6 +74,38 @@ half, and each concurrent run needs its own.
 See [`ExplicitThermal`](@ref) and [`ImplicitThermal`](@ref).
 """
 abstract type AbstractThermalSolver end
+
+"""
+    StabilityTable
+
+Tabulated Monin-Obukhov transfer functions for one set of measurement heights (`z_w`, `z_T`)
+and roughness lengths (`z0` for momentum, `zT` for heat and moisture). Built by
+[`_stability_table`](@ref), evaluated by [`_stability_lookup`](@ref).
+
+For each sign of the bulk Richardson number `Ri` the table holds, on nodes uniform in
+`q = ln|Ri|`, the converged stability parameter as `s = ln|ζ|` and `G = ln(F_m·F_h)`, each with
+its exact derivative with respect to `q`, for cubic Hermite interpolation.
+"""
+struct StabilityTable
+    z_w::Float64
+    z_T::Float64
+    z0::Float64
+    zT::Float64
+    logM::Float64
+    logHT::Float64
+    G_neutral::Float64       # ln(logM·logHT), the value at Ri = 0
+    q_min::Float64           # ln of the smallest |Ri| tabulated
+    stable_h::Float64        # node spacing in q, Ri > 0
+    stable_s::Vector{Float64}
+    stable_ds::Vector{Float64}
+    stable_G::Vector{Float64}
+    stable_dG::Vector{Float64}
+    unstable_h::Float64      # node spacing in q, Ri < 0; the last node is ζ = ZETA_UNSTABLE_MIN
+    unstable_s::Vector{Float64}
+    unstable_ds::Vector{Float64}
+    unstable_G::Vector{Float64}
+    unstable_dG::Vector{Float64}
+end
 
 """
     _ExplicitWorkspace()
@@ -91,7 +127,7 @@ _ExplicitWorkspace() = _ExplicitWorkspace(Float64[], Float64[], Float64[], Float
 """
     _ImplicitWorkspace()
 
-Scratch buffers for `_thermal_solve!(::ImplicitThermal, ...)`. All seven are sized to the `m-1`
+Scratch buffers for `_thermal_solve!(::ImplicitThermal, ...)`. All ten are sized to the `m-1`
 unknowns (the bottom cell is a Dirichlet reservoir, outside the solve).
 
 Empty on construction and grown to the column by [`_resize_workspace!`](@ref) on first use.
@@ -104,9 +140,12 @@ struct _ImplicitWorkspace
     rhs::Vector{Float64}     # right-hand side, then the Thomas solution
     sup::Vector{Float64}     # eliminated superdiagonal
     T_it::Vector{Float64}    # current Newton iterate
+    M_eff::Vector{Float64}   # mass whose heat capacity each row carries
+    T_old::Vector{Float64}   # start-of-sub-step temperature each row is written against
+    mode::Vector{Float64}    # wet-cell state code (`WET_CELL_DRY`, `_PINNED`, `_FROZEN`)
 end
 
-_ImplicitWorkspace() = _ImplicitWorkspace(ntuple(_ -> Float64[], 7)...)
+_ImplicitWorkspace() = _ImplicitWorkspace(ntuple(_ -> Float64[], 10)...)
 
 """
     _resize_workspace!(ws, n) -> ws
@@ -156,7 +195,7 @@ end
 # element and allocates on every call, which is why `ColumnWorkspace.delete_cell` is resized apart.
 _workspace_buffers(ws::_ExplicitWorkspace) = (ws.M_inv, ws.H, ws.Q_sw, ws.A_face)
 _workspace_buffers(ws::_ImplicitWorkspace) =
-    (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it)
+    (ws.M, ws.H, ws.Q_sw, ws.A_face, ws.rhs, ws.sup, ws.T_it, ws.M_eff, ws.T_old, ws.mode)
 
 """
     ExplicitThermal()
@@ -221,12 +260,17 @@ struct ThermalWorkspace
     explicit::_ExplicitWorkspace
     implicit::_ImplicitWorkspace
     conductivity::Vector{Float64}  # thermal conductivity per cell [W m-1 K-1]
+    refrozen::Vector{Float64}      # pore water the solve froze per cell [kg m-2]; see `_wet_cell_handoff!`
+    # One table per (wind height, temperature height, roughness lengths) met in this run,
+    # built on first use; see `_stability_table!`.
+    stability_tables::Vector{StabilityTable}
 end
 
-ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[])
+ThermalWorkspace() = ThermalWorkspace(_ExplicitWorkspace(), _ImplicitWorkspace(), Float64[],
+    Float64[], StabilityTable[])
 
-# Only the scheme-independent buffer: each scheme's own set is grown inside `_thermal_solve!`.
-_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity,)
+# Only the scheme-independent buffers: each scheme's own set is grown inside `_thermal_solve!`.
+_workspace_buffers(ws::ThermalWorkspace) = (ws.conductivity, ws.refrozen)
 
 # Which buffer set a scheme draws from. One method per solver, so a new scheme adds its own
 # workspace type and one accessor rather than editing a branch.
@@ -311,6 +355,8 @@ Works cited in the per-field notes below. Each option's own physics is documente
 equation numbers, on the function named in that field's comment — this list resolves the
 author-year mentions to full entries in one place.
 
+- Anderson, E. A. (1976). A point energy and mass balance model of a snow cover. NOAA
+  Technical Report NWS 19. (`destructive_metamorphism`)
 - Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
   In situ measurements of Antarctic snow compaction compared with predictions of models.
   *J. Geophys. Res.* 115, F03011. (`densification_method`, `grain_growth_method`)
@@ -343,6 +389,10 @@ author-year mentions to full entries in one place.
 - Gregory, S. A., Albert, M. R., and Baker, I. (2014). Impact of physical properties and
   accumulation rate on pore close-off in layered firn. *The Cryosphere* 8, 91-105.
   (`impermeable_density`)
+- Keenan, E., Wever, N., Dattler, M., Lenaerts, J. T. M., Medley, B., Kuipers Munneke, P.,
+  and Reijmer, C. (2021). Physics-based SNOWPACK model improves representation of
+  near-surface Antarctic snow and firn density. *The Cryosphere* 15, 1065-1085.
+  (`blowing_snow_method = :Keenan2021`, `drift_fetch_length`)
 - Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model.
   *Geosci. Model Dev.* 19, 6273-6334. (`blowing_snow_method`, `blowing_snow_sublimation`,
   `new_snow_method = :Pahaut`)
@@ -353,8 +403,14 @@ author-year mentions to full entries in one place.
   (`thermal_conductivity_method = :Marchenko2019`)
 - Pahaut, E. (1975). *La métamorphose des cristaux de neige*. Monographies de la Météorologie
   Nationale 96, Météo-France. (`new_snow_method = :Pahaut`)
+- Schneider, A. M., Zender, C. S., and Price, S. F. (2022). More realistic intermediate depth
+  dry firn densification in the Energy Exascale Earth System Model (E3SM). *J. Adv. Model.
+  Earth Syst.* 14, e2021MS002542. (`destructive_metamorphism_density`)
 - Sturm, M., Holmgren, J., König, M., and Morris, K. (1997). The thermal conductivity of
   seasonal snow. *J. Glaciol.* 43, 26-41. (`thermal_conductivity_method = :Sturm`)
+- van Kampenhout, L., et al. (2017). Improving the representation of polar snow and firn in
+  the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
+  (`new_snow_method = :vanKampenhout2017`, `destructive_metamorphism`)
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
   sheet. *The Cryosphere* 14, 3785-3810. (`thermal_conductivity_method`,
@@ -368,7 +424,12 @@ author-year mentions to full entries in one place.
 """
 Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # --- Density & Densification ---
-    densification_method::Symbol = :Arthern
+    # `new_snow_method`, `densification_method`, `destructive_metamorphism`,
+    # `destructive_metamorphism_density` and `grain_growth_method` default to one set that is
+    # calibrated together; see the Model Parameters page of the documentation. `destructive_metamorphism`
+    # takes its default from `densification_method`, so its field must stay below
+    # `densification_method` in this struct: `@kwdef` evaluates defaults in field order.
+    densification_method::Symbol = :Crocus
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
     # Which climatological mass flux the accumulation-driven schemes compact against.
     # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:
@@ -383,7 +444,22 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `cf.temperature_air_effective`, which averages the exponential itself; `:arithmetic`
     # (the default) uses the plain mean `cf.temperature_air_mean`.
     mean_temperature_method::Symbol = :arithmetic
-    # Fresh-snow density parameterization. The default `:Constant350` is a constant 350 kg m-3,
+    # Whether `densification_method = :Crocus`/`:CrocusPure` adds the Anderson (1976)
+    # destructive-metamorphism settling of fresh snow to the overburden strain rate, with the
+    # coefficients of van Kampenhout et al. (2017) eq. 5 and the density taper of Schneider et
+    # al. (2022) eq. 3. The rate is a strain rate summed with the viscous one, so the switch is
+    # rejected with any other densification scheme. Under `:Crocus` and `:CrocusPure` it is on unless
+    # set to `false`, so an explicit `densification_method = :Crocus` gets destructive metamorphism
+    # at `destructive_metamorphism_density`. Under any other scheme it is off, and an explicit
+    # `true` is rejected. See `destructive_metamorphism_rate`.
+    destructive_metamorphism::Bool = densification_method in (:Crocus, :CrocusPure)
+    # Density [kg m-3] above which destructive metamorphism tapers exponentially, `ρ_dm`. The
+    # default 100 is the CLM4 value; 175 is CLM5's (van Kampenhout et al., 2017, p. 2587). Read
+    # only when `destructive_metamorphism` is set.
+    destructive_metamorphism_density::Float64 = DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT
+    # Fresh-snow density parameterization. The default `:vanKampenhout2017SNOTEL` is
+    # `:vanKampenhout2017` with the SNOTEL-calibrated temperature term of
+    # `snotel_density_temperature`. `:Constant350` is a constant 350 kg m-3,
     # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Constant150` and
     # `:Constant315` are the other bare constants. `:Fausto` is the Fausto et al.
     # (2018) Greenland fit frozen at a single temperature (315 kg m-3, that fit evaluated at
@@ -394,8 +470,16 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `:Pahaut` is the alpine-seasonal-snow alternative to those polar fits — Pahaut (1975) as
     # Crocus implements it, temperature- and wind-dependent at the instantaneous timestep, and
     # much lighter over the same range. Prefer it for temperate and mid-latitude glaciers.
-    # See `fresh_snow_density`.
-    new_snow_method::Symbol = :Constant350
+    # `:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017,
+    # eqs. 2-4): a temperature term plus a 10 m wind term, evaluated at the instantaneous
+    # timestep, with the default fresh-grain properties. It is a deposition density, so it
+    # needs a settling scheme (`densification_method = :Crocus`, which includes destructive
+    # metamorphism by default) to reach observed near-surface densities. See
+    # `fresh_snow_density`. `:Constant` is a bare constant of `new_snow_density`, with the default
+    # fresh-grain properties as `:Constant350`.
+    new_snow_method::Symbol = :vanKampenhout2017SNOTEL
+    # Fresh-snow density [kg m-3] of `new_snow_method = :Constant`; no other method reads it.
+    new_snow_density::Float64 = 350.0
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
     # Calonne (2019) conductivity and Barnola (1991) densification fits were built against.
@@ -414,24 +498,24 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # quadratics. `:Calonne2019`, `:Calonne2019Air` and `:Marchenko2019` are the
     # temperature-dependent forms Vandecrux et al. (2020, RetMIP Sects. 5.1 and 7) recommend
     # over the older fits, having attributed part of a multi-model cold bias at Summit to
-    # conductivity parameterization. `:Calonne2019` is the default and is what the Community
-    # Firn Model ships (`conductivity: "Calonne2019"`); IMAU-FDM hardcodes the same equation.
-    # `:Sturm` gives the lowest conductivity of the five — 0.56 against `:Calonne2019`'s 0.91
-    # W m-1 K-1 at 243 K and ρ = 550 — so selecting it damps the seasonal wave.
-    # The two 2019 forms differ only in whether the snow branch carries the air-conductivity
-    # ratio (`:Calonne2019Air` does, matching IMAU-FDM; `:Calonne2019` does not, matching the
-    # Community Firn Model), which matters only for cold, low-density snow. See
-    # `thermal_conductivity`.
-    thermal_conductivity_method::Symbol = :Calonne2019
+    # conductivity parameterization. `:Calonne2019Air`, the default, is Calonne et al. (2019)
+    # eq. 5 as published (p. 13,087), with the air-conductivity ratio on its snow branch, as
+    # IMAU-FDM carries it. `:Calonne2019` is the Community Firn Model's form of the same
+    # equation (`conductivity: "Calonne2019"`), which omits that ratio; the two differ only in
+    # cold, low-density snow. `:Sturm` gives the lowest conductivity of the five — 0.56
+    # against the 2019 forms' 0.91 W m-1 K-1 at 243 K and ρ = 550 — so selecting it damps the
+    # seasonal wave. See `thermal_conductivity`.
+    thermal_conductivity_method::Symbol = :Calonne2019Air
 
     # --- Heat Capacity ---
     # Specific heat capacity of the load-bearing ice matrix, applied to snow, firn, and ice
-    # alike (pore air and pore water contribute nothing to this term). `:constant` (the default)
-    # uses `heat_capacity_ice` at every temperature, matching the Community Firn Model's
-    # `enthalpyDiff` melt path, which sets `c_firn = CP_I = 2097`. `:CuffeyPaterson` makes it
-    # temperature-dependent (`152.5 + 7.122·T`, as IMAU-FDM uses throughout) and ignores
-    # `heat_capacity_ice`. See `heat_capacity`.
-    heat_capacity_method::Symbol = :constant
+    # alike (pore air and pore water contribute nothing to this term). `:CuffeyPaterson` (the
+    # default) is Cuffey & Paterson (2010) eq. 9.1, p. 400, `152.5 + 7.122·T`, which IMAU-FDM
+    # also uses throughout; it ignores `heat_capacity_ice`. `:constant` uses
+    # `heat_capacity_ice` at every temperature, matching the Community Firn Model's
+    # `enthalpyDiff` melt path, which sets `c_firn = CP_I = 2097`; the default 2102 is 7.5%
+    # above eq. 9.1 at 253.15 K and 21% above it at 223.15 K. See `heat_capacity`.
+    heat_capacity_method::Symbol = :CuffeyPaterson
     heat_capacity_ice::Float64 = HEAT_CAPACITY_ICE_DEFAULT
     # Heat capacity carrying the *sensible* heat of above-freezing liquid entering the column,
     # which only rain is. `:water` (the default) uses `HEAT_CAPACITY_WATER`; `:ice` uses the
@@ -441,13 +525,20 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     rain_heat_capacity::Symbol = :water
 
     # --- Grain Growth ---
-    # Selects the non-dendritic *dry* grain-growth law. `:Arthern` (the default, and what the
-    # Community Firn Model ships as `GrGrowPhysics: "Arthern"`) uses Arthern et al. (2010)
-    # `dr²/dt = kgr·exp(-Eg/RT)` at every density. `:Marbouty` stops growing grains at
-    # `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen in deep firn — where `:ArthernB`
-    # and `:Crocus` densification read it as `1/r²`. `:hybrid` switches from the latter to the
-    # former at that density. See `calculate_grain_size`.
-    grain_growth_method::Symbol = :Arthern
+    # Selects the non-dendritic *dry* grain-growth law. The default is `:FlannerZender2006`,
+    # which ages all snow below `DENSITY_MARBOUTY_MAX`, and all dendritic snow, by the SNICAR law
+    # of CLM5.0 (Flanner and Zender, 2006; Flanner et al., 2007), with radius as state of its
+    # own. `:hybrid` uses Marbouty (1980) temperature-gradient growth in snow below
+    # `DENSITY_MARBOUTY_MAX` and Arthern et al. (2010) `dr²/dt = kgr·exp(-Eg/RT)` at or above
+    # it. `:Arthern` (what the Community Firn Model ships as `GrGrowPhysics: "Arthern"`)
+    # applies the firn law at every density, where dry surface snow barely coarsens.
+    # `:Marbouty` stops growing grains at `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen
+    # in deep firn — where `:ArthernB` and `:Crocus` densification read it as `1/r²`.
+    # `:Taillandier2007` replaces Marbouty below `DENSITY_MARBOUTY_MAX` by the measured
+    # specific-surface-area decay of dry snow (Taillandier et al., 2007). `:Arthern`,
+    # `:Taillandier2007` and `:FlannerZender2006` coarsen surface snow at low gradients, where
+    # Marbouty's law is zero. See `calculate_grain_size`.
+    grain_growth_method::Symbol = :FlannerZender2006
 
     # --- Melt & Water ---
     # `:ColeouLesaffre` (the default) makes the irreducible water content density-dependent
@@ -564,8 +655,17 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # Independent of `drift_rate`, which is a prescribed mass sink rather than a scheme, and of
     # `blowing_snow_sublimation`, which is the only part that removes mass. This mirrors
     # SURFEX's two independent namelist flags (`OSNOWDRIFT`, `OSNOWDRIFT_SUBLIM`). See
-    # `apply_blowing_snow!`.
+    # `apply_blowing_snow!`. `:Keenan2021` is the SNOWPACK erosion-redeposition scheme of
+    # Keenan et al. (2021) eqs. 3-4: above the erosion threshold, a saltation mass flux is
+    # eroded from the top of the column and redeposited in place at a wind-dependent density
+    # `361·log10(U₁₀) + 33`. It replaces the `:Crocus` compaction rather than adding to it, and
+    # is also mass-conserving. See `apply_redeposition!`.
     blowing_snow_method::Symbol = :none
+    # Fetch length L [m] of the `blowing_snow_method = :Keenan2021` saltation flux (Keenan et
+    # al., 2021, eq. 3): the eroded mass per step is the saltation transport divided by L.
+    # 10 m is the paper's choice; it is a tuning parameter, inversely proportional to the
+    # reworked mass. Read only under `:Keenan2021`. See `apply_redeposition!`.
+    drift_fetch_length::Float64 = DRIFT_FETCH_LENGTH_DEFAULT
     # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
     # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
     # path this removes mass from the surface cell and consumes latent heat, so it appears in
@@ -582,6 +682,49 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # 0.0 (the default) disables it. See `apply_prescribed_drift!`.
     drift_rate::Float64 = 0.0
 
+    # --- Lower Boundary ---
+    # What lies below the snow. `:ice` (the default) is the glacier column: snow, firn and ice
+    # down to a fixed-temperature bottom cell, at a fixed depth held by `trim_bottom!`. `:ground`
+    # places the snow on a fixed soil column of `ground_depth` metres, whose bottom cell is held
+    # at `ground_temperature_deep`; the snow above it varies in thickness and cell count and may
+    # be absent. See `gemb_core_ground` and `docs/src/physics_notes.md`. `:prescribed` places the
+    # snow, which may likewise be absent, on a fixed-temperature reservoir whose temperature is
+    # the `temperature_ground` forcing layer, with no soil column (see `gemb_core_prescribed`);
+    # of the `ground_*` fields it reads `ground_albedo`, `ground_emissivity`, `ground_roughness`,
+    # `ground_evaporation_factor` and `ground_snow_cells_max`. Every `ground_*` field is read only
+    # under `:ground` or `:prescribed`.
+    lower_boundary::Symbol = :ice
+    # Depth of the soil column [m] (ISBA-DIF's 20-layer grid reaches 10 m).
+    ground_depth::Float64 = 10.0
+    # Soil porosity φ [m3 m-3] and volumetric pore water θ [m3 m-3], liquid plus ice, θ ≤ φ.
+    # θ is held constant: snowmelt reaching the ground runs off and the soil has no hydrology.
+    ground_porosity::Float64 = 0.45
+    ground_water::Float64 = 0.25
+    # Conductivity [W m-1 K-1], density [kg m-3] and specific heat capacity [J kg-1 K-1] of the
+    # soil solids. 2700 and 733 are ISBA's `XDRYWGHT` and `XSPHSOIL`; ISBA's solids conductivity
+    # is a geometric mean of quartz (7.7) and other minerals (2.0 or 3.0) weighted by quartz
+    # content, 3.0 corresponding to a quartz fraction of about 0.3 (Peters-Lidard et al., 1998).
+    ground_solid_conductivity::Float64 = 3.0
+    ground_solid_density::Float64 = 2700.0
+    ground_solid_heat_capacity::Float64 = 733.0
+    # Albedo of snow-free ground, and the albedo thin snow over ground blends to.
+    ground_albedo::Float64 = 0.20
+    # Longwave emissivity of snow-free ground: ISBA `XEMISSOIL` (`modd_isba_par.F90:80`).
+    ground_emissivity::Float64 = 0.94
+    # Momentum roughness length of snow-free ground [m], 1 cm for short grass and bare soil
+    # (Stull, 1988, Fig. 9.6). The scalar roughness is `surface_roughness_effective_ratio` of it.
+    ground_roughness::Float64 = 0.01
+    # Factor β ∈ [0, 1] on the latent heat flux of snow-free ground, the "beta" form of bare-soil
+    # evaporation; ISBA's surface humidity `0.5(1 − cos(π·min(θ/θ_fc, 1)))` (`drag.F90:253`,
+    # Noilhan and Planton, 1989) is 1 at field capacity. The vapor exchanged with the ground does
+    # not change its pore water, which the soil column holds fixed.
+    ground_evaporation_factor::Float64 = 1.0
+    # Temperature of the bottom ground cell [K], the mean annual ground temperature at depth, and
+    # the initial temperature of the whole soil column. No default: it is a site constant.
+    ground_temperature_deep::Float64 = NaN
+    # Most snow cells the column may hold over the ground; snow beyond it is merged.
+    ground_snow_cells_max::Int = 100
+
     # --- Thermal Solver ---
     # Which scheme advances the temperature profile. Selected by type, not by symbol, so the
     # choice is resolved at compile time and a new scheme needs no branch here — see
@@ -596,11 +739,9 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `0.5·ρ·c·dz²/K`, which is not conservative on a graded grid. See `_max_safe_dt`.
     # `ImplicitThermal` is unconditionally stable and never reads this.
     dt_divisors::Vector{Float64} = Float64[]  # pre-computed divisors for thermo sub-stepping; set by gemb driver
-    # Fraction of `_max_safe_dt` the explicit sub-step is allowed to use. `ExplicitThermal`
-    # only. 1.0 would run at the diffusive limit exactly; the default is below it because
-    # `_max_safe_dt` covers diffusion alone and the surface cell carries a second, unbounded
-    # feedback — see `THERMAL_EXPLICIT_SAFETY_FACTOR`, which documents what the margin is for
-    # and what was measured before choosing it.
+    # Fraction of the explicit stability limit (diffusion and the surface-balance feedback)
+    # the explicit sub-step is allowed to use. `ExplicitThermal` only. See
+    # `THERMAL_EXPLICIT_SAFETY_FACTOR` for what the margin covers.
     thermal_explicit_safety_factor::Float64 = THERMAL_EXPLICIT_SAFETY_FACTOR
 end
 
@@ -613,7 +754,7 @@ Time-series surface meteorological forcing for GEMB, implemented as an
 date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
 — all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-# Layers (14 time-series `DimArray`s sharing a common `Ti` dimension)
+# Layers (15 time-series `DimArray`s sharing a common `Ti` dimension)
 Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
 `wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
 Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
@@ -622,6 +763,9 @@ Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
 Optional forcing: `snow_drift` [kg m-2 yr-1, positive for erosion], the prescribed
 drifting-snow divergence read by [`apply_prescribed_drift!`](@ref); `Fill`-backed zeros
 when the forcing carries no drift product, and superseded by `mp.drift_rate` in that case.
+`temperature_ground` [K], the temperature of the fixed-temperature reservoir below the snow
+under `lower_boundary = :prescribed` (see [`gemb_core_prescribed`](@ref)); `Fill`-backed `NaN`
+when not supplied, and read under no other lower boundary.
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -662,15 +806,16 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 14 forcing layers. The first 13 are in positional-constructor order; `snow_drift` is
-# keyword-only and trailing, so every existing 19-argument positional call site stays valid
-# and forcing built without a drift product carries a `Fill`-backed zero layer.
+# The 15 forcing layers. The first 13 are in positional-constructor order; `snow_drift` and
+# `temperature_ground` are keyword-only and trailing, so every existing 19-argument positional
+# call site stays valid; forcing built without them carries a `Fill`-backed zero drift layer and
+# a `Fill`-backed `NaN` ground-temperature layer.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
-    :snow_drift,
+    :snow_drift, :temperature_ground,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -702,6 +847,10 @@ The 14th layer, `snow_drift` [kg m-2 yr-1, positive for erosion], is keyword-onl
 defaults to `Fill`-backed zeros, so a forcing built without a drift product is valid and
 inert. Supply it to drive [`apply_prescribed_drift!`](@ref) from a drift product
 (e.g. RACMO's `SnowDrif`) rather than from the constant `mp.drift_rate`.
+
+The 15th layer, `temperature_ground` [K], is keyword-only and defaults to `Fill`-backed `NaN`.
+It is the base temperature of `lower_boundary = :prescribed` and is read under no other lower
+boundary.
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
@@ -739,7 +888,7 @@ function ClimateForcing(
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
-    snow_drift=nothing,
+    snow_drift=nothing, temperature_ground=nothing,
     accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
@@ -752,12 +901,16 @@ function ClimateForcing(
         tdim = dims(temperature_air, Ti)
         snow_drift = DimArray(Fill(0.0, length(tdim)), (tdim,))
     end
+    if temperature_ground === nothing
+        tdim = dims(temperature_air, Ti)
+        temperature_ground = DimArray(Fill(NaN, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        snow_drift,
+        snow_drift, temperature_ground,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,

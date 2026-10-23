@@ -9,18 +9,39 @@ Accounts for different physical processes depending on snow state:
   normal grain growth after Arthern et al. (2010), selected by `mp.grain_growth_method`.
 - Wet Snow: Rapid grain growth due to liquid water using Brun (1989).
 
-`mp.grain_growth_method` governs the non-dendritic *dry* branch only; the dendritic and wet
-branches, and the sphericity caps, are the same on every setting.
+Except under `:FlannerZender2006`, `mp.grain_growth_method` governs the non-dendritic *dry*
+branch only; the dendritic and wet branches, and the sphericity caps, are the same on every
+other setting.
 
 - `:Marbouty` — Marbouty (1980) everywhere. Its density factor `H` vanishes at
   `DENSITY_MARBOUTY_MAX`, so grain radius is frozen throughout the firn column below a few
   metres.
-- `:Arthern` (the default) — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`,
-  `GRAIN_GROWTH_EG`) at every density, dropping the temperature-gradient dependence
-  entirely.
-- `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it. Seasonal snow
-  keeps the temperature-gradient physics; firn grains keep growing, which matters because
-  `:ArthernB` densification goes as `1/r²`.
+- `:Arthern` — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`, `GRAIN_GROWTH_EG`) at every
+  density, dropping the temperature-gradient dependence entirely. Fitted to firn, it barely
+  coarsens dry surface snow.
+- `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it.
+  Seasonal snow keeps the temperature-gradient physics; firn grains keep growing, which
+  matters because `:ArthernB` densification goes as `1/r²`.
+- `:Taillandier2007` — below `DENSITY_MARBOUTY_MAX`, the SSA decay of dry snow of Taillandier
+  et al. (2007), equitemperature or temperature-gradient by the cell's gradient
+  ([`taillandier_ssa`](@ref)); Arthern at or above it.
+- `:FlannerZender2006` (the default) — the snow aging of SNICAR in CLM5.0 ([`snicar_aging_radius`](@ref)):
+  the radius of every dendritic cell and every cell below `DENSITY_MARBOUTY_MAX`, dry or wet,
+  grows by the Flanner and Zender (2006) law with the parameters of the SNICAR table at the
+  cell's temperature, gradient and density, plus CLM's wet growth, and is capped at
+  `SNICAR_RADIUS_MAX` in place of the sphericity caps. Radius is then state of its own for
+  dendritic snow too, so it is no longer diagnosed from dendricity and sphericity, here or
+  where cells mix ([`independent_grain_radius`](@ref)); dendricity and sphericity still evolve
+  as on every other setting, for the schemes that read them. Refrozen water enters at
+  `SNICAR_RADIUS_REFROZEN` ([`snicar_refreeze!`](@ref), from [`calculate_melt`](@ref)). Cells
+  at or above `DENSITY_MARBOUTY_MAX` follow Arthern as under `:hybrid`.
+
+Under `:Marbouty` and `:hybrid` dry non-dendritic snow below 400 kg m-3 grows only where the
+gradient exceeds 16 K m-1 (Marbouty's `G` is 0 below it), and at the 350 kg m-3 of GEMB's fresh
+snow by at most 0.2 of the 0.09 mm d-1 of Marbouty's rate (his `H`). This follows Brun et al.
+(1992) as used in Crocus (Vionnet et al., 2012, Table 1), where non-dendritic snow does not grow
+at gradients up to 15 K m-1: equitemperature coarsening of non-dendritic snow is represented
+only by `:Taillandier2007` and `:FlannerZender2006`.
 
 Runs unconditionally. Metamorphism is not contingent on model configuration — grains coarsen
 in a real snowpack whichever albedo scheme is selected — and `grain_radius` is read by four
@@ -50,6 +71,16 @@ form allocated per call.
   *J. Glaciol.* 26, 303-312.
 - Brun, E. (1989). Investigation on wet-snow metamorphism in respect of liquid-water content.
   *Ann. Glaciol.* 13, 22-26.
+- Taillandier, A.-S., Domine, F., Simpson, W. R., Sturm, M., and Douglas, T. A. (2007). Rate of
+  decrease of the specific surface area of dry snow: isothermal and temperature gradient
+  conditions. *J. Geophys. Res.* 112, F03003. (`grain_growth_method = :Taillandier2007`)
+- Flanner, M. G. and Zender, C. S. (2006). Linking snowpack microphysics and albedo evolution.
+  *J. Geophys. Res.* 111, D12208. (`grain_growth_method = :FlannerZender2006`)
+- Flanner, M. G., Zender, C. S., Randerson, J. T., and Rasch, P. J. (2007). Present-day climate
+  forcing and response from black carbon in snow. *J. Geophys. Res.* 112, D11202.
+- Lawrence, D. M., et al. (2018). *Technical Description of version 5.0 of the Community Land
+  Model (CLM)*, section 2.3.2.3. NCAR. Code: ESCOMP/CTSM `src/biogeophys/SnowSnicarMod.F90`,
+  `SnowAge_grain`, commit e7c1b5a.
 - Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010).
   In situ measurements of Antarctic snow compaction compared with predictions of models.
   *J. Geophys. Res.* 115, F03011. (`grain_growth_method = :Arthern`, and the Arthern half
@@ -65,6 +96,7 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
 
     # Convert dt from seconds to days
     dt_days = cfs.dt / 86400.0
+    snicar = independent_grain_radius(mp)
 
     # Work in grain size (diameter) [mm], converting `grain_radius` in place and halving it
     # back at the end. Nothing reads the incoming radius after this doubling, and both
@@ -139,9 +171,10 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
 
-        # new grain size (mm) for dendritic cells, using clamped values
+        # new grain size (mm) for dendritic cells, using clamped values. Under the SNICAR law
+        # the radius is its own state and is aged below instead.
         @inbounds for i in 1:m
-            isG[i] || continue
+            (isG[i] && !snicar) || continue
             gd = grain_dendricity[i]
             gs = grain_sphericity[i]
             gsz[i] = max(0.1 * (gd / 0.99 + (1.0 - 1.0 * gd / 0.99) *
@@ -187,7 +220,7 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
         dt_seconds = cfs.dt
         method = mp.grain_growth_method
         @inbounds for i in 1:m
-            isG[i] && continue
+            (isG[i] || (snicar && density[i] < DENSITY_MARBOUTY_MAX - D_TOLERANCE)) && continue
             dTi = _grain_gradient(temperature, dz, i, m)
             if (water[i] <= 0 + WATER_TOLERANCE) ||
                ((grain_sphericity[i] <= 0 + GDN_TOLERANCE) && (dTi > 5 + T_TOLERANCE))
@@ -197,6 +230,12 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
                     # Marbouty (1980) temperature-gradient metamorphism
                     Q = _marbouty_Q(temperature[i], density[i], dTi)
                     gsz[i] += Q * dt_days
+                elseif method === :Taillandier2007 &&
+                       density[i] < DENSITY_MARBOUTY_MAX - D_TOLERANCE
+                    # SSA decay of dry snow, in GEMB's SSA convention, over the step in hours
+                    ssa = taillandier_ssa(3 / (0.091 * (gsz[i] / 2)), temperature[i], dTi,
+                                          dt_seconds / 3600)
+                    gsz[i] = 2 * (3 / (0.091 * ssa))
                 else
                     # Arthern et al. (2010): dr²/dt = kgr·exp(-Eg/RT), in radius, so halve
                     # the working diameter and double back.
@@ -213,8 +252,10 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
 
-        # grain-size caps by sphericity (Brun, 1992), applied to all cells
+        # grain-size caps by sphericity (Brun, 1992), applied to all cells the SNICAR law
+        # does not age (it caps its own at `SNICAR_RADIUS_MAX`)
         @inbounds for i in 1:m
+            (snicar && (isG[i] || density[i] < DENSITY_MARBOUTY_MAX - D_TOLERANCE)) && continue
             if abs(grain_sphericity[i] - 1) < WATER_TOLERANCE
                 # spherical grains: <= 2 mm
                 if gsz[i] > 2 - WATER_TOLERANCE
@@ -229,12 +270,64 @@ function calculate_grain_size(temperature::Vector{Float64}, dz::Vector{Float64},
         end
     end
 
+    ## SNICAR SNOW AGING (CLM5.0): every dendritic cell and every cell below
+    ## DENSITY_MARBOUTY_MAX, dry and wet, in µm of effective radius
+    if snicar
+        for i in 1:m
+            (isG[i] || density[i] < DENSITY_MARBOUTY_MAX - D_TOLERANCE) || continue
+            M = density[i] * dz[i]
+            r = snicar_aging_radius(500 * gsz[i], temperature[i],
+                _grain_gradient(temperature, dz, i, m), (M + water[i]) / dz[i],
+                water[i] / (M + water[i]), cfs.dt)
+            gsz[i] = r / 500
+        end
+    end
+
     # Back from diameter to effective radius, in the caller's own array.
     @inbounds @simd for i in 1:m
         gsz[i] /= 2
     end
 
     return gsz, grain_dendricity, grain_sphericity
+end
+
+"""
+    taillandier_ssa(ssa, T, gradient, dt_hours) -> ssa_new [cm2 g-1]
+
+Specific surface area of dry snow after `dt_hours` of metamorphism at temperature `T` [K] under a
+temperature gradient `gradient` [K m-1], from Taillandier et al. (2007, p. 8):
+
+    SSA(t) = B − A·ln(t + Δt),   Δt = exp((B − SSA0)/A),   t in hours,
+
+with, for mean temperature `Tm` [°C] and initial SSA `SSA0`, equitemperature metamorphism (eqs.
+10-13, `gradient ≤ SSA_DECAY_GRADIENT_THRESHOLD`)
+
+    A = 0.0760·SSA0 − 1.76·(Tm − 2.96),   B = 0.629·SSA0 − 15.0·(Tm − 11.2),
+
+and temperature-gradient metamorphism (eqs. 6-9, above it)
+
+    A = 0.0961·SSA0 − 3.44·(Tm + 1.90),   B = 0.659·SSA0 − 27.2·(Tm − 2.03).
+
+`SSA0` is GEMB's fresh-snow SSA, `SSA_NEW_SNOW`, and `Tm` the temperature at this step. The law is
+applied to the state rather than to the time since snowfall: the elapsed time is recovered from the
+current SSA, `t + Δt = exp((B − ssa)/A)`, and advanced by `dt_hours`, so at constant temperature
+and regime successive steps reproduce eq. 13 or eq. 9 exactly, whatever their length, and snow that
+mixing has left coarser or finer than the law's curve continues from where it is. The SSA never
+falls below `SSA_DECAY_MIN`, the asymptote of depth hoar (p. 10 ¶36), and is returned unchanged at
+or below it.
+
+Taillandier et al. fitted ET decays at −19.2 to −4 °C, with extrapolation to colder snow judged
+reasonable (¶40), TG decays at gradients of 31-54 K m-1, and snow of density below 180 kg m-3; they
+give ET as valid to about 150 days and TG to about 100 (¶36).
+"""
+@inline function taillandier_ssa(ssa::Float64, T::Float64, gradient::Float64, dt_hours::Float64)
+    ssa <= SSA_DECAY_MIN && return ssa
+    Tm = T - CtoK
+    (a, b) = gradient > SSA_DECAY_GRADIENT_THRESHOLD ? (TAILLANDIER_TG_A, TAILLANDIER_TG_B) :
+             (TAILLANDIER_ET_A, TAILLANDIER_ET_B)
+    A = a[1] * SSA_NEW_SNOW - a[2] * (Tm - a[3])
+    B = b[1] * SSA_NEW_SNOW - b[2] * (Tm - b[3])
+    return max(B - A * log(exp((B - ssa) / A) + dt_hours), SSA_DECAY_MIN)
 end
 
 """

@@ -23,8 +23,10 @@ relative to any model integration.
   is the only regime discriminator**: positive buries snow and grows firn,
   non-positive exposes ice. Rainfall is not subtracted — see the note in
   [`initialize_climate_summary`](@ref).
-- `accumulation_effective`: `accumulation + refreeze`, the mass flux that drives
-  densification.
+- `accumulation_effective`: `accumulation + refreeze`, the mass flux one annual layer
+  receives (it sets the latent warming and the fresh-snow density of the initial guess; the
+  densification rate uses the forcing's own mean accumulation, see
+  [`densification_accumulation`](@ref)).
 
 # Temperature [K]
 - `temperature_air_mean`: mean annual air temperature.
@@ -90,7 +92,7 @@ precipitation, so using it directly counts rain as accumulating mass.
 **Melt, from a surface energy balance.** At each step the skin temperature that
 closes
 
-    SW(1−α) + LW↓ − εσT⁴ + QH + QE = 0
+    SW(1−α) + ε·LW↓ − εσT⁴ + QH + QE = 0
 
 is found by Newton iteration, reusing [`turbulent_heat_flux`](@ref) for the
 turbulent terms. Where that temperature would exceed the melt point, the surface
@@ -333,7 +335,7 @@ refreezes nothing.
     accumulation::Real, T_mean::Real, mp::ModelParameters)
     available = Float64(melt) + Float64(rainfall)
     capacity = if mp.heat_capacity_method === :constant
-        # Grouped as the reference groups it, so the default path is bit-identical.
+        # Grouped as the reference groups it, so the `:constant` path is bit-identical.
         mp.heat_capacity_ice * max(CtoK - Float64(T_mean), 0.0) * Float64(accumulation) / LF
     else
         cold_content_mass(mp, min(Float64(T_mean), CtoK), Float64(accumulation))
@@ -348,17 +350,18 @@ end
 Annual melt from a zero-layer surface energy balance over the forcing series, and the mean
 skin temperature of the same balance.
 
-For each step, [`_seb_skin_temperature`](@ref) finds the skin temperature closing
-the flux balance. If that exceeds the melt point the surface is pinned at
-`273.15 K` and the leftover energy flux `Q` is converted to melt via
-`Q·Δt/LF`. Sublimation/condensation is deliberately ignored — it is a small term
-for an initial guess, and including it would need the mass feedback the marcher
-resolves anyway.
+For each step the balance is first evaluated at the melting point. The balance decreases
+monotonically with skin temperature, so a positive flux `Q` there means the skin
+temperature closing it lies above 273.15 K: the surface is pinned at `273.15 K` and `Q` is
+converted to melt via `Q·Δt/LF`. Otherwise [`_seb_skin_temperature`](@ref) finds the skin
+temperature below the melting point. The balance is never evaluated above the melting point,
+so the latent flux sees the water curve only at a melting surface, as in the transient run.
+Sublimation/condensation is deliberately ignored — it is a small term for an initial guess,
+and including it would need the mass feedback the marcher resolves anyway.
 
 The mean skin temperature is returned because it is the temperature the initialized column's
-deep mean should tend to, and it is **free**: the per-step value is already solved here for
-the melt test and was previously discarded, so this adds an accumulator rather than a pass
-over the forcing. It is the mean of `min(T_skin, CtoK)`, capped for the same reason the melt
+deep mean should tend to, and it costs no extra pass over the forcing. It is the mean of the
+per-step skin temperature with melting steps counted at `CtoK`, for the same reason the melt
 branch pins the surface — energy above the melt point is melt, not sensible heat.
 """
 function _seb_annual_melt(T_air::AbstractVector{<:Real}, wind::AbstractVector{<:Real},
@@ -390,13 +393,15 @@ function _seb_annual_melt(T_air::AbstractVector{<:Real}, wind::AbstractVector{<:
         density_air = air_density(pressure[i], T_air[i])
         sw_net = sw[i] * (1.0 - albedo)
 
-        T_skin = _seb_skin_temperature(sw_net, lw[i], ε, density_air, z0, zT, zQ, cfs)
-        T_surface_total += min(T_skin, CtoK)
-        T_skin <= CtoK && continue
-
-        # Surface cannot exceed the melt point: the residual flux drives melt.
+        # Surface cannot exceed the melt point: a positive residual there drives melt.
         Q = _seb_residual(CtoK, sw_net, lw[i], ε, density_air, z0, zT, zQ, cfs)
-        Q > 0.0 && (melt_total += Q * dt / LF)
+        if Q > 0.0
+            T_surface_total += CtoK
+            melt_total += Q * dt / LF
+        else
+            T_surface_total += _seb_skin_temperature(sw_net, lw[i], ε, density_air, z0, zT,
+                zQ, cfs)
+        end
     end
 
     return melt_total * per_year, T_surface_total / length(T_air)
@@ -407,7 +412,7 @@ end
 
 Net energy flux into the surface at skin temperature `T_surface`:
 
-    Q = SW_net + LW↓ − εσT⁴ + QH + QE
+    Q = SW_net + ε·LW↓ − εσT⁴ + QH + QE
 
 Turbulent terms come from [`turbulent_heat_flux`](@ref). Positive `Q` warms (or
 melts) the surface.
@@ -422,21 +427,23 @@ end
 """
     _seb_skin_temperature(sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs) -> T [K]
 
-Skin temperature closing the surface energy balance, by secant iteration on
-[`_seb_residual`](@ref) bracketed around the air temperature.
+Skin temperature closing the surface energy balance at or below the melting point, by
+secant iteration on [`_seb_residual`](@ref) bracketed around the air temperature, with every
+iterate held in `[T_air − 60, min(T_air + 60, CtoK)]`. Returns `CtoK` when the balance there
+is still positive, i.e. when the surface would melt.
 
 The balance is monotone decreasing in `T_surface` (both the `−εσT⁴` radiative
 term and the turbulent terms oppose warming), so the iteration is well behaved. A
-few iterations suffice for an initial guess; the result is only used to decide
-whether the surface reaches melting and by how much energy it overshoots.
+few iterations suffice for an initial guess.
 """
 @inline function _seb_skin_temperature(sw_net::Float64, lw_in::Float64, ε::Float64,
     density_air::Float64, z0::Float64, zT::Float64, zQ::Float64,
     cfs::ClimateForcingStep; max_iter::Int=8, tol::Float64=1e-3)
 
     T_a = cfs.temperature_air
-    T0 = T_a - 5.0
-    T1 = T_a + 5.0
+    T_max = min(T_a + 60.0, CtoK)
+    T1 = min(T_a + 5.0, CtoK)
+    T0 = T1 - 10.0
     f0 = _seb_residual(T0, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)
     f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)
 
@@ -445,7 +452,7 @@ whether the surface reaches melting and by how much energy it overshoots.
         abs(denom) < 1e-12 && break
         T2 = T1 - f1 * (T1 - T0) / denom
         # Keep the iterate physical; a runaway secant step is not informative.
-        T2 = clamp(T2, T_a - 60.0, T_a + 60.0)
+        T2 = clamp(T2, min(T_a - 60.0, T_max), T_max)
         T0, f0 = T1, f1
         T1 = T2
         f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)

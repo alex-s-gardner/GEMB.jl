@@ -84,7 +84,7 @@ end
                 convergence_delta_density=nothing, convergence_drift_density=nothing,
                 convergence_delta_fac=nothing, convergence_drift_fac=nothing,
                 drift_window=$SPINUP_DRIFT_WINDOW, drift_window_closeoff_fraction=nothing,
-                verbose=false)
+                require_convergence=false, verbose=false)
 
 Run GEMB for multiple spinup cycles to reach quasi-steady state.
 
@@ -182,6 +182,10 @@ When none is given the spinup always runs to the `simulation_years_maximum` ceil
   column-mean density also carries densification below close-off, which is slower. Needs
   `initialize_age = :steady_state` (the default) so the input profile carries a real age, and
   a ceiling of at least the window: a longer window could never be filled, so it is an error.
+- `require_convergence`: throw an error, instead of returning the profile, when the requested
+  criteria are not met by the `simulation_years_maximum` ceiling. Requires at least one
+  criterion. Without it, an unconverged spinup returns its profile with
+  `spinup_converged = false` in the provenance and logs a warning.
 - `verbose`: print a convergence message when early exit occurs.
 - `thermal_workspace`: reusable thermal-solve scratch, shared across every cycle of this
   spinup. One belongs to one column; give each concurrent thread its own
@@ -196,9 +200,28 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
                      convergence_drift_fac=nothing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
                      drift_window_closeoff_fraction::Union{Nothing,Real}=nothing,
+                     require_convergence::Bool=false,
                      verbose::Bool=false,
                      thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
                      column_workspace::ColumnWorkspace=ColumnWorkspace())
+
+    mp.lower_boundary === :prescribed && throw(ArgumentError("lower_boundary = :prescribed " *
+        "has no state to spin up beyond the snow, which a seasonal site does not carry " *
+        "between years; start from `initialize_profile`"))
+    if mp.lower_boundary === :ground
+        (convergence_delta_density === nothing && convergence_drift_density === nothing &&
+         convergence_delta_fac === nothing && convergence_drift_fac === nothing &&
+         drift_window_closeoff_fraction === nothing) ||
+            throw(ArgumentError("lower_boundary = :ground converges on the deep-soil " *
+                "temperature; call gemb_spinup_ground for its criteria"))
+        return gemb_spinup_ground(profile, cf, mp; simulation_years_maximum,
+            require_convergence, verbose, thermal_workspace, column_workspace)
+    end
+
+    require_convergence && convergence_delta_density === nothing &&
+        convergence_drift_density === nothing && convergence_delta_fac === nothing &&
+        convergence_drift_fac === nothing &&
+        throw(ArgumentError("require_convergence needs at least one convergence criterion"))
 
     drifting = convergence_drift_density !== nothing || convergence_drift_fac !== nothing
     if drifting && drift_window < 2
@@ -286,6 +309,15 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     end
 
     @info "GEMB Spinup" climatology_window=(cf.climatology_window_start, cf.climatology_window_stop) cycles=cycles_run years_simulated=cycles_run*years_per_cycle converged=converged final_delta_density=rho_track.final_delta final_drift_density=rho_track.final_drift final_delta_fac=fac_track.final_delta final_drift_fac=fac_track.final_drift
+
+    if checking && !converged
+        summary = "gemb_spinup did not converge in $(cycles_run) cycles " *
+                  "($(cycles_run * years_per_cycle) simulated years): " *
+                  "Δρ = $(rho_track.final_delta), ρ drift = $(rho_track.final_drift), " *
+                  "ΔFAC = $(fac_track.final_delta), FAC drift = $(fac_track.final_drift)"
+        require_convergence && error(summary)
+        @warn summary
+    end
 
     return _attach_spinup_provenance(current_profile, cf;
         cycles=cycles_run, converged=converged,

@@ -237,6 +237,35 @@ using Dates
         @test haskey(md2, "climatology_n_years")
     end
 
+    @testset "Thermal-solve freezing diagnostics are interval sums" begin
+        # Six 30-minute steps at the melting point, saturated air and 100 W m-2 of net longwave loss,
+        # from a column at 273.15 K whose 6 mm surface cell holds more water than ice. The thermal
+        # solve freezes that cell's water itself in the first step and never again.
+        T0 = GEMB.CtoK
+        n = 6
+        time = DateTime(2020, 4, 1) .+ Minute.(30 .* (0:n-1))
+        forcing = initialize_forcing(time, fill(T0, n), fill(100000.0, n), fill(0.0, n),
+            fill(5.0, n), fill(0.0, n), fill(GEMB.SB * T0^4 - 100.0 / 0.98, n),
+            fill(GEMB.saturation_vapor_pressure_water(T0), n);
+            temperature_air_mean=260.0, wind_speed_mean=5.0, precipitation_mean=200.0,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+        profile = initialize_profile(initialize_parameters(), forcing)
+        parent(profile[:temperature]) .= T0
+        parent(profile[:dz])[1] = 0.0061
+        parent(profile[:density])[1] = 93.4
+        parent(profile[:water])[1] = 0.597
+        each = gemb(profile, forcing, initialize_parameters(output_frequency=:all))
+        whole = gemb(profile, forcing, initialize_parameters(output_frequency=:last))
+        @test collect(each[:refreeze_thermal_count]) == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        @test each[:refreeze_thermal][1] > 0.0 && all(iszero, each[:refreeze_thermal][2:end])
+        @test each[:refreeze_thermal][1] <= each[:refreeze][1]
+        @test only(whole[:refreeze_thermal_count]) == sum(each[:refreeze_thermal_count])
+        @test only(whole[:refreeze_thermal]) == sum(each[:refreeze_thermal])
+        md = DimensionalData.metadata(each[:refreeze_thermal_count])
+        @test md["units"] == "1" && md["cell_methods"] == "time: sum"
+        @test DimensionalData.metadata(each[:refreeze_thermal])["units"] == "kg m-2"
+    end
+
     @testset "CF layer metadata" begin
         n = 365
         time = DateTime(2020, 1, 1) .+ Day.(0:n-1)
@@ -361,7 +390,11 @@ using Dates
             fill(200.0, n_steps), fill(100.0, n_steps);
             temperature_air_mean=255.0, wind_speed_mean=5.0, precipitation_mean=300.0,
             temperature_observation_height=2.0, wind_observation_height=10.0)
-        out = gemb(initialize_profile(mp, forcing), forcing, mp; verbose=true)
+        # The base of a deep initialized column can be isothermal to the last bit, so the
+        # reservoir is set 1 K warmer than the cell above it to give the face a gradient.
+        profile = initialize_profile(mp, forcing)
+        parent(profile[:temperature])[end] = parent(profile[:temperature])[end-1] + 1.0
+        out = gemb(profile, forcing, mp; verbose=true)
 
         bhf = parent(out[:heat_flux_basal])
         @test haskey(out, :heat_flux_basal)
@@ -444,4 +477,154 @@ using Dates
         @test md["cell_methods"] == "time: point"
         @test !haskey(md, "standard_name")
     end
+end
+
+@testset "Radiation geometry: forcing layers, fallback, validation" begin
+    n = 48
+    time = DateTime(2020, 6, 1) .+ Hour.(0:n-1)
+    sw = [max(0.0, 600.0 * sin(2π * (k - 6) / 24)) for k in 0:n-1]
+    sza = [s > 0 ? 50.0 : 100.0 for s in sw]
+    diffuse = 0.3 .* sw
+    base = (time, fill(265.0, n), fill(80000.0, n), zeros(n), fill(3.0, n), sw,
+        fill(250.0, n), fill(250.0, n))
+    kw = (temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=500.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+
+    cf_layers = initialize_forcing(base...; kw..., solar_zenith_angle=sza,
+        cloud_optical_thickness=fill(2.0, n), shortwave_downward_diffuse=diffuse)
+    @test parent(cf_layers.solar_zenith_angle) == sza
+    @test parent(cf_layers.shortwave_downward_diffuse) == diffuse
+
+    mp = initialize_parameters(output_frequency=:all)
+    # Ice column with 1 m of snow on top, so the grain-size albedo is in play.
+    profile = initialize_profile(mp, cf_layers; constant_density=true,
+        constant_temperature=true)
+    k_snow = findfirst(>=(1.0), cumsum(parent(profile[:dz])))
+    parent(profile[:density])[1:k_snow] .= 350.0
+    parent(profile[:grain_radius])[1:k_snow] .= 0.3
+
+    # The forcing layers reach the physics: the run differs from one with no geometry, and
+    # an `mp` scalar does not override a supplied layer.
+    out_layers = gemb(profile, cf_layers, mp; verbose=true)
+    cf_none = initialize_forcing(base...; kw...)
+    out_none = gemb(profile, cf_none, mp)
+    @test parent(out_layers[:albedo_broadband]) != parent(out_none[:albedo_broadband])
+    mp_scalar = initialize_parameters(output_frequency=:all, solar_zenith_angle=30.0,
+        cloud_optical_thickness=1.0)
+    @test parent(gemb(profile, cf_layers, mp_scalar)[:albedo_broadband]) ==
+          parent(out_layers[:albedo_broadband])
+
+    # Without layers, the `mp` scalars are used for every step: a constant 30° layer and the
+    # `mp` fallback at 30° give the same run.
+    cf_const = initialize_forcing(base...; kw..., solar_zenith_angle=fill(30.0, n),
+        cloud_optical_thickness=fill(1.0, n))
+    @test parent(gemb(profile, cf_none, mp_scalar)[:albedo_broadband]) ==
+          parent(gemb(profile, cf_const, mp)[:albedo_broadband])
+
+    # A DimStack forcing supplies them as layers.
+    tdim = Ti(time)
+    names = (:temperature_air, :pressure_air, :precipitation, :wind_speed,
+        :shortwave_downward, :longwave_downward, :vapor_pressure)
+    layers = NamedTuple{names}(Tuple(DimArray(v, (tdim,)) for v in base[2:end]))
+    meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(kw))
+    stack = DimStack(merge(layers, (solar_zenith_angle=DimArray(sza, (tdim,)),
+            shortwave_downward_diffuse=DimArray(diffuse, (tdim,)))); metadata=meta)
+    cf_stack = initialize_forcing(stack)
+    @test parent(cf_stack.solar_zenith_angle) == sza
+    @test parent(cf_stack.shortwave_downward_diffuse) == diffuse
+    @test all(iszero, cf_stack.cloud_optical_thickness)
+
+    # Per-step range checks.
+    bad_sza = copy(sza); bad_sza[5] = 181.0
+    @test_throws "outside [0, 180]" initialize_forcing(base...; kw...,
+        solar_zenith_angle=bad_sza)
+    @test_throws "negative" initialize_forcing(base...; kw...,
+        cloud_optical_thickness=fill(-0.1, n))
+    bad_diffuse = copy(diffuse); bad_diffuse[13] = sw[13] + 1.0
+    @test_throws "step 13" initialize_forcing(base...; kw...,
+        shortwave_downward_diffuse=bad_diffuse)
+    # A scalar diffuse flux larger than a night step's zero shortwave is a violation too.
+    @test_throws ArgumentError initialize_forcing(base...; kw...,
+        shortwave_downward_diffuse=10.0)
+    @test_throws "timesteps" initialize_forcing(base...; kw..., solar_zenith_angle=sza[1:10])
+end
+
+@testset "Impurity and cloud-fraction layers must agree with ModelParameters" begin
+    n = 48
+    time = DateTime(2020, 6, 1) .+ Hour.(0:n-1)
+    sw = [max(0.0, 600.0 * sin(2π * (k - 6) / 24)) for k in 0:n-1]
+    base = (time, fill(265.0, n), fill(80000.0, n), zeros(n), fill(3.0, n), sw,
+        fill(250.0, n), fill(250.0, n))
+    kw = (temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=500.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    mp = initialize_parameters(output_frequency=:all)
+    cf = initialize_forcing(base...; kw...)
+    # Ice column with 1 m of snow on top, so black carbon reaches the snow albedo.
+    profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+    k_snow = findfirst(>=(1.0), cumsum(parent(profile[:dz])))
+    parent(profile[:density])[1:k_snow] .= 350.0
+    parent(profile[:grain_radius])[1:k_snow] .= 0.3
+    out = gemb(profile, cf, mp)
+
+    # A forcing value the run would discard is refused, naming the layer and the parameter.
+    @test_throws "`black_carbon_snow` is 0.05 at step 1" gemb(profile,
+        initialize_forcing(base...; kw..., black_carbon_snow=0.05), mp)
+    @test_throws "`ModelParameters.black_carbon_ice` is 0.0" gemb(profile,
+        initialize_forcing(base...; kw..., black_carbon_ice=0.1), mp)
+    @test_throws "`cloud_fraction` is 0.3 at step 1" gemb(profile,
+        initialize_forcing(base...; kw..., cloud_fraction=0.3), mp)
+    @test_throws ArgumentError gemb(profile, cf,
+        initialize_parameters(output_frequency=:all, cloud_fraction=0.3))
+
+    # A layer that departs from the parameter at a single step is refused at that step.
+    bc = fill(mp.black_carbon_snow, n); bc[17] = 0.2
+    cf_bc = GEMB.ClimateForcing(cf.temperature_air, cf.pressure_air, cf.precipitation,
+        cf.wind_speed, cf.shortwave_downward, cf.longwave_downward, cf.vapor_pressure,
+        DimArray(bc, (Ti(time),)), cf.black_carbon_ice, cf.cloud_optical_thickness,
+        cf.solar_zenith_angle, cf.shortwave_downward_diffuse, cf.cloud_fraction,
+        cf.time_step, cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
+        cf.temperature_observation_height, cf.wind_observation_height)
+    @test_throws "is 0.2 at step 17" gemb(profile, cf_bc, mp)
+
+    # A value read from forcing-file metadata is checked the same way.
+    tdim = Ti(time)
+    names = (:temperature_air, :pressure_air, :precipitation, :wind_speed,
+        :shortwave_downward, :longwave_downward, :vapor_pressure)
+    layers = NamedTuple{names}(Tuple(DimArray(v, (tdim,)) for v in base[2:end]))
+    meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(kw))
+    meta["black_carbon_snow"] = 0.02
+    @test_throws "`black_carbon_snow` is 0.02" gemb(profile,
+        initialize_forcing(DimStack(layers; metadata=meta)), mp)
+
+    # Matching values run, and give the run the parameter alone gives.
+    mp_bc = initialize_parameters(output_frequency=:all, black_carbon_snow=0.05,
+        cloud_fraction=0.3)
+    cf_bc = initialize_forcing(base...; kw..., black_carbon_snow=0.05, cloud_fraction=0.3)
+    out_bc = gemb(profile, cf_bc, mp_bc)
+    @test parent(out_bc[:albedo_broadband]) != parent(out[:albedo_broadband])
+    @test parent(gemb(profile, cf_bc, mp_bc)[:melt]) == parent(out_bc[:melt])
+end
+
+@testset "Elevation identity: basal flux, SMB, water and firn air" begin
+    # At fixed column depth, −Σ ice_flux = (SMB − ΔW)/ρᵢ + ΔFAC exactly, with SMB the surface
+    # mass balance, ΔW the change in liquid water and ΔFAC the change in firn air content.
+    n = 365
+    time = DateTime(2003, 1, 1) .+ Day.(0:n-1)
+    seasonal = cos.(2π .* (1:n) ./ 365.0 .- π)
+    cf = initialize_forcing(time, 266.0 .+ 9.0 .* seasonal, fill(85000.0, n), fill(2.5, n),
+        fill(4.0, n), 120.0 .+ 160.0 .* max.(0.0, seasonal), fill(290.0, n), fill(300.0, n);
+        temperature_air_mean=266.0, wind_speed_mean=4.0, precipitation_mean=2.5 * 365.25,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+    mp = initialize_parameters(output_frequency=:all)
+    profile = initialize_profile(mp, cf)
+    out = gemb(profile, cf, mp; verbose=true)
+    ρi = mp.density_ice
+    total(k) = sum(parent(out[k]))
+    smb = total(:precipitation) + total(:evaporation_condensation) - total(:runoff)
+    ΔW = sum(parent(out[:water])[:, end]) - sum(parent(profile[:water]))
+    fac(dz, ρ) = firn_air_content(dz, ρ, ρi)
+    ΔFAC = fac(parent(out[:dz])[:, end], parent(out[:density])[:, end]) -
+           fac(parent(profile[:dz]), parent(profile[:density]))
+    @test total(:melt) > 0.0
+    @test -total(:ice_flux) ≈ (smb - ΔW) / ρi + ΔFAC atol = 1e-9
 end

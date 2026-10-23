@@ -13,6 +13,13 @@ const HEAT_CAPACITY_ICE_DEFAULT = 2102.0
 # Cuffey and Paterson (2010) eq. 9.1: c_p(T) = a + b·T, T in kelvin.
 const HEAT_CAPACITY_CUFFEY_A = 152.5
 const HEAT_CAPACITY_CUFFEY_B = 7.122
+# Lowest ice-matrix temperature [K] at which the thermal solve hands a wet cell to
+# `calculate_melt` with its water still counted liquid; below it the solve freezes the water
+# itself (`_wet_cell_handoff!`). 223.15 K (−50 °C) is the coldest temperature of Cuffey and
+# Paterson (2010) Table 9.1, p. 400, the pure-ice data eq. 9.1 is a fit to. A handoff below it
+# carries the cell's cold content in a matrix temperature outside that support, and a matrix
+# enthalpy below −a²/(2b) has no temperature under eq. 9.1 at all.
+const WET_HANDOFF_TEMPERATURE_MIN = 223.15
 
 const HEAT_CAPACITY_AIR = 1005.0  # Specific heat capacity of air [J kg-1 K-1]
 
@@ -61,6 +68,9 @@ const GSP_NEW_SNOW = 0.5   # New snow sphericity [-]
 const GRAIN_DIAMETER_MAX = 5.0  # Non-spherical grain diameter cap [mm] (calculate_grain_size)
 const GRAIN_RADIUS_ICE = GRAIN_DIAMETER_MAX / 2  # Grain radius of bare ice [mm]
 const DENSITY_PORE_CLOSEOFF = 830.0  # Pore close-off density [kg m-3]
+const ALBEDO_FIRN_MAX = 0.65  # Albedo of exposed firn at pore close-off [-] (Alexander et al., 2014)
+const ALBEDO_DIFFUSE_ZENITH_ANGLE = 50.0  # Effective zenith angle of diffuse radiation [degrees] (Gardner & Sharp, 2010)
+const ALBEDO_SNOW_DEPTH_THICK = 0.1  # Snow depth above which firn or ice below no longer shows in the `:BrunLefebre` albedo [m] (Lefebre et al., 2003)
 
 # Activation energy for grain growth [J mol-1], Arthern et al. (2010). Sets the
 # `exp(Eg/(R·T_mean))` grain-growth factor in the accumulation-driven densification schemes
@@ -75,6 +85,41 @@ const GRAIN_GROWTH_KGR = 1.3e-7
 # i.e. the ceiling of its calibration range. Read by the `H` coefficient in `_marbouty_Q`,
 # which ramps to zero across [150, this].
 const DENSITY_MARBOUTY_MAX = 400.0
+
+# Dry-snow specific-surface-area (SSA) decay of `grain_growth_method = :Taillandier2007`, in
+# GEMB's SSA convention S = 3/(0.091·r) [cm2 g-1, r in mm] (Gardner and Sharp, 2010, eq. 7),
+# starting from the SSA of GEMB's fresh snow.
+const SSA_NEW_SNOW = 3 / (0.091 * RE_NEW_SNOW)
+# Taillandier et al. (2007), p. 8: SSA(t) = B − A·ln(t + Δt) with t in hours and, for initial SSA
+# S0 and mean temperature Tm [°C], A = a1·S0 − a2·(Tm − a3) and B = b1·S0 − b2·(Tm − b3).
+# Equitemperature (ET) metamorphism, eqs. 10-11:
+const TAILLANDIER_ET_A = (0.0760, 1.76, 2.96)
+const TAILLANDIER_ET_B = (0.629, 15.0, 11.2)
+# Temperature-gradient (TG) metamorphism, eqs. 6-7 (A' = 0.0961·S0 − 3.44·(Tm + 1.90)):
+const TAILLANDIER_TG_A = (0.0961, 3.44, -1.90)
+const TAILLANDIER_TG_B = (0.659, 27.2, 2.03)
+# Gradient above which the TG law applies [K m-1]. Taillandier et al. (2007, p. 10 ¶38) place the
+# ET-TG boundary between 9 and 20 K m-1; 15 K m-1 is where Brun et al. (1992) start
+# temperature-gradient growth (Vionnet et al., 2012, Table 1).
+const SSA_DECAY_GRADIENT_THRESHOLD = 15.0
+# Floor on the decaying SSA [cm2 g-1]: the asymptote Taillandier et al. (2007, p. 10 ¶36) give for
+# depth hoar under TG metamorphism (r = 0.41 mm).
+const SSA_DECAY_MIN = 80.0
+# Snow aging of SNICAR in CLM5.0 (`grain_growth_method = :FlannerZender2006`; see
+# `snicar_aging.jl`), radii in µm. Values from SnowSnicarMod.F90 (CTSM commit e7c1b5a) and the
+# CLM5.0 parameter file clm50_params.c250311.nc (snw_rds_min, snw_rds_refrz, C2_liq_Brun89,
+# xdrdt = 1).
+# Radius of fresh snow the aging table was fitted from, r0 of dr/dt = drdt0·(τ/(r − r0 + τ))^(1/κ)
+# (snw_rds_min; 3/(917·S) for S = 60 m2 kg-1, Flanner et al., 2007, p. 4).
+const SNICAR_RADIUS_FRESH = 54.526
+# Largest radius of the SNICAR optics table, the upper bound on aged snow (snw_rds_max).
+const SNICAR_RADIUS_MAX = 1500.0
+# Radius given to refrozen liquid water (snw_rds_refrz).
+const SNICAR_RADIUS_REFROZEN = 1000.0
+# Wet-snow growth of Brun (1989) without its dry term, dV/dt = C2·f³ for liquid mass fraction f
+# [m3 s-1] (C2_liq_Brun89; C1_liq_Brun89 = 0), and the cap on f.
+const SNICAR_LIQUID_GROWTH = 4.22e-13
+const SNICAR_LIQUID_FRACTION_MAX = 0.1
 
 # Density separating the two densification stages [kg m-3]. Every scheme in
 # `calculate_density` switches rate coefficients here: it is the transition from
@@ -115,6 +160,50 @@ const DENSITY_NEW_SNOW_PAHAUT_B = 6.0
 const DENSITY_NEW_SNOW_PAHAUT_C = 26.0
 const DENSITY_NEW_SNOW_PAHAUT_MIN = 50.0
 
+# Range accepted for `new_snow_density`, the density of `new_snow_method = :Constant` [kg m-3]. It
+# spans the deposition densities the other methods return, from the 50 kg m-3 floor of `:Pahaut`
+# to `:KuipersMunneke`'s 481 at the melting point, with margin.
+const NEW_SNOW_DENSITY_MIN = 50.0
+const NEW_SNOW_DENSITY_MAX = 550.0
+
+# Fresh-snow density coefficients for `new_snow_method = :vanKampenhout2017` — van
+# Kampenhout et al. (2017) eqs. 2-4, p. 2587: `ρ_fs = ρ_T + ρ_W`, with `ρ_T` piecewise in
+# `ΔT = T_air - CtoK` [K] and `ρ_W` a function of the 10 m wind speed [m s-1].
+const DENSITY_NEW_SNOW_VK17_DT_WARM = 2.0     # ΔT above which ρ_T is constant [K]
+const DENSITY_NEW_SNOW_VK17_DT_COLD = -15.0   # ΔT at or below which the cold branch applies [K]
+const DENSITY_NEW_SNOW_VK17_A = 50.0          # middle branch: A + B·(ΔT + 15)^1.5 [kg m-3]
+const DENSITY_NEW_SNOW_VK17_B = 1.7           # [kg m-3 K-1.5]
+# Temperature term of `new_snow_method = :vanKampenhout2017SNOTEL`:
+# A + B·(clamp(ΔT, DT_FLOOR, DT_WARM) − DT_REF)^1.5. See `snotel_density_temperature`.
+const DENSITY_NEW_SNOW_SNOTEL_A = 56.0         # [kg m-3]
+const DENSITY_NEW_SNOW_SNOTEL_B = 0.85         # [kg m-3 K-1.5]
+const DENSITY_NEW_SNOW_SNOTEL_DT_REF = -15.0   # reference ΔT of the power law [K]
+const DENSITY_NEW_SNOW_SNOTEL_DT_FLOOR = -8.0  # ΔT at or below which ρ_T is constant [K]
+const DENSITY_NEW_SNOW_SNOTEL_DT_WARM = 2.0    # ΔT above which ρ_T is constant [K]
+const DENSITY_NEW_SNOW_VK17_C1 = -3.8328      # cold branch: C1·ΔT + C2·ΔT² [kg m-3 K-1]
+const DENSITY_NEW_SNOW_VK17_C2 = -0.0333      # [kg m-3 K-2]
+const DENSITY_NEW_SNOW_VK17_W = 266.861       # wind term: W·(½(1 + tanh(U/U_s)))^n [kg m-3]
+const DENSITY_NEW_SNOW_VK17_U_SCALE = 5.0     # U_s [m s-1]
+const DENSITY_NEW_SNOW_VK17_W_EXPONENT = 8.8  # n [-]
+# Destructive-metamorphism settling of fresh snow, Anderson (1976) in the form of van
+# Kampenhout et al. (2017) eq. 5, p. 2587, with the density taper of Schneider et al. (2022)
+# eq. 3, p. 3: strain rate `c3·c2·c1·exp(-c4·(T_frz - T))`, `c1 = exp(-c5·(ρ - ρ_dm))` above
+# `ρ_dm`. Read by `destructive_metamorphism_rate`.
+const DESTRUCTIVE_METAMORPHISM_C3 = 2.777e-6   # [s-1], vK17 p. 2587 (Schneider: 2.78e-6)
+const DESTRUCTIVE_METAMORPHISM_C4 = 0.04       # [K-1], both papers
+const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-3)
+const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
+const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 100.0  # ρ_dm [kg m-3]: CLM4 value (CLM5/vK17 p. 2587: 175)
+
+# Fetch length L [m] of the Keenan et al. (2021) saltation flux, eq. 3, p. 1067: the
+# horizontal scale over which the saltation transport is eroded from the surface. Keenan et
+# al. choose 10 m as the scale of sastrugi and barchan dunes and call it a tuning parameter.
+const DRIFT_FETCH_LENGTH_DEFAULT = 10.0
+
+# Standard 10 m reference height of wind speed [m]: the height eq. 4 of van Kampenhout et al.
+# (2017) and eqs. 3-4 of Keenan et al. (2021) define their wind at.
+const WIND_HEIGHT_10M = 10.0
+
 # Surface roughness lengths (Bougamont, 2005), shared by the transient surface
 # energy balance (`calculate_temperature`) and the initial-guess one
 # (`_seb_annual_melt`), which blends between the dry-snow and ice values.
@@ -122,26 +211,44 @@ const Z0_SNOW_DRY = 0.00012  # 0.12 mm, dry snow [m]
 const Z0_SNOW_WET = 0.0013   # 1.3 mm, wet snow [m]
 const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
 
-# Bound on the Monin-Obukhov stability parameter `ζ = z/L` in the unstable branch of
-# `_turbulent_heat_flux`. Not from any of the papers cited there: it guards a numerical
-# limit of the bulk formulation rather than adjusting the physics.
+# Bound on the Monin-Obukhov stability parameter `ζ = z_w/L` on the unstable side, applied by
+# `obukhov_stability`. Not from any of the papers cited there: it guards a numerical limit of
+# the bulk formulation rather than adjusting the physics.
 #
 # `ζ` is diagnosed from the bulk Richardson number, which carries `wind_speed^-2`. At the
 # `min_wind_speed = 0.01 m s-1` floor over a melting surface under very cold air the
-# synthetic forcing reaches `Ri ≈ -7.3e5`, i.e. `ζ ≈ -4.9e5`. That is not a stability
-# regime — it is the wind floor showing through — and Monin-Obukhov theory has no
-# observational support anywhere near it (Högström's fits span `|ζ| <~ 2`). Left
-# unbounded, `Ψ_h(ζ)` grows past `log(z_T/z_Q)` and the transfer coefficient
-# `coefHT = logHT - Ψ_h` crosses zero, so the flux diverges and then changes sign; that
-# is what produced a NaN albedo before this bound existed.
-#
-# -100 is two orders of magnitude beyond the calibration range, so it never binds in
-# physically meaningful conditions, and it keeps `coefM` and `coefHT` positive for every
-# roughness GEMB uses (at `ζ = -100`, `Ψ_m = 4.51` and `Ψ_h = 5.73`, against
-# `logHT >= 8.29` for the roughest surface, `Z0_ICE`). Bounding `ζ` rather than clamping
-# the coefficients keeps the fluxes a continuous, monotone function of `T_surface`, which
-# the implicit solver's Newton iteration needs.
+# Richardson number reaches ~ -10^5 and the solved `ζ` is of the same order. That is not a
+# stability regime — it is the wind floor showing through — and Monin-Obukhov theory has no
+# observational support anywhere near it (Högström's fits span `|ζ| <~ 2`). Bounding `ζ`
+# rather than the fluxes keeps them a continuous, monotone function of `T_surface`, which the
+# implicit solver's Newton iteration needs.
 const ZETA_UNSTABLE_MIN = -100.0
+
+# Free convection over snow-free ground (`lower_boundary = :ground`): the boundary-layer scale
+# height `z_i` [m] of the free-convection velocity `w* = (z_i·g·Q_0v/T)^{1/3}`, set to 1000 m in
+# the ECMWF IFS "since only the order of magnitude matters" (ECMWF, 2018, Part IV, eq. 3.18;
+# Beljaars, 1995), and the fixed-point iteration that solves `w*` together with the fluxes it
+# sets: at most `FREE_CONVECTION_ITERATIONS` steps, stopping when `w*` changes by less than
+# `FREE_CONVECTION_TOLERANCE` [m s-1]. The iteration contracts (`w*³ ∝ U_e`, so the
+# fixed-point slope is about 1/3).
+const FREE_CONVECTION_HEIGHT = 1000.0
+const FREE_CONVECTION_ITERATIONS = 30
+const FREE_CONVECTION_TOLERANCE = 1e-6
+
+# Newton steps on ln|ζ| in `obukhov_stability`. Four steps from the neutral first guess reach
+# the converged Monin-Obukhov solution to 1e-12 in the transfer coefficient for -100 < ζ < 1
+# and to 5e-5 for any ζ reached with |Ri| ≤ 10^4; three steps leave errors of order 1e-6 and
+# 3e-2 respectively.
+const MO_NEWTON_STEPS = 4
+
+# Range and node spacing of `StabilityTable`, in `q = ln|Ri|`. Below `STABILITY_TABLE_RI_MIN` the
+# transfer functions are linear in `Ri` to better than 1e-9; above `STABILITY_TABLE_RI_MAX` (stable
+# only, reached at the wind-speed floor) the lookup solves exactly. The spacing holds the cubic
+# Hermite interpolation error below 1e-8 relative in `ζ` and in the transfer coefficient, and
+# below 5e-7 in `d ln(F_m F_h)/d ln|Ri|`, whose interpolation is one order less accurate.
+const STABILITY_TABLE_RI_MIN = 1e-9
+const STABILITY_TABLE_RI_MAX = 1e7
+const STABILITY_TABLE_DQ = 0.005
 
 # How close to `density_ice` counts as "firn has become ice" when sizing the initial
 # column. Densification laws approach ice *asymptotically*, so no finite depth ever
@@ -187,46 +294,28 @@ const DT_MIN_WARN = 1e-4
 """
     THERMAL_EXPLICIT_SAFETY_FACTOR
 
-Fraction of `_max_safe_dt` the explicit sub-step may use. Default of
-`mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
+Fraction of the diffusive stability limit (`_max_safe_dt`) the explicit sub-step may use. Default
+of `mp.thermal_explicit_safety_factor`; `ExplicitThermal` only.
 
-This is a genuine margin, not a hedge against the diffusive limit being imprecise. That limit
-is exact for the stencil it is derived from (see `_max_safe_dt`), but it accounts for
-*diffusion only*. The surface cell also carries the explicitly-evaluated surface energy
-balance, whose linearization `Λ = dQ_sfc/dT₁ ≤ 0` (see `_surface_energy_balance_slope`) enters
-cell 1's own-temperature coefficient exactly as a face conductance does:
-
-    coef₁ = 1 − dt·(G₁ + |Λ|) / (ρ₁c₁dz₁)
-
-`_max_safe_dt` omits `|Λ|`, so the true surface constraint is always stricter than the limit
-returned, by a factor that the model does not bound: `|Λ|` grows with wind speed (turbulent
-transfer) and with `T₁³` (longwave), while `ρ₁c₁dz₁` falls as the surface cell thins toward
-`column_dzmin`. Unlike the graded-grid error the face-based form fixed, this one is
-one-directional and unbounded, which is why a fixed fraction is the right instrument.
-
-0.8 was inherited from the MATLAB model without a stated derivation. Measured over a year of
-3-hourly synthetic forcing at `test_1` (2920 steps, spun-up column, `mp` defaults), the
-surface amplification factor `dt(G₁+|Λ|)/(ρ₁c₁dz₁)` actually realized was:
-
-    factor   median   p99     max     frac > 1   frac > 2   mean n_sub
-    0.8      0.196    0.609   0.955   0.0000     0.0        24.20
-    0.95     0.235    0.731   1.146   0.0065     0.0        20.20
-    1.0      0.235    0.731   1.146   0.0065     0.0        20.17
-
-At 0.8 the surface coefficient stays non-negative on every step of that year; at 0.95 it goes
-negative on 0.65% of them. Negative-but-above-`−1` is damped ringing rather than divergence —
-outright blow-up needs a factor above 2, which this column never reaches — so 0.8 is not the
-difference between a run that works and one that does not *here*. It is the margin that keeps
-the scheme monotone, and the cost of holding it is ~17% more sub-steps on this column
-(the divisor grid is coarse, so the two often land on the same `dt` regardless).
-
-Raising it toward 1.0 is therefore a defensible speed/monotonicity trade on a column resembling
-the one measured, not a free one, and 1.0 exactly is not safe in general: nothing in the model
-bounds `|Λ|/G₁`, so a thin, warm, windy surface cell can put the factor past 2. Runs that want
-the limit removed rather than tightened should use `ImplicitThermal`, which is unconditionally
-stable and does not consult this at all.
+The limit is exact for the diffusion stencil at the start of the forcing step; the factor covers
+the change of the heat capacity and conductivity within the step. The surface energy balance
+needs no stability margin: it is linearized in the surface cell's new temperature, which makes
+its feedback stable at any sub-step. A separate bound, `THERMAL_SURFACE_STEP_FRACTION` of the
+surface relaxation time, keeps the surface flux accurate. 0.8 is inherited from the MATLAB model. Runs that want no
+stability limit at all should use `ImplicitThermal`, which is unconditionally stable and does not
+consult this.
 """
 const THERMAL_EXPLICIT_SAFETY_FACTOR = 0.8
+
+# Fraction of the surface cell's relaxation time `C₁/(G₁ + |Λ|)` that bounds the explicit
+# sub-step (see `_surface_relaxation_dt`). The linearized surface flux is stable at any step, so
+# this bound is for accuracy: the flux over a sub-step is first order in the step relative to the
+# relaxation time. At 0.5 the hour-mean turbulent flux of a thin surface cell under 15 m s-1 of
+# cold wind is within 1.3% of its value at a 16x smaller step; at 1.0 it is 2.6%. At 0.25, two-year
+# melt and refreeze on the `test_1` forcing, and on it at +4 K, are within 0.4% of a
+# time-converged run, for a runtime within 1% of 0.5.
+const THERMAL_SURFACE_STEP_FRACTION = 0.25
+
 
 # --- ImplicitThermal solver ---
 #
@@ -276,26 +365,6 @@ const THERMAL_IMPLICIT_MAX_ITERATIONS = 20
 # on the quadratic path, so `weight` never leaves 1.0 and the update is exactly the Newton step.
 const THERMAL_IMPLICIT_DAMPING_FLOOR = 2.0^-10
 
-"""
-    THERMAL_BC_DERIVATIVE_STEP
-
-One-sided finite-difference step [K] for the turbulent-flux derivatives `dQ_shf/dT` and
-`dQ_lhf/dT`, which enter the Newton diagonal. `_turbulent_heat_flux` runs through the
-Beljaars-Holtslag stability branches, so differentiating it by hand is not worth the
-maintenance; one extra call per iteration is cheaper than the accuracy would be worth.
-
-Measured, not assumed: the two flux evaluations together are 0.70 s of a 15.2 s run, so this
-call is not the cost of the implicit path. An analytic replacement that froze the stability
-coefficients was tried and reverted — it overshoots the true derivative up to 10x and more than
-doubles the iteration count. See `GEMB._surface_energy_balance_slope`.
-
-1e-4 K rather than the usual `sqrt(eps)` ≈ 1.5e-8: the derivative only sets the convergence
-*rate*, never the answer (see `_thermal_solve!(::ImplicitThermal, ...)`), so a step large
-enough to stay well clear of cancellation in the flux difference beats a step chosen to
-minimize truncation error. It also matches `T_MELT_SWITCH_TOLERANCE`, so the difference does
-not straddle the melting-point latent-heat switch any more often than the melt switch does.
-"""
-const THERMAL_BC_DERIVATIVE_STEP = 1e-4
 
 """
     THERMAL_IMPLICIT_DT_TARGET
@@ -357,6 +426,11 @@ const AQUIFER_TOLERANCE = 1e-3         # standing-water detection [fraction of p
 # rather than allocated per call because it is never written to — every write site tests
 # `isempty` first — so there is nothing to alias.
 const NO_VISCOSITY = Float64[]
+
+# The "not supplied" default of `calculate_density`'s `grain_dendricity`/`grain_sphericity`
+# keywords. Only `:Crocus`/`:CrocusPure` read them, and those throw on an empty vector. Never
+# written to, so sharing it aliases nothing.
+const NO_GRAIN_STATE = Float64[]
 
 """
     energy_tolerance(E_reference)

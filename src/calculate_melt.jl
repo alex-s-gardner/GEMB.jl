@@ -107,7 +107,49 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, rain, mp::ModelParameters, verbose::Bool)
+    _refreeze_cell(mp, melt_input, water, freeze_max, M, density, dz) ->
+        (freeze1, freeze2, water_delta, flux_out, M_new, density_new)
+
+Refreeze, retention and through-flow of `melt_input` [kg m-2] of water entering a cold cell of
+ice mass `M`, density `density`, thickness `dz` (held fixed) and pore water `water`.
+`freeze_max` is the cell's cold content as a mass of water.
+
+- `freeze1 = min(melt_input, (ρᵢ − ρ)·dz, freeze_max)` of the incoming water refreezes.
+- The pore water then moves toward the irreducible content at the new density, by
+  `water_delta = clamp(water_irr − water, −water, melt_input − freeze1)`.
+- When the cell expels water (`water_delta < 0`), up to the remaining cold content and pore
+  space of the expelled water also refreezes, `freeze2`.
+- What is left continues downward: `flux_out = melt_input − freeze1 − freeze2 − water_delta`,
+  so `melt_input = freeze1 + freeze2 + water_delta + flux_out` exactly.
+"""
+@inline function _refreeze_cell(mp::ModelParameters, melt_input::Float64, water::Float64,
+    freeze_max::Float64, M::Float64, density::Float64, dz::Float64)
+
+    d_max = (mp.density_ice - density) * dz
+    freeze1 = min(min(melt_input, d_max), freeze_max)
+    M += freeze1
+    density = M / dz
+
+    # pore water. `density` is the post-refreeze value, so the saturation is evaluated on it
+    # too under `:ColeouLesaffre`.
+    water_irr = (mp.density_ice - density) * irreducible_saturation(mp, density) * dz
+    water_delta = max(min(melt_input - freeze1, water_irr - water), -1 * water)
+    freeze2 = 0.0
+
+    if water_delta < 0.0 - WATER_TOLERANCE
+        d_max = (mp.density_ice - density) * dz
+        freeze2_max = min(d_max, freeze_max - freeze1)
+        freeze2 = min(-1.0 * water_delta, freeze2_max)
+        M += freeze2
+        density = M / dz
+    end
+
+    flux_out = max(0.0, melt_input - freeze1 - freeze2 - water_delta)
+    return freeze1, freeze2, water_delta, flux_out, M, density
+end
+
+"""
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -176,6 +218,10 @@ delay runoff rather than models that percolate deeper.
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
 age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
 
+`melt_total` is the ice melted this timestep and `freeze_total` all liquid water refrozen,
+including rain, which arrives as pore water (see [`calculate_accumulation`](@ref)). Over any
+period `melt + rain − refreeze − runoff` equals the change in column liquid water.
+
 # Age transport
 
 `age` [d] is the mass-weighted mean age of all mass in a cell, matrix and pore water
@@ -200,6 +246,10 @@ than the loop index. The companion slab diagnostics are taken in
 
 Arrays may shrink (cells deleted when mass=0).
 
+`basal_surplus`, when given, is a column resting on ground (`lower_boundary = :ground`): energy
+beyond what melts the deepest cell entirely is added to `basal_surplus[]` [J m-2] for the ground
+to take, and the deepest cell melts out. Without it that case is an error.
+
 # References
 - Vandecrux, B., et al. (2020). The firn meltwater Retention Model Intercomparison Project
   (RetMIP): evaluation of nine firn models at four weather station sites on the Greenland ice
@@ -219,8 +269,9 @@ Arrays may shrink (cells deleted when mass=0).
 function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
-    grain_sphericity::Vector{Float64}, age::Vector{Float64}, rain::Float64,
-    mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace())
+    grain_sphericity::Vector{Float64}, age::Vector{Float64},
+    mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace(),
+    basal_surplus::Union{Nothing,Base.RefValue{Float64}}=nothing)
 
     # Note: arrays are modified in-place. May shrink via deleteat! when cells lose all mass.
 
@@ -356,6 +407,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
                     T_surplus[i+1] = max(0.0, T_excess[i+1] - T_full_melt)
                     E_surplus[i+1] = surplus_energy(mp, T_excess[i+1], T_surplus[i+1], M[i+1])
+                elseif basal_surplus !== nothing
+                    # The column rests on ground, which takes the energy beyond melting the
+                    # deepest cell.
+                    basal_surplus[] += E_surplus[i]
                 else
                     error("surplus energy reached the base of gemb column (i.e. entire column melted out in a single time step)")
                 end
@@ -388,7 +443,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             end
         end
         melt_surface = melt[1]
-        melt_total = max(0.0, melt_sum - rain)
+        melt_total = melt_sum
 
         # initialize refreeze, runoff, flux_dn and water_delta vectors
         runoff = _fit_buffer!(workspace.runoff, m)
@@ -463,27 +518,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             # some or all meltwater refreezes
             else
                 dz_0 = remove_melt!(mp, M, density, dz, i, melt[i])
-                d_max = (mp.density_ice - density[i]) * dz_0
-                freeze1 = min(min(melt_input, d_max), freeze_max[i])
-                M[i] = M[i] + freeze1
-                density[i] = M[i] / dz_0
-
-                # pore water. `density[i]` is the post-refreeze value, so the saturation
-                # is evaluated on it too under `:ColeouLesaffre`.
-                water_irr = (mp.density_ice - density[i]) * irreducible_saturation(mp, density[i]) * dz_0
-                water_delta[i] = max(min(melt_input - freeze1, water_irr - water[i]), -1 * water[i])
-                freeze2 = 0.0
-
-                if water_delta[i] < 0.0 - WATER_TOLERANCE
-                    d_max = (mp.density_ice - density[i]) * dz_0
-                    freeze2_max = min(d_max, freeze_max[i] - freeze1)
-                    freeze2 = min(-1.0 * water_delta[i], freeze2_max)
-                    M[i] = M[i] + freeze2
-                    density[i] = M[i] / dz_0
-                end
-
+                freeze1, freeze2, water_delta[i], flux_dn[i+1], M[i], density[i] =
+                    _refreeze_cell(mp, melt_input, water[i], freeze_max[i], M[i], density[i],
+                        dz_0)
                 freeze[i] = freeze[i] + freeze1 + freeze2
-                flux_dn[i+1] = max(0.0, melt_input - freeze1 - water_delta[i])
 
                 if M[i] > WATER_TOLERANCE
                     temperature[i] = refreeze_temperature(mp, temperature[i], M[i],
@@ -572,6 +610,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
             percolation_depth += dz[i]
         end
 
+        # Refrozen water enters the SNICAR radius (CLM5.0); `freeze` is indexed on the column
+        # before cells are deleted.
+        independent_grain_radius(mp) &&
+            snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
+
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
         # column state is assembled with `M` standing in for it.
@@ -583,6 +626,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         # calculate new grid lengths
         dz = M ./ density
+    elseif independent_grain_radius(mp)
+        # Only pore water froze this step.
+        snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
     end
 
     freeze_total = sum(freeze)
@@ -596,6 +642,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         M_delta = M_total_initial - M_total_final
         E_delta = E_total_initial - E_total_final - E_total_runoff
+        basal_surplus === nothing || (E_delta -= basal_surplus[])
 
         E_tol = energy_tolerance(E_total_initial)
 

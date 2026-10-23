@@ -187,6 +187,220 @@ slot; the caller removes it with [`close_slot!`](@ref), either immediately or in
     return M_new
 end
 
+# Snow layering after Crocus (Vionnet et al., 2012, p. 778; the published coefficients are those
+# of Lafaysse et al., 2026, eqs. 7–11, pp. 6277–6278). See `snow_layer_distance`,
+# `snow_layers_distinct` and `mix_grains`.
+const SNOW_LAYER_DISTANCE_SCALE = 50.0      # overall factor of eq. 7
+const SNOW_LAYER_OPTICAL_WEIGHT = 2000.0    # eq. 7, per metre of optical diameter
+const SNOW_LAYER_AGE_LIMIT = 300.0          # eq. 7: layers this many days apart are dissimilar [d]
+const SNOW_LAYER_DISTANCE_AGED = 200.0      # eq. 7: the distance of such layers
+const SNOW_LAYER_AGGREGATION_FACTOR = 5.0   # eq. 11: a layer z thick aggregates if z < 5·z*/D
+# Optical diameter of Crocus (Lafaysse et al., 2026, Appendix D, pp. 6306–6307) [m]: the unit of
+# the dendritic form, eq. D1, and the constant of the non-dendritic form, eq. D5.
+const OPTICAL_DIAMETER_DENDRITIC_UNIT = 1e-4
+const OPTICAL_DIAMETER_NONDENDRITIC_OFFSET = 4e-4
+# Least matrix mass of a snow layer of its own, per second of forcing step [kg m-2 s-1]: 1 kg m-2
+# for a 3-hour step; see `snow_layer_min_mass`.
+const SNOW_LAYER_MIN_MASS_RATE = 1.0 / 10800.0
+# Exponent of the effective grain radius in the pure-snow albedo of Gardner and Sharp (2010)
+# eq. 7, α_S = 1.48 − (0.091·r/3)^0.07 (r in mm): a mass-weighted mean of r^0.07 conserves the
+# mass-weighted α_S.
+const ALBEDO_GRAIN_RADIUS_EXPONENT = 0.07
+
+"""
+    snow_layer_min_mass(dt) -> M [kg m-2]
+
+Least matrix mass of a snow layer of its own over a forcing step of `dt` seconds,
+`SNOW_LAYER_MIN_MASS_RATE·dt` (1 kg m-2 at 3 hours, 2.9 mm at GEMB's default fresh-snow density
+of 350 kg m-3). Snowfall lighter than this merges into the top cell, and a surface layer that
+falls below it merges into the cell below.
+
+Crocus aggregates a surface layer thinner than 5 mm with the one below (Lafaysse et al., 2026,
+eq. 11, p. 6278). GEMB bounds the mass instead, in proportion to the step:
+
+- the surface cell alone supplies the step's vapor loss ([`apply_vapor_exchange!`](@ref)), and
+  this bound is the loss of a sublimation latent heat flux of `LS·SNOW_LAYER_MIN_MASS_RATE` =
+  262 W m-2 sustained over the whole step;
+- the mass sets the surface cell's heat capacity and so the explicit thermal sub-step
+  (`THERMAL_SURFACE_STEP_FRACTION` of `C₁/(G₁ + |Λ|)`): at this bound the explicit solve of a
+  3-hour step is about 11 times slower than with a `column_dzmin` cell at 350 kg m-3, and the
+  number of sub-steps per step does not depend on `dt`;
+- compaction, which does not change the mass, cannot push a layer across the bound.
+"""
+@inline snow_layer_min_mass(dt::Real) = SNOW_LAYER_MIN_MASS_RATE * dt
+
+"""
+    optical_diameter(dendricity, sphericity, grain_radius) -> d [m]
+
+Optical diameter of snow in Crocus's state, from GEMB's dendricity `δ`, sphericity `S` and
+effective grain radius `grain_radius` [mm] (Lafaysse et al., 2026, Appendix D, pp. 6306–6307):
+
+    d = 1e-4·(δ + (1 − δ)·(4 − S))               dendritic, δ > 0          (eq. D1)
+    d = g·S + (1 − S)·(4e-4 + g)/2               non-dendritic, δ = 0      (eq. D5)
+
+Eq. D1 is the Brun et al. (1992) relation (Vionnet et al., 2012, eq. 13) and reads dendricity
+and sphericity only. Eq. D5 is the non-dendritic form of Crocus's default metamorphism option
+B21, with `g` the Brun grain size [m], which GEMB carries as twice the effective radius,
+`g = 2e-3·grain_radius`. A cell is dendritic when its dendricity exceeds `GDN_TOLERANCE`, as in
+[`calculate_grain_size`](@ref).
+"""
+@inline function optical_diameter(dendricity::Float64, sphericity::Float64,
+    grain_radius::Float64)
+    if dendricity > GDN_TOLERANCE
+        return OPTICAL_DIAMETER_DENDRITIC_UNIT * (dendricity + (1 - dendricity) * (4 - sphericity))
+    end
+    g = 2e-3 * grain_radius
+    return g * sphericity + (1 - sphericity) * (OPTICAL_DIAMETER_NONDENDRITIC_OFFSET + g) / 2
+end
+
+"""
+    snow_layer_distance(d_up, s_up, r_up, wet_up, age_up, density_up,
+                        d_lo, s_lo, r_lo, wet_lo, age_lo, density_lo) -> D
+
+Dissimilarity `D(i, i+1)` of an upper snow layer `i` and the layer `i+1` below it, Lafaysse et al.
+(2026) eqs. 7–8 (p. 6277):
+
+    D = 50·(|S_{i+1} − S_i| + 2000·|d_{i+1} − d_i| + δ_h(i, i+1))   if A_i − A_{i+1} < 300,
+    D = 200                                                        otherwise,
+
+with sphericity `S` (`s_*`), optical diameter `d` [m] from [`optical_diameter`](@ref) of each
+layer's dendricity, sphericity and effective radius [mm] (`d_*`, `s_*`, `r_*`), and age `A`
+[days since snowfall] (`age_*`). The 2000 m⁻¹ normalizes the ≈ 5e-4 m range of `d` to the range
+1 of `S` (p. 6277).
+
+- **Age.** The condition is on the signed difference, as printed. For two layers in place, an
+  upper layer younger than the one below always satisfies it. For snowfall, `D(n, 1)` takes the
+  surface layer as `i` and the new snow as `i+1`, the substitution Lafaysse et al. give for
+  aggregating snowfall with the surface layer (p. 6279), so `D = 200` when the surface layer is
+  300 days or more old: recent snow is kept apart from permanent snow (p. 6278).
+- **Wetting.** `δ_h = 1` when exactly one of the two layers has held liquid water at any time
+  (`h > 1` in Crocus's history tracker, Table 2, eq. 8). GEMB carries no wetting history, so
+  `δ_h` here is 1 when exactly one layer holds liquid water now (`wet_*`), else 0.
+
+Snow is not aggregated with firn or ice (Lafaysse et al., 2026, p. 6279, for glaciers; Crocus's
+default threshold is 850 kg m-3, GEMB's firn boundary is `DENSITY_PORE_CLOSEOFF`, the density at
+which [`calculate_albedo`](@ref) also stops treating a cell as snow): `D = Inf` if either density
+is at or above it. The one exception is snowfall below [`snow_layer_min_mass`](@ref), too light
+to form a cell, which [`calculate_accumulation`](@ref) mixes into whatever the top cell is.
+"""
+@inline function snow_layer_distance(d_up::Float64, s_up::Float64, r_up::Float64,
+    wet_up::Bool, age_up::Float64, density_up::Float64, d_lo::Float64, s_lo::Float64,
+    r_lo::Float64, wet_lo::Bool, age_lo::Float64, density_lo::Float64)
+    (max(density_up, density_lo) >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE) && return Inf
+    age_up - age_lo < SNOW_LAYER_AGE_LIMIT || return SNOW_LAYER_DISTANCE_AGED
+    optical = SNOW_LAYER_OPTICAL_WEIGHT *
+              abs(optical_diameter(d_lo, s_lo, r_lo) - optical_diameter(d_up, s_up, r_up))
+    return SNOW_LAYER_DISTANCE_SCALE *
+           (abs(s_lo - s_up) + optical + (wet_up != wet_lo ? 1.0 : 0.0))
+end
+
+"""
+    snow_layers_distinct(z, D, mp) -> Bool
+
+Whether a snow layer `z` [m] thick is kept apart from a neighbour at [`snow_layer_distance`](@ref)
+`D`: the aggregation rule of Crocus for internal layers, `z < 5·z*/D` aggregates (Lafaysse et al.,
+2026, eq. 11, last branch, p. 6278), negated. `z*` is the layer thickness of the optimal profile;
+GEMB's counterpart near the surface is `mp.column_dztop`, the thickness of the initial grid there
+and the centre of the `[column_dzmin, column_dzmax]` band its merge and split passes hold cells
+in. A layer thin enough, or similar enough, is not distinct; `D = Inf` (firn or ice) always is.
+"""
+@inline snow_layers_distinct(z::Float64, D::Float64, mp::ModelParameters) =
+    D * z >= SNOW_LAYER_AGGREGATION_FACTOR * mp.column_dztop
+
+"""
+    mix_grains(d1, s1, r1, M1, d2, s2, r2, M2, independent_radius = false) -> (d, s, r)
+
+Grain state of snow of matrix mass `M1` with dendricity `d1`, sphericity `s1` and effective radius
+`r1` [mm] combined with `M2` of `(d2, s2, r2)`, after the aggregation of Crocus (Lafaysse et
+al., 2026, eqs. 15–16, p. 6279): sphericity is mass-weighted and the optical size is mixed so as
+to conserve the mass-weighted albedo. With weight `f = M2/(M1 + M2)`:
+
+- sphericity `s = s1 + f·(s2 − s1)`;
+- both dendritic (dendricity above `GDN_TOLERANCE`): dendricity `d1 + f·(d2 − d1)`, and the
+  radius is [`dendritic_grain_radius`](@ref) of the mixed `(d, s)`, since a dendritic radius
+  is not independent state;
+- otherwise non-dendritic (`d = 0`), with the radius whose Gardner–Sharp pure-snow albedo (eq. 7)
+  is the mass-weighted mean of the two: `r = (r1^q + f·(r2^q − r1^q))^(1/q)`,
+  `q = ALBEDO_GRAIN_RADIUS_EXPONENT`. This weights fine grains more than a linear mean (50/50 of
+  1 mm and 0.05 mm gives 0.24 mm).
+
+With `independent_radius` (see [`independent_grain_radius`](@ref)) the radius is mixed by the
+second rule in both cases, and two dendritic states still mix their dendricity.
+
+Every result moves from the first state by `O(f)`. Where the mixed sphericity and dendricity, or
+the mixed `r^q`, round back to the first state's values (in particular `f = 0`, when
+`M2/(M1 + M2)` underflows), the first state is returned bit for bit.
+"""
+@inline function mix_grains(d1::Float64, s1::Float64, r1::Float64, M1::Float64,
+    d2::Float64, s2::Float64, r2::Float64, M2::Float64, independent_radius::Bool = false)
+    f = M2 / (M1 + M2)
+    f == 0.0 && return d1, s1, r1
+    s = s1 + f * (s2 - s1)
+    dendritic = (d1 > GDN_TOLERANCE) && (d2 > GDN_TOLERANCE)
+    d = dendritic ? d1 + f * (d2 - d1) : 0.0
+    if dendritic && !independent_radius
+        (d == d1 && s == s1) && return d1, s1, r1
+        return d, s, dendritic_grain_radius(d, s)
+    end
+    q = ALBEDO_GRAIN_RADIUS_EXPONENT
+    a1 = r1^q
+    a = a1 + f * (r2^q - a1)
+    r = a == a1 ? r1 : a^(1 / q)
+    return d, s, r
+end
+
+"""
+    merge_snow_pair!(cols, i, i_target, M_i, M_target, mp) -> M_new
+
+Fold snow cell `i` into snow cell `i_target` as [`merge_pair!`](@ref) does (mass, enthalpy, pore
+water and thickness summed, age mass-weighted), but with the grain state of the two mixed by
+[`mix_grains`](@ref) instead of taken from cell `i`.
+"""
+@inline function merge_snow_pair!(cols::NamedTuple, i::Int, i_target::Int,
+    M_i::Float64, M_target::Float64, mp::ModelParameters)
+    M_new = M_i + M_target
+    cols.temperature[i_target] = mix_temperature(mp,
+        cols.temperature[i], M_i, cols.temperature[i_target], M_target)
+    cols.grain_dendricity[i_target], cols.grain_sphericity[i_target],
+        cols.grain_radius[i_target] = mix_grains(
+            cols.grain_dendricity[i_target], cols.grain_sphericity[i_target],
+            cols.grain_radius[i_target], M_target,
+            cols.grain_dendricity[i], cols.grain_sphericity[i], cols.grain_radius[i], M_i,
+            independent_grain_radius(mp))
+    cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
+        cols.age[i_target], M_target + cols.water[i_target])
+    cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
+    cols.density[i_target] = M_new / cols.dz[i_target]
+    cols.water[i_target] = cols.water[i] + cols.water[i_target]
+    return M_new
+end
+
+"""
+    absorb_snow!(cols, i, i_target, M_i, M_target, mp) -> M_new
+
+Fold snow cell `i` into firn or ice cell `i_target` at the firn or ice cell's density: its
+thickness grows by `M_i/density[i_target]`, so its density, grain state and the albedo
+[`calculate_albedo`](@ref) reads from that density are unchanged. Mass, enthalpy and pore water
+are conserved and age is mass-weighted, as in [`merge_pair!`](@ref); the column loses the snow's
+pore space, which [`trim_bottom!`](@ref) makes up at the base.
+
+Snow is not aggregated with firn or ice (Lafaysse et al., 2026, p. 6279). A surface snow layer
+over firn or ice falls below [`snow_layer_min_mass`](@ref) only by losing mass (melt, sublimation,
+erosion), and its remainder is taken into the firn or ice this way, so the exposed surface takes
+the firn or ice albedo it had, rather than a diluted density that would read as brighter firn.
+"""
+@inline function absorb_snow!(cols::NamedTuple, i::Int, i_target::Int,
+    M_i::Float64, M_target::Float64, mp::ModelParameters)
+    M_new = M_i + M_target
+    cols.temperature[i_target] = mix_temperature(mp,
+        cols.temperature[i], M_i, cols.temperature[i_target], M_target)
+    cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
+        cols.age[i_target], M_target + cols.water[i_target])
+    cols.dz[i_target] += M_i / cols.density[i_target]
+    cols.water[i_target] = cols.water[i] + cols.water[i_target]
+    return M_new
+end
+
 """
     split_cell!(cols, i)
 

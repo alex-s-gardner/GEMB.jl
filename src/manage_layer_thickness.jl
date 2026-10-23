@@ -1,12 +1,21 @@
 """
-    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool; n_target=length(dz))
+    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool; dt, n_target=length(dz))
 
 Return every cell to its per-cell thickness band, then restore the column to exactly
 `n_target` cells.
 
 Three passes, in order:
 
-1. **Merge** cells thinner than their per-cell `dzmin` band into the cell below.
+1. **Merge** cells thinner than their per-cell `dzmin` band into the cell below (the bottom
+   cell into the deepest surviving cell above it). A surface snow cell is the exception: it
+   is kept, however thin, while it holds at least [`snow_layer_min_mass`](@ref)`(dt)`, `dt`
+   [s] being the forcing step, and is distinct
+   from cell 2 ([`snow_layers_distinct`](@ref)), which is how fresh snow that fell on
+   dissimilar snow, firn or ice stays a layer of its own until it has aged or compacted
+   toward what lies below. Snow merged into snow mixes the grain state by mass
+   ([`merge_snow_pair!`](@ref)); surface snow merged into firn or ice is absorbed at the
+   firn or ice density ([`absorb_snow!`](@ref)); every other merge takes the grain state of
+   the thin cell ([`merge_pair!`](@ref)).
 2. **Split** cells thicker than their per-cell `dzmax` band in half.
 3. **Count control** ([`enforce_column_length!`](@ref)) — merge or split in the deep
    column until the cell count is exactly `n_target`, absorbing whatever net change the
@@ -17,6 +26,10 @@ energy exactly**, so this function no longer reports a basal mass/energy flux. C
 is pinned separately, and later in the timestep, by [`trim_bottom!`](@ref) — see
 `grid_ops.jl` for why count and mass are controlled independently.
 
+The surface cell can therefore enter the next thermal solve with as little as
+`snow_layer_min_mass(dt)`. Both solvers are stable there; the explicit one shortens its sub-step
+through the surface relaxation bound (`THERMAL_SURFACE_STEP_FRACTION`).
+
 The Dirichlet temperature boundary condition is re-imposed at the bottom; the energy that
 requires is the only term returned in `E_added`.
 
@@ -24,18 +37,26 @@ Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
 grain_sphericity, age, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
 
+Two keywords serve the snow over the ground of `lower_boundary = :ground`, whose cell count
+varies: `n_max > 0` replaces the fixed count by a ceiling, the count controller merging only
+while there are more than `n_max` cells, and `dirichlet_bottom = false` leaves the bottom cell's
+temperature alone, the snow's base not being a fixed-temperature boundary. A column of one cell
+is not merged, and a column whose cells are all thinner than their bands merges into its bottom
+cell, which is kept.
+
 `age` needs no handling here beyond being in the bundle: all three passes go through
-[`merge_pair!`](@ref) (which mass-weights it) and [`split_cell!`](@ref) (for which
-duplication is already correct, age being intensive). The merge pass keeps `M` in sync
-across a chain of cells folding into one target, so the weighting stays correct over a
-chain rather than only over a pair.
+[`merge_pair!`](@ref), [`merge_snow_pair!`](@ref) or [`absorb_snow!`](@ref) (which mass-weight
+it) and [`split_cell!`](@ref) (for which duplication is already correct, age being
+intensive). The merge pass keeps `M` in sync across a chain of cells folding into one target,
+so the weighting stays correct over a chain rather than only over a pair.
 """
 function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
-    mp::ModelParameters, verbose::Bool; n_target::Int=length(dz),
-    workspace::ColumnWorkspace=ColumnWorkspace())
+    mp::ModelParameters, verbose::Bool; dt::Float64, n_target::Int=length(dz),
+    workspace::ColumnWorkspace=ColumnWorkspace(), n_max::Int=0,
+    dirichlet_bottom::Bool=true)
 
     cols = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
@@ -71,13 +92,19 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     delete_cell = view(workspace.delete_cell, 1:m)
     fill!(delete_cell, false)
     for i in 1:m
-        if dz[i] < (column_dzmin2[i] - D_TOLERANCE)
-            delete_cell[i] = true
+        if m > 1 && dz[i] < (column_dzmin2[i] - D_TOLERANCE)
+            # A distinct snow layer at the surface is kept however thin, down to
+            # `snow_layer_min_mass(dt)`.
+            (i == 1 && m > 1 && _surface_layer_kept(cols, mp, dt)) && continue
 
             # Merge downward, except for the bottom cell, which merges into the
-            # deepest surviving cell above it.
-            i_target = i == m ? findlast(!, delete_cell) : i + 1
-            M[i_target] = merge_pair!(cols, i, i_target, M[i], M[i_target], mp)
+            # deepest surviving cell above it. When every cell above has merged downward
+            # (a column of thin cells only, as thin snow over the ground of
+            # `lower_boundary = :ground`), the bottom cell holds the whole column and is kept.
+            i_target = i == m ? findlast(!, view(delete_cell, 1:m-1)) : i + 1
+            i_target === nothing && continue
+            delete_cell[i] = true
+            M[i_target] = _merge_thin_cell!(cols, i, i_target, M[i], M[i_target], mp)
         end
     end
 
@@ -110,14 +137,18 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     ## COUNT CONTROL — restore the fixed cell count (exactly conservative)
+    n_max > 0 && (n_target = min(length(dz), n_max))
     enforce_column_length!(cols, n_target, mp; workspace)
 
     # The count controller conserves mass and energy exactly, and depth is pinned by
     # `trim_bottom!` later in the timestep, so the only budget term arising here is the
     # Dirichlet bottom boundary condition.
-    E_added = (dz[end] * density[end]) *
-              (specific_enthalpy(mp, T_bottom) - specific_enthalpy(mp, temperature[end]))
-    temperature[end] = T_bottom
+    E_added = 0.0
+    if dirichlet_bottom
+        E_added = (dz[end] * density[end]) *
+                  (specific_enthalpy(mp, T_bottom) - specific_enthalpy(mp, temperature[end]))
+        temperature[end] = T_bottom
+    end
 
     ## CHECK FOR MASS AND ENERGY CONSERVATION
     if verbose
@@ -135,4 +166,33 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
     age, E_added
+end
+
+# Whether a surface cell thinner than its band is kept as a layer of its own: it is snow, holds
+# at least `snow_layer_min_mass(dt)`, and is distinct from cell 2 (`snow_layers_distinct`, always
+# so over firn or ice).
+@inline function _surface_layer_kept(cols::NamedTuple, mp::ModelParameters, dt::Float64)
+    density = cols.density
+    density[1] < DENSITY_PORE_CLOSEOFF - D_TOLERANCE || return false
+    cols.dz[1] * density[1] >= snow_layer_min_mass(dt) || return false
+    D = snow_layer_distance(cols.grain_dendricity[1], cols.grain_sphericity[1],
+        cols.grain_radius[1], cols.water[1] > WATER_TOLERANCE, cols.age[1], density[1],
+        cols.grain_dendricity[2], cols.grain_sphericity[2], cols.grain_radius[2],
+        cols.water[2] > WATER_TOLERANCE, cols.age[2], density[2])
+    return snow_layers_distinct(cols.dz[1], D, mp)
+end
+
+# Fold a cell thinner than its band into `i_target`. Snow into snow mixes the grain state by mass
+# (`merge_snow_pair!`); surface snow into firn or ice is absorbed at the firn or ice density
+# (`absorb_snow!`); every other pair keeps the grain state of cell `i` (`merge_pair!`).
+@inline function _merge_thin_cell!(cols::NamedTuple, i::Int, i_target::Int,
+    M_i::Float64, M_target::Float64, mp::ModelParameters)
+    snow_i = cols.density[i] < DENSITY_PORE_CLOSEOFF - D_TOLERANCE
+    snow_target = cols.density[i_target] < DENSITY_PORE_CLOSEOFF - D_TOLERANCE
+    if snow_i && snow_target
+        return merge_snow_pair!(cols, i, i_target, M_i, M_target, mp)
+    elseif snow_i && i == 1
+        return absorb_snow!(cols, i, i_target, M_i, M_target, mp)
+    end
+    return merge_pair!(cols, i, i_target, M_i, M_target, mp)
 end

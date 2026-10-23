@@ -1,12 +1,13 @@
 """
-    calculate_density(temperature, dz, density, grain_radius, water, cfs::ClimateForcingStep, mp::ModelParameters)
+    calculate_density(temperature, dz, density, grain_radius, water, cfs::ClimateForcingStep, mp::ModelParameters;
+                      grain_dendricity, grain_sphericity, viscosity)
 
 Compute the densification of snow/firn using one of several models:
 - `:HerronLangway`: Herron and Langway (1980)
-- `:Arthern`: semi-empirical model of Arthern et al. (2010) [default]
+- `:Arthern`: semi-empirical model of Arthern et al. (2010)
 - `:ArthernB`: physical model from Appendix B of Arthern et al. (2010)
 - `:Crocus`: viscous settling of Vionnet et al. (2012) below `CROCUS_HYBRID_DENSITY`,
-  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix
+  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix [default]
 - `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
 - `:Simonsen2013`: Arthern retuned for Greenland by Simonsen et al. (2013)
@@ -27,10 +28,24 @@ under every other scheme, and for the cells `:Crocus` hands to `:GSFC2020`, it s
 `NO_VISCOSITY`, and an empty vector means "not requested" (a concrete type on both
 settings — see the note in `gemb_core.jl`).
 
+With `mp.destructive_metamorphism` set, the `:Crocus`/`:CrocusPure` viscous branch adds the
+destructive-metamorphism settling of fresh snow ([`destructive_metamorphism_rate`](@ref)) to
+its overburden strain rate. Both are strain rates `(1/D)·dD/dt`, and van Kampenhout et al.
+(2017, Sect. 3.4) and Schneider et al. (2022, p. 3) sum them, so one step is
+`D·exp(-(σ/η + r_dm)·dt)` with both rates taken at the start-of-step state. The cells
+`:Crocus` hands to `:GSFC2020` (ρ ≥ `CROCUS_HYBRID_DENSITY`) do not get the term; there it is
+below `exp(-0.046·275) = 3.2e-6` of its fresh-snow value. Requesting it with any other
+densification scheme throws.
+
 `water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
-(as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, plus eq. 8's viscosity
-reduction); the accumulation-driven schemes proxy overburden with mean accumulation and
-ignore it.
+(as part of the overburden) and `:Crocus`/`:CrocusPure` (overburden, eq. 8's viscosity
+reduction, and the grain-type gate of eq. 9); the accumulation-driven schemes proxy overburden
+with mean accumulation and ignore it.
+
+`grain_dendricity` and `grain_sphericity` (keywords, per cell) are read only by
+`:Crocus`/`:CrocusPure`, which apply eq. 9's grain-type stiffening only to cells that
+`crocus_f2_applies` admits. Those two schemes throw an `ArgumentError` when either is
+missing or of the wrong length; every other scheme ignores them.
 
 The accumulation-driven branches are scalar-loop implementations, numerically identical
 element by element to the vectorized form they replaced but without its mask / gather /
@@ -70,7 +85,13 @@ broadcast temporaries (`mass_init`, `idx`, `H`, `c0`, `c1`, ...) allocated per c
 - van Kampenhout, L., Lenaerts, J. T. M., Lipscomb, W. H., Sacks, W. J., Lawrence, D. M.,
   Slater, A. G., and van den Broeke, M. R. (2017). Improving the representation of polar snow
   and firn in the Community Earth System Model. *J. Adv. Model. Earth Syst.* 9, 2583-2600.
-  (eq. 8, the grain-size treatment the Crocus branch adopts.)
+  (eq. 8, the grain-size treatment the Crocus branch adopts; eq. 5, destructive
+  metamorphism.)
+- Schneider, A. M., Zender, C. S., and Price, S. F. (2022). More realistic intermediate depth
+  dry firn densification in the Energy Exascale Earth System Model (E3SM). *J. Adv. Model.
+  Earth Syst.* 14, e2021MS002542. (eq. 3, the destructive-metamorphism density taper.)
+- Anderson, E. A. (1976). A point energy and mass balance model of a snow cover. NOAA
+  Technical Report NWS 19. (Destructive metamorphism.)
 - Wilkinson, D. S. and Ashby, M. F. (1975). Pressure sintering by power law creep.
   *Acta Metall.* 23, 1277-1285. (The closed-pore `fs(ρ)` of Barnola's eq. 4.)
 - Doake, C. S. M. and Wolff, E. W. (1985). Flow law for ice in polar ice sheets. *Nature* 314,
@@ -79,6 +100,8 @@ broadcast temporaries (`mass_init`, `idx`, `H`, `c0`, `c1`, ...) allocated per c
 function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, water::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters;
+    grain_dendricity::Vector{Float64}=NO_GRAIN_STATE,
+    grain_sphericity::Vector{Float64}=NO_GRAIN_STATE,
     viscosity::Vector{Float64}=NO_VISCOSITY)
 
     # specify constants
@@ -106,6 +129,10 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
     isempty(viscosity) || fill!(viscosity, NaN)
 
     method = mp.densification_method
+    if mp.destructive_metamorphism && !(method == :Crocus || method == :CrocusPure)
+        error("destructive_metamorphism requires densification_method :Crocus or " *
+              ":CrocusPure, got :$(method)")
+    end
 
     if method == :HerronLangway
         # Rate coefficients `_hl_c0`/`_hl_c1` are shared with `steady_state_density`.
@@ -242,9 +269,15 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         # `:Crocus` hands cells at or above `CROCUS_HYBRID_DENSITY` to `:GSFC2020`, because
         # eq. 7 is fitted to a 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn —
         # see `CROCUS_HYBRID_DENSITY`. `:CrocusPure` applies eq. 5 at every density.
+        (length(grain_dendricity) == m && length(grain_sphericity) == m) ||
+            throw(ArgumentError(":$(method) densification gates eq. 9 on grain shape and needs " *
+                                "grain_dendricity and grain_sphericity for all $m cells; got " *
+                                "$(length(grain_dendricity)) and $(length(grain_sphericity))"))
         hybrid = method == :Crocus
         p = hybrid ? DensificationCoeffs(mp, pm, tam) : nothing
         dt_seconds = cfs.dt
+        settling = mp.destructive_metamorphism
+        density_dm = mp.destructive_metamorphism_density
         load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
         @inbounds for i in 1:m
             d0 = density[i]
@@ -255,14 +288,23 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
             else
                 # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
-                # midpoint: the paper states the half-own-weight rule for the uppermost
-                # layer, which is the same convention applied uniformly here. For every cell
-                # but the first the self term is a per-mille correction to the overlying
-                # load; for the first it is the difference between compacting and not.
+                # midpoint: every cell carries the overlying load plus half its own weight.
+                # Crocus adds the half-own-weight term to the uppermost layer only (the paper's
+                # note under eq. 6; `snowcro.F90` SNOWCROCOMPACTN), so a lower cell there is
+                # loaded at its top. The midpoint stress converges to the continuous profile
+                # from closer as cells coarsen; with fine layering the two agree. For the first
+                # cell the self term is the difference between compacting and not.
                 σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
-                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i])
+                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i],
+                    crocus_f2_applies(grain_dendricity[i], grain_sphericity[i], water[i],
+                        grain_radius[i]))
                 isempty(viscosity) || (viscosity[i] = η)
-                dz_new = dz0 * exp(-σ / η * dt_seconds)
+                strain_rate = σ / η                              # [s-1]
+                if settling
+                    strain_rate += destructive_metamorphism_rate(d0, temperature[i],
+                        water[i] > WATER_TOLERANCE, density_dm)
+                end
+                dz_new = dz0 * exp(-strain_rate * dt_seconds)
                 d = d0 * dz0 / dz_new
                 if d > density_ice - D_TOLERANCE
                     d = density_ice
@@ -338,8 +380,11 @@ end
 
 # Herron & Langway (1980) two-stage coefficients, equivalent to Arthern et al.
 # (2010) eq. (2).
-@inline _hl_c0(T::Float64, pm::Float64) = (11.0 * exp(-10160.0 / (T * R_GAS))) * (pm / 1000.0)          # ρ <= 550
-@inline _hl_c1(T::Float64, pm::Float64) = (575.0 * exp(-21400.0 / (T * R_GAS))) * sqrt(pm / 1000.0)     # ρ > 550
+# `_hl_k0`/`_hl_k1` are the temperature-only rate constants k₀ and k₁ of Herron & Langway's eq. 7.
+@inline _hl_k0(T::Float64) = 11.0 * exp(-10160.0 / (T * R_GAS))
+@inline _hl_k1(T::Float64) = 575.0 * exp(-21400.0 / (T * R_GAS))
+@inline _hl_c0(T::Float64, pm::Float64) = _hl_k0(T) * (pm / 1000.0)          # ρ <= 550
+@inline _hl_c1(T::Float64, pm::Float64) = _hl_k1(T) * sqrt(pm / 1000.0)      # ρ > 550
 
 # Arthern et al. (2010) semi-empirical, and the family of schemes that scale it.
 #
@@ -590,6 +635,54 @@ const CROCUS_G3 = 1.0e-4        # e-folding grain size
 const CROCUS_F2_MAX = 4.0
 # Floor, not in the paper. See `_crocus_viscosity`.
 const CROCUS_F2_MIN = 1.0
+# Sphericity below which a non-dendritic cell counts as angular for eq. 9: Crocus's `XVGRAN6`
+# (`modd_snow_metamo.F90:128` of the Crocus 3.0.1 release), the test at `snowcro.F90:2114`.
+const CROCUS_F2_SPHERICITY_MAX = 51 / 99
+
+"""
+    crocus_f2_applies(dendricity, sphericity, water, grain_radius) -> Bool
+
+Whether eq. 9's grain-type factor `f2` of the Crocus viscosity applies to a cell. It applies when
+the cell is
+
+- non-dendritic: `dendricity` at most `GDN_TOLERANCE` (the classification
+  [`calculate_grain_size`](@ref) uses) *and* an optical diameter `d` of at least
+  `1e-4·(4 − S)` m, Crocus's own non-dendritic test, with `d` from [`optical_diameter`](@ref)
+  (Lafaysse et al., 2026, eq. D5, GEMB's grain size `2·grain_radius`);
+- angular: `sphericity < CROCUS_F2_SPHERICITY_MAX = 51/99`;
+- dry: `water` at most `WATER_TOLERANCE` [kg m-2].
+
+Every other cell gets `f2 = 1`. The optical-diameter test admits only grains of at least
+0.33 mm (0.40 mm at sphericity 0), where eq. 9 is 3.7 to 4: angular snow finer than that, which
+GEMB's `:FlannerZender2006` radius readily produces, is dendritic snow to Crocus and gets no
+stiffening there either.
+
+Crocus 3.0.1 (`snowcro.F90:2112-2121`, `SNOWCROCOMPACTN`) applies `f2` only to a layer that is
+non-dendritic by that optical-diameter test, has sphericity below 51/99, *and* carries the
+historical tracker value 1: faceted crystals at some time and liquid water never (Lafaysse et al.,
+2026, Table 2). The tracker is set to 1 when a dry non-dendritic layer first reaches sphericity
+below 0.1/99 (`snowcro.F90:2596-2598`), and wetting that rounds the grains moves it to 3, after
+which `f2` never applies again (`snowcro.F90:2600-2603`). Neither Vionnet et al. (2012, eq. 9) nor
+Lafaysse et al. (2026, eq. 55) prints the history condition; the code is the reference
+implementation.
+
+GEMB carries no historical tracker, so this gate reads the cell's present state. It differs
+from Crocus in three ways:
+
+- coarse angular snow that never reached sphericity 0 is stiffened here and not in Crocus;
+- a layer that was wet and has refrozen and faceted again is stiffened here and not in
+  Crocus, which excludes it for good;
+- a faceted layer that holds water but has not yet rounded to sphericity 1 is excluded here
+  and stiffened in Crocus, where `f1` then dominates its viscosity anyway.
+
+The first two err toward stiffening, the third toward softening.
+"""
+@inline crocus_f2_applies(dendricity::Float64, sphericity::Float64, water::Float64,
+    grain_radius::Float64) =
+    dendricity <= GDN_TOLERANCE && sphericity < CROCUS_F2_SPHERICITY_MAX &&
+    water <= WATER_TOLERANCE &&
+    optical_diameter(dendricity, sphericity, grain_radius) >=
+        OPTICAL_DIAMETER_DENDRITIC_UNIT * (4 - sphericity)
 
 """
     CROCUS_HYBRID_DENSITY
@@ -610,7 +703,7 @@ either paper prescribes a blending function. `:CrocusPure` applies eq. 5 at ever
 const CROCUS_HYBRID_DENSITY = 450.0
 
 """
-    _crocus_viscosity(ρ, T, W_liq, D, grain_radius) -> η [kg s-1 m-1]
+    _crocus_viscosity(ρ, T, W_liq, D, grain_radius, f2_applies=true) -> η [kg s-1 m-1]
 
 Snow viscosity of Vionnet et al. (2012) eq. 7, with the two microstructure correction
 factors of eqs. 8 and 9:
@@ -620,52 +713,76 @@ factors of eqs. 8 and 9:
   other expression of: every accumulation-driven scheme here is blind to `water`, and
   `:ArthernB` reads it only as overburden.
 - `f2 = min(4, exp(min(g1, gs − g2)/g3))` (eq. 9) *raises* viscosity for coarse angular
-  grains, suppressing compaction in depth hoar.
+  grains, suppressing compaction in depth hoar. It applies only when `f2_applies` is true;
+  otherwise `f2 = 1`. `calculate_density` sets `f2_applies` from
+  `crocus_f2_applies`: non-dendritic by Crocus's optical-diameter test, angular (sphericity
+  below 51/99) and dry, the cells Crocus scores with eq. 9.
 
 `W_liq` is cell water [kg m-2], `D` cell thickness [m], `grain_radius` [mm]; `gs` in eq. 9
 is a grain size, taken here as the grain diameter `2·grain_radius` in metres.
 
-`f2` is floored at 1, which the published eq. 9 does not do. Two facts force the choice:
-
- 1. Eq. 9 is bounded above (`min(4.0, ...)`) but not below. It crosses 1 at `gs = g2 =
-    0.2 mm` and decays as `exp((gs − g2)/g3)` beneath that, so a *fine*-grained cell gets
-    `f2 < 1` — a softening, from a factor the paper introduces to "account for [...] the
-    increase of viscosity with angular grains". At GEMB's fresh-snow radius
-    (`RE_NEW_SNOW = 0.05 mm`, so gs = 0.1 mm) it is `exp(-1) = 0.368`, i.e. new snow
-    compacts 2.7× faster than the unmodified eq. 7 rate.
- 2. In Crocus that regime is unreachable, so the paper never has to bound it. Eq. 9 is a
-    *non-dendritic* relation, and Crocus tracks dendricity explicitly: fresh snow is
-    dendritic (Sect. 3.3) and is described by `d` and `s`, not by `gs`. A layer only
-    acquires a `gs` once `d` reaches 0, and the paper puts non-dendritic `gs` in the
-    0.3-0.4 mm range — where eq. 9 gives 2.7 to 4 (its cap binds at gs = 0.339 mm). Every
-    `gs` the paper's own model can present to eq. 9 therefore yields `f2 >= 2.7`.
-
-GEMB has no such gate: it carries one `grain_radius` for dendritic and non-dendritic snow
-alike, and initializes it at 0.05 mm — squarely inside the interval eq. 9 leaves undefined.
-Passing that radius through unfloored would apply a 1.6-2.7× softening to the fresh snow at
-the top of the column, inverting the factor's intent for the cells it was never meant to
-score. Flooring at 1 makes `f2` a pure stiffening correction, which is what eq. 9 does
-across its whole valid domain, and leaves it inert (`f2 = 1`) below it rather than
-extrapolating a relation off its domain.
-
-`grain_dendricity` is available in the column state, so a closer port could gate eq. 9 on
-`d == 0` as Crocus does. That would need a defensible `f2` for dendritic snow — the paper
-supplies none, since the question does not arise there — so the floor is the conservative
-reading, not the only one.
+Where it applies, `f2` is also floored at 1, which the published eq. 9 does not do. Eq. 9 is
+bounded above (`min(4.0, ...)`) but not below: it crosses 1 at `gs = g2 = 0.2 mm` and decays
+as `exp((gs − g2)/g3)` beneath that, so a fine-grained cell would get `f2 < 1`, a softening from
+a factor introduced for "the increase of viscosity with angular grains". The gate admits only
+grains of at least 0.33 mm, where eq. 9 is 3.7 to 4, so the floor binds only for a direct
+`f2_applies = true` call on a finer grain.
 
 Deviates from the Community Firn Model's `Crocus`, which was used to cross-check eq. 7 and
 the `dρ/dt = ρσ/η` form: CFM hardcodes `f2 = 4.0` (eq. 9's ceiling, so it stiffens every
 cell including fresh fine-grained snow) and adopts van Kampenhout et al. (2017) eq. 8's
-retuned `cη = 358`. The paper's `f2` and `cη = 250` are used here.
+retuned `cη = 358`. The paper's `f2`, Crocus's gate and `cη = 250` are used here.
 """
 @inline function _crocus_viscosity(ρ::Float64, T::Float64, W_liq::Float64,
-    D::Float64, grain_radius::Float64)
+    D::Float64, grain_radius::Float64, f2_applies::Bool=true)
     f1 = 1.0 / (1.0 + 60.0 * W_liq / (DENSITY_WATER * D))
     gs = 2.0 * grain_radius / 1000.0        # radius [mm] -> diameter [m]
-    f2 = clamp(exp(min(CROCUS_G1, gs - CROCUS_G2) / CROCUS_G3),
-               CROCUS_F2_MIN, CROCUS_F2_MAX)
+    f2 = f2_applies ? clamp(exp(min(CROCUS_G1, gs - CROCUS_G2) / CROCUS_G3),
+                            CROCUS_F2_MIN, CROCUS_F2_MAX) : 1.0
     return f1 * f2 * CROCUS_ETA0 * (ρ / CROCUS_C_ETA) *
            exp(CROCUS_A_ETA * (CtoK - T) + CROCUS_B_ETA * ρ)
+end
+
+"""
+    destructive_metamorphism_rate(density, temperature, wet, density_dm) -> r [s-1]
+
+Compaction rate `-(1/D)·dD/dt` of a snow layer by destructive metamorphism, the settling of
+fresh snow as its crystals lose their branches. Anderson (1976) in the form of van Kampenhout
+et al. (2017) eq. 5, p. 2587, with the density taper of Schneider et al. (2022) eq. 3, p. 3:
+
+    r = c3·c2·c1·exp(-c4·(T_frz - min(T, T_frz)))
+    c1 = 1                           ρ < ρ_dm
+         exp(-c5·(ρ - ρ_dm))          ρ ≥ ρ_dm
+    c2 = 2 with liquid water, else 1
+
+with `c3 = 2.777e-6 s-1`, `c4 = 0.04 K-1` (van Kampenhout et al., p. 2587) and
+`c5 = 0.046 m3 kg-1` (Schneider et al., p. 3). `density` is the ice-matrix density of the
+layer, excluding liquid water, as eq. 5 specifies; `ρ_dm` is
+`mp.destructive_metamorphism_density`, 175 kg m-3 in CLM5. `wet` selects `c2 = 2`, which the
+papers state as "depending on the presence of liquid water" without a threshold; any pore
+water above `WATER_TOLERANCE` counts.
+
+The paper prints eq. 5 as `∂ρ/∂t` but its units are s-1: it is the fractional rate that
+Schneider et al. eq. 3 writes as a strain rate, and the one the Community Land Model sums with
+the overburden strain rate. Temperature is capped at `T_frz`, so wet snow at the melting point
+takes the largest rate, `2·c3`. Below `ρ_dm` the rate is `c3·exp(-c4·ΔT)` and does not depend
+on density; above it the rate falls by a factor `e` every 21.7 kg m-3, so the term moves fresh
+snow to `ρ_dm` within days and then stops mattering.
+
+Throws an `ArgumentError` for a non-positive density or a non-finite or non-positive
+temperature.
+"""
+@inline function destructive_metamorphism_rate(density::Float64, temperature::Float64,
+    wet::Bool, density_dm::Float64)
+    density > 0 ||
+        throw(ArgumentError("density must be positive [kg m-3], got $density"))
+    (isfinite(temperature) && temperature > 0) ||
+        throw(ArgumentError("temperature must be finite and positive [K], got $temperature"))
+    c1 = density < density_dm ? 1.0 :
+         exp(-DESTRUCTIVE_METAMORPHISM_C5 * (density - density_dm))
+    c2 = wet ? DESTRUCTIVE_METAMORPHISM_WET_FACTOR : 1.0
+    return DESTRUCTIVE_METAMORPHISM_C3 * c2 * c1 *
+           exp(-DESTRUCTIVE_METAMORPHISM_C4 * (CtoK - min(temperature, CtoK)))
 end
 
 """
@@ -747,14 +864,14 @@ Densification rate coefficient for the method in `p`, dispatching on
 once per age step rather than once per cell. `calculate_density`'s hot loop calls
 the per-method functions directly, so it takes the branch once per call.
 
-The stress-driven schemes cannot be evaluated here: the march carries neither overburden
-stress, grain radius, nor water, and it only produces an initial guess that the spinup then
-relaxes. Each therefore falls back to the nearest accumulation-driven law — `:Crocus` to
-`:GSFC2020`, which is already its own above-threshold branch and so governs most of the
-column the march builds; `:Barnola1991` to `:HerronLangway`, whose stage 1 *is* its own
-below-threshold branch, so the two agree exactly below `DENSITY_STAGE_TRANSITION` and the
-fallback is only an approximation above it; `:ArthernB` and `:CrocusPure` to `:Arthern`. The
-transient run uses the real law in every case.
+The stress-driven schemes cannot be evaluated from a rate coefficient alone. `steady_state_profile`
+marches `:Crocus` and `:CrocusPure` by their own strain rate ([`_march_crocus_step`](@ref)), and
+calls this function only for `:Crocus` cells above `CROCUS_HYBRID_DENSITY`, where the transient
+run also uses `:GSFC2020`. Otherwise each stress-driven scheme falls back to the nearest
+accumulation-driven law — `:Crocus` to `:GSFC2020`; `:Barnola1991` to `:HerronLangway`, whose
+stage 1 *is* its own below-threshold branch, so the two agree exactly below
+`DENSITY_STAGE_TRANSITION` and the fallback is only an approximation above it; `:ArthernB` and
+`:CrocusPure` to `:Arthern`. That fallback is what `steady_state_density` uses for every scheme.
 """
 @inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
     if p.method == :HerronLangway || p.method == :Barnola1991

@@ -11,10 +11,12 @@
 Specific heat capacity of the ice matrix at temperature `T` [K], per
 `mp.heat_capacity_method`:
 
-- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value). The default.
-- `:CuffeyPaterson` — Cuffey and Paterson (2010) eq. 9.1, `c_p = 152.5 + 7.122·T`. Gives
-  2097.9 at the melting point but only 1862 at 240 K and 1648 at 210 K, so the constant
-  value over-permits refreezing in cold firn by +12.6% and +27.5% respectively.
+- `:CuffeyPaterson` (the default) — Cuffey and Paterson (2010) eq. 9.1, p. 400,
+  `c_p = 152.5 + 7.122·T`. Gives 2097.9 at the melting point but only 1862 at 240 K and 1648
+  at 210 K.
+- `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value) at every
+  temperature. Against eq. 9.1 it over-permits refreezing in cold firn by +12.9% at 240 K and
+  +27.5% at 210 K.
 
 Applies to snow, firn, and ice alike: the load-bearing matrix is ice, and pore air and
 pore water contribute nothing to this term.
@@ -242,13 +244,10 @@ Temperature after mixing `M_liquid` [kg] of liquid water at `T_liquid` [K] into 
 [kg] of ice matrix at `T_solid` [K], conserving enthalpy. The liquid carries the latent heat
 of fusion, so its specific enthalpy is [`specific_enthalpy_water`](@ref)`(mp, T_liquid)`.
 
-Two callers, and they sit on opposite sides of the melting point:
-
-- **Rain on snow** (`calculate_accumulation`), with `T_liquid = T_air > CtoK`. The rain's
-  sensible heat above the melting point is carried at `mp.rain_heat_capacity` — see
-  [`specific_enthalpy_water`](@ref).
-- **Refreezing** ([`refreeze_temperature`](@ref)), with `T_liquid = CtoK` exactly. The
-  sensible term vanishes and this reduces to the melting-point form.
+Its caller is refreezing ([`refreeze_temperature`](@ref)), with `T_liquid = CtoK` exactly, where
+the sensible term vanishes and this reduces to the melting-point form. Above the melting point
+the liquid's sensible heat is carried at `mp.rain_heat_capacity` — see
+[`specific_enthalpy_water`](@ref).
 
 Under `:constant` the `c` cancels out of the enthalpy balance, so both are evaluated as a
 weighted mean of temperatures with the liquid at an effective temperature `h_liquid/c` —
@@ -452,7 +451,7 @@ Temperature of mass `M` [kg] at temperature `T` [K] after absorbing `Q` joules:
 `h⁻¹(h(T) + Q/M)`.
 
 For constant `c_p` this is evaluated as `Q/M/c + T` rather than via an `h`/`h⁻¹` round-trip,
-so the default path is bit-identical to the reference arithmetic. Returns `T` unchanged when
+so the `:constant` path is bit-identical to the reference arithmetic. Returns `T` unchanged when
 `M <= 0`.
 """
 @inline function add_energy_temperature(mp::ModelParameters, T::Real, M::Real, Q::Real)

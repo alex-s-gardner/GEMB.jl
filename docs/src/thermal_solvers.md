@@ -26,8 +26,8 @@ algebra and invariants are documented on the two `GEMB._thermal_solve!` methods.
 
 Use the default `ExplicitThermal` unless the column develops a cell thin enough to dominate the
 stability limit. Because that limit scales with the *smallest* cell, one thin layer sets the cost
-of the whole column: a single 1e-4 m refrozen lens drops the limit from 903 s to 3.98 s on the
-264-cell benchmark column — a 227x sub-step increase for one cell (measured in
+of the whole column: a single 1e-4 m refrozen lens drops the limit from 832 s to 3.79 s on the
+40-cell test column — a 219x sub-step increase for one cell (measured in
 `test/test_calculate_temperature.jl`). The implicit count does not move at all.
 
 That is the case `ImplicitThermal` exists for, and the only one in which it is also *faster*. On a
@@ -36,7 +36,8 @@ to select it and throughput is not.
 
 ## Measured runtime
 
-A year of 3-hourly synthetic forcing over a 264-cell column, whole-model runtime:
+A year of 3-hourly synthetic forcing over a 264-cell column with `heat_capacity_method =
+:constant`, whole-model runtime:
 
 | Solver | `DT_TARGET` | Runtime |
 |---|---|---|
@@ -49,8 +50,9 @@ So 1.5x at the coarsest usable accuracy and 2.4x at the calibrated default.
 
 ### Static condensation: 2.67x
 
-The implicit path's nonlinearity is confined to row 1, the surface energy balance; under the
-default `:constant` heat capacity rows `2 … n` are linear in the iterate. Re-eliminating them once
+The implicit path's nonlinearity is confined to row 1, the surface energy balance; for given
+chord heat capacities rows `2 … n` are linear in the iterate (under `:constant` they are linear
+outright; under the default `:CuffeyPaterson` an outer loop updates the chords). Re-eliminating them once
 per Newton iteration was wasted work. Condensing the interior **bottom-up, once per sub-step**
 reduces each row to an affine function of the cell above it, so Newton iterates on a single scalar
 equation in `T_1` at O(1) per iteration and one forward substitution propagates the answer back
@@ -73,21 +75,14 @@ irreducible — surface-only and whole-profile convergence criteria give identic
 
 Recorded so they are not retried.
 
-**Analytic turbulent-flux derivatives.** The `Λ` slope entering the Newton diagonal takes
-[`THERMAL_BC_DERIVATIVE_STEP`](@ref)-sized finite differences through the Beljaars-Holtslag
-stability branches. Replacing them analytically requires holding the transfer coefficients
-`coefM`/`coefHT`/`coefHQ` fixed, and they cannot be: they depend on `T_surface` through the bulk
-Richardson number, and the term dropped by freezing them substantially cancels the rest. Over 675
-sampled surface states the frozen-coefficient slope overshot the true derivative by up to 10x,
-with 9% of states outside a factor of two. Overshoot under-relaxes Newton: iteration count more
-than doubled, hit `THERMAL_IMPLICIT_MAX_ITERATIONS`, and whole-model runtime *rose* 43% (15.2 s to
-21.8 s) while the unconverged output drifted 15 K. Differentiating the stability branches too
-would be sound, and remains open.
-
-**The turbulent-flux calls are not the cost.** Direct timing puts `_surface_energy_balance` at
-65 ns and `_surface_energy_balance_slope` at 69 ns, so all flux evaluations together account for
-0.70 s of the 15.20 s an uncondensed solve takes. The cost is the O(n) sweep per Newton
-iteration, which condensation removes.
+**Frozen-coefficient turbulent slopes.** The `Λ` slope entering the Newton diagonal is the
+analytic derivative of the tabulated fluxes, including the change of the transfer coefficients
+with stability (see `_surface_energy_balance_and_slope`). A slope that holds the coefficients
+fixed is cheaper and wrong: they depend on `T_surface` through the bulk Richardson number, and the
+term dropped by freezing them substantially cancels the rest. Over 675 sampled surface states the
+frozen-coefficient slope overshot the true derivative by up to 10x, with 9% of states outside a
+factor of two; Newton then under-relaxed, more than doubled its iteration count, and hit
+`THERMAL_IMPLICIT_MAX_ITERATIONS`.
 
 **Relaxing the convergence tolerance.** Taking `THERMAL_IMPLICIT_T_TOLERANCE` from 1e-10 to
 1e-3 — seven orders of magnitude, far looser than the model's other branch tolerances — cut the

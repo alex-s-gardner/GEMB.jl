@@ -1,6 +1,7 @@
 using Test
 using GEMB
 using Dates
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
 
 @testset "gemb_spinup" begin
     @testset "Basic spinup execution" begin
@@ -496,7 +497,9 @@ using Dates
             time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
-        params = initialize_parameters(output_frequency=:last)
+        # The close-off age and windows measured below are those of the Community Firn Model
+        # snow configuration's initial guess.
+        params = initialize_parameters(; output_frequency=:last, CFM_SNOW...)
         profile = initialize_profile(params, forcing)
 
         # Drift alone, loose tolerance. It cannot fire before the window is full, so the
@@ -541,10 +544,10 @@ using Dates
 
         @testset "Drift window scaled by close-off age" begin
             ypc = GEMB._years_per_cycle(forcing)
-            # This column closes off at about 420 yr, so a fraction of 0.01 is a 5-cycle window.
+            # This column closes off at about 790 yr, so a fraction of 0.006 is a 5-cycle window.
             age_yr = close_off_age(parent(profile[:density]), parent(profile[:age])) / 365.25
-            @test 400 < age_yr < 450
-            fraction = 0.01
+            @test 760 < age_yr < 820
+            fraction = 0.006
             window = ceil(Int, fraction * age_yr / ypc)
             @test window == 5
             @test GEMB._closeoff_drift_window(profile, 3, fraction, ypc) == window
@@ -713,5 +716,86 @@ using Dates
         # Profile should still exist
         temps = output[:temperature][Ti=1]
         @test sum(.!isnan.(temps)) > 0
+    end
+
+    @testset "steady_state_density matches Herron-Langway eq. 7" begin
+        # ln(ρ/(ρᵢ − ρ)) is linear in depth in each stage, with slopes ρᵢk₀ and ρᵢk₁/√A.
+        mp_hl = initialize_parameters(densification_method=:HerronLangway)
+        ρ0, ρi, T, A = 350.0, 917.0, 253.0, 300.0
+        depths = collect(0.05:0.1:80.0)
+        d = steady_state_density(-depths, T, A, ρ0, ρi, mp_hl)
+        hl = [GEMB.herron_langway_density(z, T, A, ρ0, ρi) for z in depths]
+        @test maximum(abs.(d .- hl)) < 0.5
+        # The closed form itself: logit linear in depth with the published slopes.
+        logit(ρ) = log((ρ / 1000) / ((ρi - ρ) / 1000))
+        k0 = 11.0 * exp(-10160.0 / (GEMB.R_GAS * T))
+        k1 = 575.0 * exp(-21400.0 / (GEMB.R_GAS * T))
+        z1, z2 = 1.0, 3.0
+        @test (logit(GEMB.herron_langway_density(z2, T, A, ρ0, ρi)) -
+               logit(GEMB.herron_langway_density(z1, T, A, ρ0, ρi))) / (z2 - z1) ≈
+              (ρi / 1000) * k0 rtol = 1e-12
+        z1, z2 = 40.0, 60.0
+        @test (logit(GEMB.herron_langway_density(z2, T, A, ρ0, ρi)) -
+               logit(GEMB.herron_langway_density(z1, T, A, ρ0, ρi))) / (z2 - z1) ≈
+              (ρi / 1000) * k1 / sqrt(A / 1000) rtol = 1e-12
+        @test GEMB.herron_langway_density(0.0, T, A, ρ0, ρi) ≈ ρ0 rtol = 1e-12
+    end
+
+    @testset "Spinup of a dry constant climate reaches the Herron-Langway profile" begin
+        # Air at T, LW↓ = σT⁴, no shortwave, saturated over ice: the surface balance is at
+        # rest at T, so the column is isothermal at T and the transient Herron-Langway law
+        # has eq. 7 as its steady state. Stage 1 must match to 2 kg m-3 after spinup.
+        T, A = 250.0, 400.0
+        n = 365
+        time = DateTime(2001, 1, 1) .+ Day.(0:n-1)
+        cf = initialize_forcing(time, fill(T, n), fill(80000.0, n), fill(A / 365.25, n),
+            fill(4.0, n), zeros(n), fill(GEMB.SB * T^4, n),
+            fill(GEMB.saturation_vapor_pressure_ice(T), n);
+            temperature_air_mean=T, wind_speed_mean=4.0, precipitation_mean=A,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+        mp = initialize_parameters(densification_method=:HerronLangway,
+            new_snow_method=:Constant350, column_depth_max=40.0, output_frequency=:daily)
+        profile = initialize_profile(mp, cf)
+        spun = gemb_spinup(profile, cf, mp; simulation_years_maximum=60.0)
+        ρ = parent(spun[:density])
+        z = -dz2z(parent(spun[:dz]))
+        @test maximum(abs.(parent(spun[:temperature]) .- T)) < 0.05
+        stage1 = findall(zi -> 1.0 < zi && GEMB.herron_langway_density(zi, T, A, 350.0,
+            mp.density_ice) < 540.0, z)
+        @test length(stage1) > 5
+        for i in stage1
+            @test ρ[i] ≈ GEMB.herron_langway_density(z[i], T, A, 350.0, mp.density_ice) atol = 2.0
+        end
+    end
+
+    @testset "Herron-Langway density seed and convergence enforcement" begin
+        n = 365
+        time = DateTime(2001, 1, 1) .+ Day.(0:n-1)
+        cf = initialize_forcing(time, fill(255.0, n), fill(80000.0, n), fill(1.0, n),
+            fill(4.0, n), fill(80.0, n), fill(220.0, n), fill(100.0, n);
+            temperature_air_mean=255.0, wind_speed_mean=4.0, precipitation_mean=365.25,
+            temperature_observation_height=2.0, wind_observation_height=10.0)
+        mp = initialize_parameters(column_depth_max=60.0)
+        p_hl = initialize_profile(mp, cf; density_seed=:HerronLangway)
+        cs = GEMB.initialize_climate_summary(cf, mp)
+        ρ0 = parent(initialize_profile(mp, cf)[:density])[1]
+        z = -dz2z(parent(p_hl[:dz]))
+        @test parent(p_hl[:density]) ≈ [GEMB.herron_langway_density(zi,
+            cs.temperature_surface_mean, cf.accumulation_mean, ρ0, mp.density_ice) for zi in z]
+        @test_throws "density_seed" initialize_profile(mp, cf; density_seed=:ice)
+
+        # The seed's densification uses the forcing's mean accumulation, as the transient does.
+        @test GEMB.densification_accumulation(mp, cf) == cf.accumulation_mean
+        @test GEMB.densification_accumulation(
+            initialize_parameters(densification_accumulation=:precipitation), cf) ==
+              cf.precipitation_mean
+
+        # An unmet criterion warns, or throws when convergence is required.
+        @test_logs (:warn, r"did not converge") match_mode = :any gemb_spinup(p_hl, cf, mp;
+            simulation_years_maximum=1.0, convergence_delta_density=1e-12)
+        @test_throws "did not converge" gemb_spinup(p_hl, cf, mp; simulation_years_maximum=1.0,
+            convergence_delta_density=1e-12, require_convergence=true)
+        @test_throws "at least one convergence criterion" gemb_spinup(p_hl, cf, mp;
+            require_convergence=true)
     end
 end

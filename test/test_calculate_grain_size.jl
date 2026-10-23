@@ -195,8 +195,8 @@ end
 end
 
 @testset "Marbouty density limit" begin
-    # `:Marbouty` explicitly — this ceiling is that method's behaviour, and the
-    # `:Arthern` default has no density ceiling.
+    # `:Marbouty` explicitly — this ceiling is that method's behavior; the `:hybrid` default
+    # hands over to Arthern growth above it.
     mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:Marbouty)
     cfs = _make_grain_cfs(dt=86400.0)
 
@@ -262,7 +262,7 @@ end
 end
 
 @testset "Grain size cap" begin
-    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:hybrid)
     cfs = _make_grain_cfs(dt=86400.0 * 50)
 
     temperature = [GEMB.CtoK, GEMB.CtoK, GEMB.CtoK]
@@ -299,9 +299,9 @@ end
     r_arthern = _grow(:Arthern)
     r_hybrid = _grow(:hybrid)
 
-    # `:Arthern` is the default (it is what the Community Firn Model ships); `:Marbouty`
-    # stops dead at DENSITY_MARBOUTY_MAX, so it shows no growth in cells 3-5.
-    @test GEMB.ModelParameters().grain_growth_method === :Arthern
+    # `:FlannerZender2006` is the default; `:Marbouty` stops dead at DENSITY_MARBOUTY_MAX, so it shows no
+    # growth in cells 3-5.
+    @test GEMB.ModelParameters().grain_growth_method === :FlannerZender2006
     @test all(r_marbouty[1:2] .> 0.5)
     @test r_marbouty[3:5] == fill(0.5, 3)
 
@@ -329,4 +329,261 @@ end
         fill(0.5, 5), copy(gdn), fill(1.0, 5), cfs,
         GEMB.ModelParameters(grain_growth_method=m))[1] for m in (:Marbouty, :Arthern, :hybrid)]
     @test r_wet[1] == r_wet[2] == r_wet[3]
+end
+
+@testset "Grain growth closed forms" begin
+    dt = 86400.0 * 2
+    dt_d = 2.0
+    cfs = _make_grain_cfs(dt=dt)
+    mp = GEMB.ModelParameters(grain_growth_method=:hybrid)
+    ex(T) = exp(-6e3 / T)
+    d_of(gd, gs) = 0.1 * (gd / 0.99 + (1 - gd / 0.99) * (gs / 0.99 * 3 + (1 - gs / 0.99) * 4))
+    dz = [0.1, 0.1, 0.1]
+
+    # Dendritic, dry, gradient below 5 K/m.
+    T = fill(260.0, 3)
+    r, gd, gs = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.2, 3),
+        fill(0.8, 3), fill(0.2, 3), cfs, mp)
+    @test gd[2] ≈ 0.8 - 2e8 * ex(260.0) * dt_d rtol = 1e-12
+    @test gs[2] ≈ 0.2 + 1e9 * ex(260.0) * dt_d rtol = 1e-12
+    @test 2 * r[2] ≈ d_of(gd[2], gs[2]) rtol = 1e-12
+
+    # Dendritic, dry, gradient above 5 K/m: both fall by 2e8·e^(−6000/T)·|∇T|^0.4·dt.
+    T = [258.0, 260.0, 262.0]        # 20 K/m: 4 K across the 0.2 m between cells 1 and 3
+    r, gd, gs = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.2, 3),
+        fill(0.8, 3), fill(0.5, 3), cfs, mp)
+    Δ = 2e8 * ex(260.0) * 20.0^0.4 * dt_d
+    @test gd[2] ≈ 0.8 - Δ rtol = 1e-12
+    @test gs[2] ≈ 0.5 - Δ rtol = 1e-12
+
+    # Dendritic, wet: θ = 100·W/(ρ·dz) %, capped at 9; dendricity falls by θ³/16·dt.
+    W = 0.2
+    r, gd, gs = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), dz, fill(250.0, 3), fill(W, 3),
+        fill(0.2, 3), fill(0.8, 3), fill(0.2, 3), cfs, mp)
+    θ = 100 * W / (250.0 * 0.1)
+    @test gd[2] ≈ 0.8 - θ^3 / 16 * dt_d rtol = 1e-12
+    @test gs[2] ≈ 0.2 + θ^3 / 16 * dt_d rtol = 1e-12
+
+    # Brun (1989) wet growth: d³ grows by (6/π)(1.28e-8 + 4.22e-10·θ³)·dt [mm³ s⁻¹].
+    W = 1.5
+    d0 = 1.0
+    r, _, _ = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), dz, fill(300.0, 3), fill(W, 3),
+        fill(d0 / 2, 3), zeros(3), fill(1.0, 3), cfs, mp)
+    θ = 100 * W / (300.0 * 0.1)
+    @test 2 * r[2] ≈ (d0^3 + (6 / π) * (1.28e-8 + 4.22e-10 * θ^3) * dt)^(1 / 3) rtol = 1e-12
+
+    # Marbouty at −10 °C, ρ = 200, ∇T = 30 K/m: F = 0.8, H = 0.8, G = 0.29, Q = 0.016704 mm/d.
+    @test GEMB._marbouty_Q(GEMB.CtoK - 10.0, 200.0, 30.0) ≈ 0.8 * 0.8 * 0.29 * 0.09 rtol = 1e-12
+    T = [GEMB.CtoK - 13.0, GEMB.CtoK - 10.0, GEMB.CtoK - 7.0]   # 30 K/m
+    r, _, _ = GEMB.calculate_grain_size(T, dz, fill(200.0, 3), zeros(3), fill(0.5, 3),
+        zeros(3), fill(0.5, 3), cfs, GEMB.ModelParameters(grain_growth_method=:hybrid))
+    @test 2 * r[2] ≈ 1.0 + 0.016704 * dt_d rtol = 1e-9
+end
+
+@testset "Temperature gradient on a non-uniform grid" begin
+    # Linear T(z) through the cell centers: the stencil returns the gradient exactly at every
+    # cell, the two edge cells included.
+    dz = [0.02, 0.05, 0.11, 0.07, 0.3, 0.2]
+    zc = cumsum(dz) .- dz ./ 2
+    g = 13.7
+    T = 250.0 .+ g .* zc
+    for i in eachindex(dz)
+        @test GEMB._grain_gradient(T, dz, i, length(dz)) ≈ g rtol = 1e-12
+    end
+end
+
+@testset "Grain size caps are exact" begin
+    # Spherical grains cap at 2 mm diameter, non-spherical at 5 mm. Wet isothermal snow, so
+    # Brun growth drives both past their caps and the sphericity is left unchanged.
+    cfs = _make_grain_cfs(dt=86400.0 * 400)
+    for (gs, cap) in ((1.0, 2.0), (0.0, 5.0))
+        r, _, _ = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), fill(0.1, 3), fill(300.0, 3),
+            fill(3.0, 3), fill(cap / 2 - 0.01, 3), zeros(3), fill(gs, 3), cfs,
+            GEMB.ModelParameters(grain_growth_method=:hybrid))
+        @test all(2 .* r .== cap)
+    end
+end
+
+# Taillandier et al. (2007) eqs. 6-13 and Flanner and Zender (2006) eq. 16, written out in BigFloat:
+# SSA [cm2 g-1] after t hours at constant temperature Tc [°C] from the initial SSA S0.
+function _taillandier_closed(S0, Tc, t; tg=false)
+    S0, Tc, t = big.((S0, Tc, t))
+    A = tg ? big"0.0961" * S0 - big"3.44" * (Tc + big"1.90") : big"0.0760" * S0 - big"1.76" * (Tc - big"2.96")
+    B = tg ? big"0.659" * S0 - big"27.2" * (Tc - big"2.03") : big"0.629" * S0 - big"15.0" * (Tc - big"11.2")
+    return B - A * log(t + exp((B - S0) / A))
+end
+
+@testset "Taillandier (2007) dry-snow SSA decay" begin
+    S0 = GEMB.SSA_NEW_SNOW
+    @test S0 ≈ 3 / (0.091 * 0.05) rtol = 1e-15            # 659.3 cm2 g-1, r = 0.05 mm
+    for (Tc, G, tg) in ((-15.0, 0.0, false), (-30.0, 10.0, false), (-5.0, 15.0, false),
+                        (-15.0, 30.0, true), (-25.0, 60.0, true))
+        T = Tc + 273.15
+        for dt in (1.0, 3.0, 24.0)                         # 30 days in steps of dt hours
+            s = S0
+            for _ in 1:round(Int, 720 / dt)
+                s = GEMB.taillandier_ssa(s, T, G, dt)
+            end
+            @test s ≈ Float64(_taillandier_closed(S0, Tc, 720; tg)) rtol = 1e-11
+        end
+    end
+    # At −15 °C under ET, 30 and 90 days give SSA 269.2 and 179.9 cm2 g-1 (r = 0.122, 0.183 mm).
+    @test Float64(_taillandier_closed(S0, -15, 720)) ≈ 269.2 rtol = 1e-3
+    @test 3 / (0.091 * GEMB.taillandier_ssa(S0, 258.15, 0.0, 2160.0)) ≈ 0.183 rtol = 2e-3
+    # t = 0 reproduces the initial SSA; the SSA only decreases; the TG law decays faster.
+    @test GEMB.taillandier_ssa(S0, 258.15, 0.0, 0.0) ≈ S0 rtol = 1e-12
+    @test GEMB.taillandier_ssa(300.0, 258.15, 0.0, 3.0) < 300.0
+    @test GEMB.taillandier_ssa(S0, 258.15, 30.0, 720.0) < GEMB.taillandier_ssa(S0, 258.15, 0.0, 720.0)
+    # Floor: the depth-hoar asymptote, 80 cm2 g-1, and nothing coarser is made finer.
+    @test GEMB.taillandier_ssa(85.0, 268.15, 50.0, 1e7) == GEMB.SSA_DECAY_MIN
+    @test GEMB.taillandier_ssa(60.0, 268.15, 0.0, 3.0) == 60.0
+end
+
+# The SNICAR dry-snow law integrated exactly in BigFloat: from r0 at time 0,
+# (r − r0 + τ)^(n+1) = τ^(n+1) + (n+1)·(dr/dt)0·τ^n·t, n = 1/κ, t in hours.
+function _snicar_closed(τ, κ, drdt0, t; r0=GEMB.SNICAR_RADIUS_FRESH)
+    τ, κ, a, t = big.((τ, κ, drdt0, t))
+    n = 1 / κ
+    return big(r0) + (τ^(n + 1) + (n + 1) * a * τ^n * t)^(1 / (n + 1)) - τ
+end
+
+@testset "SNICAR aging table" begin
+    τ, κ, a = GEMB.SNICAR_AGING_TAU, GEMB.SNICAR_AGING_KAPPA, GEMB.SNICAR_AGING_DRDT0
+    @test size(τ) == size(κ) == size(a) == (8, 31, 11)
+    @test !any(isnan, τ) && !any(isnan, κ) && !any(isnan, a)
+    @test all(>(0), τ) && all(>(0), κ) && all(>(0), a)
+    # Values of snicar_drdt_bst_fit_60_c070416.nc read by `ncdump -p 17,17`, at
+    # [density, gradient, temperature] indices; (3, 11, 9) is the node CLM's SnowAge_init logs
+    # (263 K, 100 K m-1, 150 kg m-3).
+    for (ijk, v) in (((3, 11, 9), (6.320580029826786, 1.5669689418953008, 5.4872755027422642)),
+                     ((1, 1, 1), (1.693772564487068, 0.8350176590222218, 0.15639772826553155)),
+                     ((8, 31, 11), (0.94772251545821073, 1.9003584126169899, 7.9223126092813345)),
+                     ((7, 3, 7), (4.4125164868207811, 0.55824171392066491, 2.7914618871761547)))
+        @test (τ[ijk...], κ[ijk...], a[ijk...]) == v
+    end
+    @test GEMB.snicar_aging_parameters(263.15, 100.0, 150.0) == (τ[3, 11, 9], κ[3, 11, 9], a[3, 11, 9])
+    # Nearest node with CLM's indexing, nint((T − 223)/5) + 1 etc., halves away from zero.
+    p(T, G, ρ) = GEMB.snicar_aging_parameters(T, G, ρ)
+    node(i, j, k) = (τ[i, j, k], κ[i, j, k], a[i, j, k])
+    @test p(265.4, 0.0, 350.0) == node(7, 1, 9)        # (265.4 − 223)/5 = 8.48
+    @test p(265.6, 0.0, 350.0) == node(7, 1, 10)       # 8.52
+    @test p(225.5, 0.0, 350.0) == node(7, 1, 2)        # 0.5 rounds up
+    @test p(258.15, 15.0, 350.0) == node(7, 3, 8)      # 1.5 rounds up, to 20 K m-1
+    @test p(258.15, 14.9, 75.0) == node(2, 2, 8)       # ρ: 0.5 rounds up, to 100 kg m-3
+    # Outside the table: edge nodes; density below 50 is read at 50; NaN fails.
+    @test p(200.0, 0.0, 350.0) == node(7, 1, 1)
+    @test p(280.0, 0.0, 350.0) == node(7, 1, 11)
+    @test p(258.15, 1e6, 350.0) == node(7, 31, 8)
+    @test p(258.15, 0.0, 10.0) == node(1, 1, 8)
+    @test p(258.15, 0.0, 900.0) == node(8, 1, 8)
+    @test_throws InexactError p(NaN, 0.0, 350.0)
+end
+
+@testset "SNICAR aging step" begin
+    r0 = GEMB.SNICAR_RADIUS_FRESH
+    # One dry step: (dr/dt)0·(τ/(r − r0 + τ))^(1/κ)·dt/3600, in BigFloat.
+    for (T, G, ρ, r, dt) in ((258.15, 0.0, 350.0, 80.0, 3600.0), (243.15, 40.0, 150.0, 120.0, 10800.0),
+                             (271.0, 210.0, 60.0, 300.0, 1800.0))
+        τ, κ, a = GEMB.snicar_aging_parameters(T, G, ρ)
+        expected = big(r) + big(a) * (big(τ) / (big(r) - big(r0) + big(τ)))^(1 / big(κ)) * big(dt) / 3600
+        @test GEMB.snicar_aging_radius(r, T, G, ρ, 0.0, dt) ≈ Float64(expected) rtol = 1e-14
+    end
+    # Snow finer than r0 grows at the fresh-snow rate; a zero step changes nothing.
+    τ, κ, a = GEMB.snicar_aging_parameters(258.15, 0.0, 350.0)
+    @test GEMB.snicar_aging_radius(50.0, 258.15, 0.0, 350.0, 0.0, 3600.0) ≈ 50.0 + a rtol = 1e-15
+    @test GEMB.snicar_aging_radius(80.0, 258.15, 0.0, 350.0, 0.0, 0.0) == 80.0
+    # Wet growth 1e18·C2·f³·dt/(4π r²) on top of the dry step, f capped at 0.1; radius capped.
+    dry = GEMB.snicar_aging_radius(200.0, 273.15, 0.0, 400.0, 0.0, 3600.0)
+    for f in (0.03, 0.1, 0.4)
+        wet = big"1e18" * big"4.22e-13" * big(min(f, 0.1))^3 * 3600 / (4 * big(pi) * big"200.0"^2)
+        @test GEMB.snicar_aging_radius(200.0, 273.15, 0.0, 400.0, f, 3600.0) ≈ dry + Float64(wet) rtol = 1e-14
+    end
+    @test GEMB.snicar_aging_radius(1499.9, 273.15, 300.0, 50.0, 0.1, 86400.0) == GEMB.SNICAR_RADIUS_MAX
+    # Stepping integrates the law: at 3-minute steps, 14 days from r0 match the exact solution.
+    for (T, G, ρ) in ((253.15, 0.0, 350.0), (263.15, 50.0, 150.0), (273.15, 200.0, 50.0))
+        r = r0
+        for _ in 1:(14 * 24 * 20)
+            r = GEMB.snicar_aging_radius(r, T, G, ρ, 0.0, 180.0)
+        end
+        @test r ≈ Float64(_snicar_closed(GEMB.snicar_aging_parameters(T, G, ρ)..., 336)) rtol = 2e-3
+    end
+    # Against the source: Flanner and Zender (2006) eq. 16 with the 16 parameter pairs of their
+    # Table 4 (p. 10) gives the 14-day SSA ratio S/S0 = (τ/(336 + τ))^(1/κ). The table in GEMB is
+    # a separate fit of the same microphysical model, in radius and from S0 = 60 m2 kg-1, so the
+    # two agree to within 12 % (largest at 0 °C, 200 K m-1, 50 kg m-3), not exactly. Putting the
+    # table's τ and κ into eq. 16 instead, as hours, gives ratios 5e-4 to 3 times the paper's.
+    table4 = ((0, 150, ((43.6, 11.4), (7.1, 6.7), (4.5, 6.1), (3.2, 5.8))),
+              (50, 150, ((27.5, 15.3), (47.1, 1.7), (21.0, 1.8), (11.9, 1.9))),
+              (200, 50, ((370.6, 0.9), (5.2, 1.9), (2.5, 1.9), (1.5, 1.9))),
+              (200, 300, ((47.2, 11.7), (35.0, 1.8), (15.5, 1.9), (8.8, 1.9))))
+    for (G, ρ, rows) in table4, (Tc, (τ4, κ4)) in zip((-50, -20, -10, 0), rows)
+        paper = (big(τ4) / (336 + big(τ4)))^(1 / big(κ4))
+        model = r0 / _snicar_closed(GEMB.snicar_aging_parameters(273.15 + Tc, Float64(G), Float64(ρ))..., 336)
+        @test Float64(model) ≈ Float64(paper) rtol = 0.12
+    end
+    # Refrozen water: mass-weighted with SNICAR_RADIUS_REFROZEN, the fraction capped at 1.
+    @test GEMB.snicar_refrozen_radius(100.0, 2.0, 40.0) ≈ 100.0 + 0.05 * 900.0 rtol = 1e-15
+    @test GEMB.snicar_refrozen_radius(100.0, 50.0, 40.0) == GEMB.SNICAR_RADIUS_REFROZEN
+    @test GEMB.snicar_refrozen_radius(100.0, 0.0, 40.0) == 100.0
+end
+
+@testset "Dry-snow growth options in calculate_grain_size" begin
+    # A uniform −15 °C column (no gradient) of non-dendritic snow at 350 kg m-3 over firn at 500:
+    # under :hybrid Marbouty's G is 0, so dry snow does not grow; Taillandier coarsens it by its
+    # closed form and SNICAR by one step of its law; the firn takes Arthern under every method.
+    n = 10
+    T = fill(258.15, n); dz = fill(0.05, n); ρ = [fill(350.0, 5); fill(500.0, 5)]
+    cfs = GEMB.ClimateForcingStep(; dt=86400.0)
+    run(method, r0=0.07, w=zeros(n), d=zeros(n)) = GEMB.calculate_grain_size(T, dz, ρ, w,
+        fill(r0, n), copy(d), fill(0.5, n), cfs, GEMB.ModelParameters(grain_growth_method=method))
+    r_h, = run(:hybrid)
+    @test all(r_h[1:5] .== 0.07)
+    r_t, = run(:Taillandier2007)
+    s0 = 3 / (0.091 * 0.07)
+    @test r_t[1] ≈ 3 / (0.091 * GEMB.taillandier_ssa(s0, 258.15, 0.0, 24.0)) rtol = 1e-14
+    @test r_t[1] > 0.07
+    r_f, = run(:FlannerZender2006)
+    @test r_f[1] ≈ GEMB.snicar_aging_radius(70.0, 258.15, 0.0, 350.0, 0.0, 86400.0) / 1000 rtol = 1e-14
+    for r in (r_t, r_f)
+        @test r[6:10] == r_h[6:10]                       # Arthern at and above 400 kg m-3
+    end
+    # Taillandier leaves wet and dendritic snow to the common branches.
+    w = [0.5; zeros(n - 1)]
+    @test run(:Taillandier2007, 0.3, w)[1][1] == run(:hybrid, 0.3, w)[1][1]
+    d = [0.8; zeros(n - 1)]
+    @test run(:Taillandier2007, 0.05, zeros(n), d)[1][1] == run(:hybrid, 0.05, zeros(n), d)[1][1]
+    # SNICAR ages wet snow by its own dry + wet law, at the liquid fraction W/(M + W) and the
+    # density (M + W)/dz.
+    M = 350.0 * 0.05
+    @test run(:FlannerZender2006, 0.3, w)[1][1] ≈
+          GEMB.snicar_aging_radius(300.0, 258.15, 0.0, (M + 0.5) / 0.05, 0.5 / (M + 0.5), 86400.0) / 1000 rtol = 1e-14
+    # SNICAR ages dendritic snow from its own radius, while dendricity and sphericity evolve as
+    # under :hybrid.
+    rd, dd, sd = run(:FlannerZender2006, 0.05, zeros(n), d)
+    rdh, ddh, sdh = run(:hybrid, 0.05, zeros(n), d)
+    @test rd[1] ≈ GEMB.snicar_aging_radius(50.0, 258.15, 0.0, 350.0, 0.0, 86400.0) / 1000 rtol = 1e-14
+    @test rd[1] != rdh[1]
+    @test dd == ddh && sd == sdh
+    @test_nowarn GEMB.validate_parameters(GEMB.ModelParameters(grain_growth_method=:Taillandier2007,
+        dt_divisors=[1.0]))
+    @test_nowarn GEMB.validate_parameters(GEMB.ModelParameters(grain_growth_method=:FlannerZender2006,
+        dt_divisors=[1.0]))
+end
+
+@testset "Independent radius in mixing" begin
+    # Two dendritic states: dendricity and sphericity mix by mass either way; the radius is
+    # re-derived from them by default and mixed by the albedo-conserving rule when independent.
+    d, s, r = GEMB.mix_grains(0.9, 0.5, 0.12, 30.0, 1.0, 0.5, 0.05, 10.0)
+    di, si, ri = GEMB.mix_grains(0.9, 0.5, 0.12, 30.0, 1.0, 0.5, 0.05, 10.0, true)
+    @test (di, si) == (d, s)
+    @test d ≈ 0.925 rtol = 1e-15
+    @test r == GEMB.dendritic_grain_radius(d, s)
+    q = GEMB.ALBEDO_GRAIN_RADIUS_EXPONENT
+    @test ri ≈ (0.75 * 0.12^q + 0.25 * 0.05^q)^(1 / q) rtol = 1e-14
+    # A non-dendritic state is mixed identically either way.
+    @test GEMB.mix_grains(0.0, 0.3, 0.2, 30.0, 1.0, 0.5, 0.05, 10.0, true) ==
+          GEMB.mix_grains(0.0, 0.3, 0.2, 30.0, 1.0, 0.5, 0.05, 10.0)
+    @test GEMB.independent_grain_radius(GEMB.ModelParameters(grain_growth_method=:FlannerZender2006))
+    @test GEMB.independent_grain_radius(GEMB.ModelParameters())
+    @test !GEMB.independent_grain_radius(GEMB.ModelParameters(grain_growth_method=:hybrid))
 end

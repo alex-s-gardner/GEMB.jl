@@ -1,6 +1,7 @@
 # Tests for initialize_profile
 # DimArray and Ti come from GEMB (re-exported from DimensionalData)
 using GEMB: DimArray, Ti
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
 
 @testset "Default parameters" begin
     mp = GEMB.ModelParameters()
@@ -155,8 +156,9 @@ end
 end
 
 @testset "Steady-state init: firn column from climate" begin
+    # Under an accumulation-driven law, so the surface cell is still fresh snow.
     cf = _dry_snow_forcing()
-    mp = GEMB.ModelParameters()
+    mp = GEMB.ModelParameters(; CFM_SNOW...)
     profile = GEMB.initialize_profile(mp, cf)
 
     cs = GEMB.initialize_climate_summary(cf, mp)
@@ -304,9 +306,10 @@ end
     # (melt is radiation-driven here, so it stays put while accumulation sweeps).
     # The old threshold-based scheme jumped from a 250 m firn column to a 25 m ice
     # block across this crossing; the continuous scheme must not.
-    mp = GEMB.ModelParameters()
+    # The measured gaps below are those of the accumulation-driven law.
+    mp = GEMB.ModelParameters(; CFM_SNOW...)
     make(p) = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=p,
-                                shortwave=100.0, longwave=320.0)
+                                shortwave=100.0, longwave=325.0)
     precips = collect(range(0.8, 2.4; length=17))
 
     summaries = [GEMB.initialize_climate_summary(make(p), mp) for p in precips]
@@ -318,7 +321,7 @@ end
     @test issorted(balances)
 
     # Melt is *not* constant across the sweep: more snowfall means more snow cover,
-    # a higher albedo and so less melt (here 395 -> 134 kg m-2 yr-1). That coupling
+    # a higher albedo and so less melt (here 417 -> 151 kg m-2 yr-1). That coupling
     # is the albedo/melt feedback `initialize_climate_summary` iterates to close, so
     # assert it runs the right way and stays smooth rather than assuming melt is an
     # independent knob.
@@ -363,26 +366,30 @@ end
     # is sampled discretely, so the meaningful test is that the jump shrinks
     # without bound as the sampling refines. A genuine discontinuity would hold its
     # size instead.
-    # Sample the first accumulating case at successively finer resolution and record
-    # both the balance reached there and how far its surface sits below ice.
-    function crossing_jump(n)
-        ps = collect(range(1.1, 1.4; length=n))
-        bs = [GEMB.initialize_climate_summary(make(p), mp).balance for p in ps]
-        i = findlast(<=(0.0), bs)
-        (i === nothing || i == length(ps)) && return nothing
-        ρ_above = collect(GEMB.initialize_profile(mp, make(ps[i+1]))[:density])[1]
-        return (balance=bs[i+1], gap=mp.density_ice - ρ_above)
+    # Bisect on snowfall for the sign change of `b`, and at five bisection depths record
+    # the balance at the accumulating end of the bracket and how far its surface sits
+    # below ice. The accumulating end only moves toward the crossing, so its balance
+    # cannot grow.
+    bisection_balance(p) = GEMB.initialize_climate_summary(make(p), mp).balance
+    p_lo, p_hi = 1.1, 1.4
+    @test bisection_balance(p_lo) <= 0.0 < bisection_balance(p_hi)
+    steps = NamedTuple{(:balance, :gap),Tuple{Float64,Float64}}[]
+    for k in 1:14
+        p_mid = (p_lo + p_hi) / 2
+        bisection_balance(p_mid) <= 0.0 ? (p_lo = p_mid) : (p_hi = p_mid)
+        if k in (2, 5, 8, 11, 14)
+            ρ_above = collect(GEMB.initialize_profile(mp, make(p_hi))[:density])[1]
+            push!(steps, (balance=bisection_balance(p_hi), gap=mp.density_ice - ρ_above))
+        end
     end
-
-    steps = filter(!isnothing, [crossing_jump(n) for n in (17, 33, 65, 129, 257)])
     @test length(steps) == 5
 
     # Refining drives the sampled balance toward zero...
     @test issorted([s.balance for s in steps]; rev=true)
     @test steps[end].balance < 0.1 * steps[1].balance
     # ...and the surface density closes onto ice as it does, with no floor. Measured:
-    # b = 9.8 -> 4.8 -> 2.6 -> 1.3 -> 0.61 kg m-2 yr-1 gives a gap below ice of
-    # 520 -> 479 -> 408 -> 300 -> 162 kg m-3. Every refinement shrinks it, so the
+    # b = 0.42 -> 0.42 -> 0.42 -> 0.021 -> 0.001 kg m-2 yr-1 gives a gap below ice of
+    # 108 -> 108 -> 108 -> 0.04 -> 0 kg m-3. No refinement widens it, so the
     # ablation column (exactly ice) is the `b -> 0+` limit of the firn column rather
     # than a separate branch — the claim that lets the scheme drop the threshold.
     gaps = [s.gap for s in steps]
@@ -457,16 +464,19 @@ end
     # steps over a column, not a sweep of the series.
     dz = GEMB.initialize_grid(mp)
     cs = GEMB.initialize_climate_summary(cf, mp)
-    GEMB.steady_state_profile(dz, cs, mp)            # warm up
-    t_march = @elapsed GEMB.steady_state_profile(dz, cs, mp)
+    GEMB.steady_state_profile(dz, cs, mp; densification_accumulation=cf.accumulation_mean)  # warm up
+    t_march = @elapsed GEMB.steady_state_profile(dz, cs, mp;
+        densification_accumulation=cf.accumulation_mean)
     @test t_march < 0.1 * t_pass
 end
 
 
 @testset "initialize_age" begin
     cf = _dry_snow_forcing()
-    mp_ss = GEMB.ModelParameters(initialize_age=:steady_state)
-    mp_zero = GEMB.ModelParameters(initialize_age=:zero)
+    # Under an accumulation-driven law, whose top half-cell is near-uniform in density, so the
+    # cell-1 age identity below is exact to its tolerance.
+    mp_ss = GEMB.ModelParameters(; CFM_SNOW..., initialize_age=:steady_state)
+    mp_zero = GEMB.ModelParameters(; CFM_SNOW..., initialize_age=:zero)
 
     @test GEMB.ModelParameters().initialize_age === :steady_state
 
@@ -514,9 +524,57 @@ end
     # residence time to report on either setting. Same forcing as the ablation end of the
     # balance sweep below.
     cf_ablation = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=0.8,
-        shortwave=100.0, longwave=320.0)
+        shortwave=100.0, longwave=325.0)
     @test GEMB.initialize_climate_summary(cf_ablation, mp_ss).balance < 0.0
     @test all(collect(GEMB.initialize_profile(mp_ss, cf_ablation)[:age]) .== 0.0)
+end
+
+@testset "Steady-state init: the Crocus march" begin
+    # Under `:Crocus` with destructive metamorphism (the default) the march compacts by the
+    # transient law, so the guess is a graded firn column that starts denser than fresh snow
+    # (new snow settles within days) and reaches ice at depth, and it differs from the
+    # `:GSFC2020` fallback that `steady_state_density` uses.
+    cf = _dry_snow_forcing()
+    mp = GEMB.ModelParameters()
+    @test mp.densification_method === :Crocus && mp.destructive_metamorphism
+    cs = GEMB.initialize_climate_summary(cf, mp)
+    @test cs.balance > 0.0
+    density = collect(GEMB.initialize_profile(mp, cf)[:density])
+    ρ0 = GEMB.fresh_snow_density(mp, cs.temperature_air_mean, cs.accumulation_effective,
+        cs.wind_speed_mean)
+    @test all(diff(density) .>= -1e-9)
+    @test ρ0 <= density[1] < 400.0
+    @test density[end] > 0.98 * mp.density_ice
+
+    # Destructive metamorphism is part of the march: without it the near-surface column is lighter.
+    no_dm = collect(GEMB.initialize_profile(GEMB.ModelParameters(destructive_metamorphism=false), cf)[:density])
+    @test density[1] > no_dm[1]
+
+    # At a low-accumulation site an age step is long against fresh snow's settling time, so the
+    # step is sub-stepped: one step at its starting rate would carry fresh snow straight to ice.
+    # The column reaches ice at depth, not within its top metres.
+    lo = _dry_snow_forcing(precip=0.5)
+    lo_density = collect(GEMB.initialize_profile(mp, lo)[:density])
+    lo_z = -GEMB.dz2z(collect(GEMB.initialize_profile(mp, lo)[:dz]))
+    @test lo_density[argmin(abs.(lo_z .- 10.0))] < 600.0
+    @test all(diff(lo_density) .>= -1e-9)
+
+    # `_march_crocus_step` against its closed form at one parcel, with the wave averaged over the
+    # 24 phases it samples: a step short enough to be a single sub-step.
+    p = GEMB.DensificationCoeffs(mp, cf.accumulation_mean, cs.temperature_air_mean)
+    ρ, T, age, dt, b = 150.0, 255.0, 2.0, 1e-4, cs.balance     # a step short of the ice cap
+    z_next, ρ_next = GEMB._march_crocus_step(p, ρ, 0.5, b, mp.density_ice, dt, T, age, 0.1, 0.0,
+        0.5, cs, mp)
+    A = cs.temperature_amplitude * exp(-0.5 / GEMB.thermal_damping_depth(T, ρ, mp))
+    rate = sum(1:24) do k
+        Tk = min(T + A * cos(2π * (k - 0.5) / 24), GEMB.CtoK)
+        GEMB.GRAVITY * b * age / GEMB._crocus_viscosity(ρ, Tk, 0.0, 1.0, 0.1,
+            GEMB.crocus_f2_applies(0.0, 0.5, 0.0, 0.1)) +
+            GEMB.destructive_metamorphism_rate(ρ, Tk, false, mp.destructive_metamorphism_density)
+    end / 24
+    @test ρ_next < mp.density_ice
+    @test ρ_next ≈ ρ * exp(rate * dt * GEMB.SECONDS_PER_YEAR) rtol = 1e-12
+    @test z_next ≈ 0.5 + b * dt / (0.5 * (ρ + ρ_next)) rtol = 1e-12
 end
 
 @testset "close_off_age" begin
@@ -538,4 +596,21 @@ end
     coa = GEMB.close_off_age(density, age)
     @test maximum(density) >= GEMB.DENSITY_PORE_CLOSEOFF   # this column does close off
     @test 0.0 < coa < age[end]
+end
+
+@testset "Initial-guess skin temperature at radiative equilibrium" begin
+    # Calm air (wind at the floor) at the radiative-equilibrium temperature, saturated over ice,
+    # no shortwave: the skin temperature closing ε·LW↓ − εσT⁴ + H + LE = 0 is (LW↓/σ)^(1/4)
+    # for any emissivity.
+    mp = GEMB.ModelParameters()
+    lw = 240.0
+    T_eq = (lw / GEMB.SB)^0.25
+    cfs = GEMB._seb_forcing_step(3600.0, T_eq, 80000.0, 0.0, 0.0, lw,
+        GEMB.saturation_vapor_pressure_ice(T_eq), 2.0, 10.0)
+    for ε in (0.97, 0.8)
+        z0 = GEMB.Z0_SNOW_DRY
+        T = GEMB._seb_skin_temperature(0.0, lw, ε, GEMB.air_density(80000.0, T_eq), z0,
+            0.1 * z0, 0.1 * z0, cfs)
+        @test T ≈ T_eq atol = 1e-3
+    end
 end

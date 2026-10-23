@@ -59,6 +59,18 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: sum";
         comment="CF has only surface_snow_and_ice_refreezing_flux (kg m-2 s-1); " *
                 "there is no amount form, so standard_name is omitted."),
+    :refreeze_thermal => CFAttrs("kg m-2", "pore water frozen inside the thermal solve",
+        "time: sum";
+        comment="Part of refreeze. Water the thermal solve froze itself because handing " *
+                "the wet cell on with its water liquid would have needed an ice-matrix " *
+                "temperature below WET_HANDOFF_TEMPERATURE_MIN (223.15 K, the coldest " *
+                "temperature of the data Cuffey and Paterson 2010 eq. 9.1 is fitted to). " *
+                "It arises in cells whose water is a large share of their mass, such as a " *
+                "thin wet surface layer refreezing. No CF standard name exists."),
+    :refreeze_thermal_count => CFAttrs("1",
+        "number of cell-steps whose pore water froze inside the thermal solve", "time: sum";
+        comment="Count, over the interval, of (cell, timestep) pairs contributing to " *
+                "refreeze_thermal. No CF standard name exists."),
     :evaporation_condensation => CFAttrs("kg m-2",
         "net surface water vapour mass exchange", "time: sum";
         comment="Positive = mass gain by the column (condensation/deposition); " *
@@ -198,6 +210,34 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "the epoch is the start of spinup rather than the start of the transient " *
                 "run. Under sustained ablation the deepest cell is a lower bound: basal " *
                 "accretion inherits that cell's own age."),
+    # ---- lower_boundary = :ground only -------------------------------------
+    :heat_flux_ground => CFAttrs("W m-2", "conductive heat flux from the ground into the snow",
+        "time: mean";
+        comment="Positive upward, across the snow–ground interface (SNOWPACK's Qg0). With " *
+                "no snow, minus the energy the surface balance delivers to the ground. " *
+                "Excludes shortwave transmitted through the snow to the ground."),
+    :snow_depth => CFAttrs("m", "depth of the snow above the ground", "time: point";
+        standard_name="surface_snow_thickness"),
+    :snow_water_equivalent => CFAttrs("kg m-2", "mass of the snow above the ground, ice " *
+        "matrix and pore water", "time: point"; standard_name="surface_snow_amount"),
+    :soil_temperature_005 => CFAttrs("K", "soil temperature 0.05 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_010 => CFAttrs("K", "soil temperature 0.1 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_020 => CFAttrs("K", "soil temperature 0.2 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_050 => CFAttrs("K", "soil temperature 0.5 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    :soil_temperature_100 => CFAttrs("K", "soil temperature 1.0 m below the ground surface",
+        "time: point"; comment="Linear between ground-cell centres."),
+    # ---- lower_boundary = :prescribed only ---------------------------------
+    :temperature_base => CFAttrs("K", "prescribed temperature at the base of the snow",
+        "time: mean"; comment="The forcing layer temperature_ground: the fixed-temperature " *
+        "reservoir below the snow, and the snow-free ground surface."),
+    :material => CFAttrs("1", "cell material code", "time: point";
+        comment="0 snow, firn or ice above the ground; 1 soil; 2 empty snow slot (zero " *
+                "thickness and mass). Ground cells: density is solids plus pore ice, water " *
+                "the unfrozen pore water."),
 )
 
 """

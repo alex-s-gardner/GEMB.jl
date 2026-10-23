@@ -40,10 +40,11 @@ end
 """
     _balanced_longwave(T)
 
-Downward longwave that exactly balances the upward emission of a surface at `T`, so a
-steady-state column neither warms nor cools radiatively.
+Downward longwave that exactly balances the upward emission of a gray surface at `T`, so a
+steady-state column neither warms nor cools radiatively: the surface absorbs `ε·LW↓` and emits
+`εσT⁴`, so the balance `LW↓ = σT⁴` holds for every emissivity.
 """
-_balanced_longwave(T::Float64, emissivity::Float64=0.97) = GEMB.SB * T^4 * emissivity
+_balanced_longwave(T::Float64) = GEMB.SB * T^4
 
 @testset "Steady state" begin
     # If T_surf = temperature_air and LW balanced, T should remain roughly constant
@@ -425,6 +426,95 @@ end
     end
 end
 
+@testset "Radiative equilibrium holds for one day (both solvers)" begin
+    # Isothermal column at T_eq with LW↓ = σT_eq⁴, no shortwave, air at T_eq and saturated
+    # over ice, so the sensible and latent fluxes vanish at T_s = T_eq. A gray surface absorbs
+    # ε·LW↓ = εσT_eq⁴ and emits the same, so the column is an exact steady state.
+    T_eq = 260.0
+    n = N_CELLS
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()), ε in (0.97, 0.8)
+        mp = _temperature_mp(864000000; emissivity=ε, thermal_solver=solver)
+        cfs = GEMB.ClimateForcingStep(
+            86400.0, T_eq, 100000.0, 0.0, 5.0, 0.0, GEMB.SB * T_eq^4,
+            GEMB.saturation_vapor_pressure_ice(T_eq), T_eq, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        t_out, lw_up, shf, lhf, _, _ = GEMB.calculate_temperature(
+            fill(T_eq, n), fill(DZ_UNIFORM, n), fill(DENSITY_UNIFORM, n), 0.0,
+            fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true)
+        @test maximum(abs.(t_out .- T_eq)) < 1e-3
+        # Upward longwave is emitted plus reflected, which at equilibrium equals LW↓.
+        @test lw_up ≈ GEMB.SB * T_eq^4 rtol = 1e-9
+    end
+end
+
+@testset "Energy budget against fluxes recomputed outside the solver" begin
+    # One sub-step, so the surface fluxes are those of a single surface state that the test can
+    # recompute itself: on the implicit path (backward Euler) the balance at the new T₁; on the
+    # explicit path the balance at the initial T₁ linearized in the change of T₁,
+    # Q(T₁⁰) + Q'(T₁⁰)·ΔT₁. The expected enthalpy change is the textbook surface balance
+    # (1 − α)SW + ε·LW↓ − εσT_s⁴ + H + LE plus the basal conduction, with H and LE from
+    # `turbulent_heat_flux`, Q' by central difference, and the basal flux from the
+    # harmonic-mean face conductance.
+    n = N_CELLS
+    dz = fill(DZ_UNIFORM, n)
+    density = fill(DENSITY_UNIFORM, n)
+    t_in = [255.0 + (i - 1) for i in 1:n]
+    shortwave_flux = [150.0 * exp(-2.0 * (i - 1)) for i in 1:n]
+    ε = 0.9
+    for (solver, dt) in ((GEMB.ExplicitThermal(), 10.0), (GEMB.ImplicitThermal(), 900.0))
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, dt_divisors=[dt])
+        cfs = GEMB.ClimateForcingStep(
+            dt, 265.0, 90000.0, 0.0, 6.0, 300.0, 280.0,
+            150.0, 265.0, 6.0, 0.0, 2.0, 10.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        t_out, = GEMB.calculate_temperature(copy(t_in), dz, density, 0.0,
+            fill(GRAIN_RADIUS_UNIFORM, n), shortwave_flux, cfs, mp, true)
+
+        T_s = solver isa GEMB.ExplicitThermal ? t_in[1] : t_out[1]
+        T_prof = solver isa GEMB.ExplicitThermal ? t_in : t_out
+        z0 = GEMB.surface_roughness(mp, density[1], 0.0)
+        ρa = GEMB.air_density(cfs.pressure_air, cfs.temperature_air)
+        Q(T) = ε * cfs.longwave_downward - ε * GEMB.SB * T^4 +
+               sum(GEMB.turbulent_heat_flux(T, ρa, z0, 0.1 * z0, 0.1 * z0, cfs)[1:2])
+        Q_applied = Q(T_s)
+        if solver isa GEMB.ExplicitThermal
+            Q_applied += (Q(T_s + 1e-3) - Q(T_s - 1e-3)) / 2e-3 * (t_out[1] - t_in[1])
+        end
+        K = GEMB.thermal_conductivity(t_in, density, mp)
+        G = (T_prof[n] - T_prof[n-1]) / (dz[n] / (2 * K[n]) + dz[n-1] / (2 * K[n-1]))
+        expected = (sum(shortwave_flux) + Q_applied + G) * dt
+        M = density .* dz
+        ΔH = sum(M[i] * (GEMB.specific_enthalpy(mp, t_out[i]) -
+                         GEMB.specific_enthalpy(mp, t_in[i])) for i in 1:n)
+        @test ΔH ≈ expected atol = GEMB.energy_tolerance(GEMB.column_enthalpy(mp, M, t_in))
+    end
+end
+
+@testset "Emissivity melt switch and reflected longwave per sub-step" begin
+    # Two explicit sub-steps of 1 s on a surface held at the melting point. The first sub-step
+    # uses `mp.emissivity`; the switch then selects `emissivity_grain_radius_large` for the
+    # second. Each sub-step's upward longwave is εσ·273.15⁴ + (1 − ε)·LW↓ with its own ε.
+    n = N_CELLS
+    ε_small, ε_large, lw_down = 0.90, 0.98, 310.0
+    mp = GEMB.ModelParameters(emissivity=ε_small, emissivity_grain_radius_large=ε_large,
+        emissivity_method=:grain_radius_w_threshold, emissivity_grain_radius_threshold=10.0,
+        thermal_conductivity_method=:Sturm, dt_divisors=[1.0])
+    cfs = GEMB.ClimateForcingStep(
+        2.0, 275.0, 100000.0, 0.0, 5.0, 800.0, lw_down,
+        700.0, 275.0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    shortwave_flux = zeros(n); shortwave_flux[1] = 800.0
+    _, lw_up, = GEMB.calculate_temperature(fill(GEMB.CtoK, n), fill(DZ_UNIFORM, n),
+        fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n), shortwave_flux,
+        cfs, mp, true)
+    σT4 = GEMB.SB * GEMB.CtoK^4
+    expected = 0.5 * ((ε_small * σT4 + (1 - ε_small) * lw_down) +
+                      (ε_large * σT4 + (1 - ε_large) * lw_down))
+    @test lw_up ≈ expected rtol = 1e-12
+end
+
 @testset "Implicit solver: energy budget closes" begin
     # `verbose=true` asserts conservation internally, but "didn't throw" is a weak
     # statement. Close the budget here explicitly against the same tolerance the solver
@@ -527,14 +617,14 @@ end
     @test t_out[end] === temperature[end]
 
     # The explicit limit really has collapsed on this column, so the contrast is real:
-    # measured 3.98 s with the lens against 903 s without it, a factor of 227 in sub-step
+    # measured 3.79 s with the lens against 832 s without it, a factor of 219 in sub-step
     # count for one thin cell. The implicit run above took `n_sub` from
     # `THERMAL_IMPLICIT_DT_TARGET` alone and never saw either number.
     K = GEMB.thermal_conductivity(temperature, density, mp)
     dz_no_lens = [0.02 * 1.08^(i - 1) for i in 1:n]
     dt_lens = GEMB._max_safe_dt(temperature, dz, density, K, mp)
     dt_no_lens = GEMB._max_safe_dt(temperature, dz_no_lens, density, K, mp)
-    @test dt_lens ≈ 3.979 atol = 0.01
+    @test dt_lens ≈ 3.791 atol = 0.01
     @test dt_no_lens / dt_lens > 200.0
 end
 
@@ -569,27 +659,20 @@ end
     @test t_out[1] > t_in[1]
 
     # The slope is exactly zero once clamped — the flux no longer sees T1 at all.
-    sfc = GEMB._ThermalSurface(1.3, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY,
-        0.1 * GEMB.Z0_SNOW_DRY, 0.97, false, 5.0, 0.16 * 5.0, 1.0,
-        log(2.0 / GEMB.Z0_SNOW_DRY), log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)),
-        log(2.0 / (0.1 * GEMB.Z0_SNOW_DRY)), (5.0 / 2.0)^2)
-    @test GEMB._surface_energy_balance_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs,
-        -300.0, 10.0, 5.0) === 0.0
+    sfc = GEMB._ThermalSurface(1.3, 0.97, false, 0.16 * 5.0, GEMB.GRAVITY * 2.0 / 5.0^2,
+        GEMB._stability_table(2.0, 2.0, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY))
+    @test GEMB._surface_energy_balance_and_slope(GEMB.CtoK + 5.0, 0.97, sfc, cfs)[6] === 0.0
     # Below the clamp it is strictly negative — the property that strengthens the diagonal.
-    lw, shf, lhf, _, _ = GEMB._surface_energy_balance(260.0, 0.97, sfc, cfs)
-    slope = GEMB._surface_energy_balance_slope(260.0, 0.97, sfc, cfs, lw, shf, lhf)
+    slope = GEMB._surface_energy_balance_and_slope(260.0, 0.97, sfc, cfs)[6]
     @test slope < 0.0
 
-    # The finite-difference slope must track the balance it differentiates. Loose (5%) only
-    # because the two turbulent components are clamped at ≤ 0 independently; the longwave term
-    # is analytic. An *analytic* turbulent slope that froze the Beljaars-Holtslag transfer
-    # coefficients was tried and reverted — it overshoots by up to 10x, which more than doubles
-    # the Newton iteration count. See the note in `_surface_energy_balance_slope`.
+    # The analytic slope is the derivative of the balance it accompanies, transfer-coefficient
+    # changes included.
     _Q(T) = let (lw2, s, l, _, _) = GEMB._surface_energy_balance(T, 0.97, sfc, cfs)
         lw2 + s + l
     end
     fd = (_Q(260.0 + 1e-3) - _Q(260.0 - 1e-3)) / 2e-3
-    @test slope ≈ fd rtol = 0.05
+    @test slope ≈ fd rtol = 1e-5
 end
 
 @testset "Implicit solver: steady state is a fixed point" begin
@@ -833,4 +916,390 @@ end
     GEMB._resize_workspace!(ws, 100)
     @test length(ws.H) == 100
     @test all(length(b) == 100 for b in GEMB._workspace_buffers(ws))
+end
+
+@testset "Wet surface cell holds the melting point while its water freezes" begin
+    # A wet surface cell at 273.15 K loses 100 W m-2: absorbed ε·LW↓ is 100 W m-2 short of
+    # εσT⁴, and the air is at the melting point and saturated over water, so the turbulent
+    # fluxes vanish there. Until its water has frozen the cell stays at 273.15 K inside the
+    # solve, so the upward longwave is that of a 273.15 K surface throughout; the water that
+    # froze, 100·dt/LF, comes back as cold content in the returned matrix temperature, and
+    # calculate_melt refreezes it and counts it.
+    n = N_CELLS
+    ε = 0.97
+    W = 1.0
+    T0 = GEMB.CtoK
+    lw_down = GEMB.SB * T0^4 - 100.0 / ε
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()), dt in (1800.0, 7200.0)
+        # 60 s explicit sub-steps, so the lagged surface flux resolves the cooling.
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, dt_divisors=[60.0])
+        cfs = GEMB.ClimateForcingStep(
+            dt, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+            GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        water = [W; zeros(n - 1)]
+        dz = fill(DZ_UNIFORM, n)
+        density = fill(DENSITY_UNIFORM, n)
+        t_out, lw_up, shf, lhf, _, _, _ = GEMB.calculate_temperature(fill(T0, n), dz,
+            density, W, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true; water)
+        M1 = DENSITY_UNIFORM * DZ_UNIFORM
+        frozen = 100.0 * dt / GEMB.LF
+        if frozen < W
+            @test lw_up ≈ ε * GEMB.SB * T0^4 + (1 - ε) * lw_down rtol = 1e-12
+            @test shf == 0.0 && lhf == 0.0
+            @test all(t_out[2:end] .== T0)
+            @test M1 * (GEMB.specific_enthalpy(mp, T0) - GEMB.specific_enthalpy(mp, t_out[1])) ≈
+                  100.0 * dt rtol = 1e-9
+            out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n),
+                zeros(n), fill(0.5, n), zeros(n), mp, true)
+            @test out[1][1] ≈ T0 atol = 1e-6
+            @test out[4][1] ≈ W - frozen rtol = 1e-9
+            @test out[12] ≈ frozen rtol = 1e-9
+        else
+            # 7200 s freezes all of it after 3345 s; the surface then cools below 273.15 K.
+            @test lw_up < ε * GEMB.SB * T0^4 + (1 - ε) * lw_down
+            @test t_out[1] < T0
+        end
+    end
+
+    # Without `water` the same column is dry and cools at once.
+    mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+        surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+        dt_divisors=[60.0])
+    cfs = GEMB.ClimateForcingStep(
+        1800.0, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+        GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    _, lw_dry, = GEMB.calculate_temperature(fill(T0, n), fill(DZ_UNIFORM, n),
+        fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true)
+    @test lw_dry < ε * GEMB.SB * T0^4 + (1 - ε) * lw_down
+
+    @test_throws "must equal water_surface" GEMB.calculate_temperature(fill(T0, n),
+        fill(DZ_UNIFORM, n), fill(DENSITY_UNIFORM, n), 0.0, fill(GRAIN_RADIUS_UNIFORM, n),
+        zeros(n), cfs, mp, false; water=[1.0; zeros(n - 1)])
+end
+
+@testset "Wet cell whose water outweighs its matrix freezes inside the solve" begin
+    # The regime of the Tien Shan Cbg run (tile N42_E078, band 3350 m, 2001-04-29 12:00): a 6 mm
+    # surface cell of 93.4 kg m-3 fresh snow holding 0.597 kg m-2 of water, W/M = 1.04, loses
+    # heat under clear skies. Its water's latent heat exceeds the matrix's enthalpy, so a matrix
+    # temperature carrying the cold content of freezing it would lie below 0 K: under Cuffey and
+    # Paterson eq. 9.1 that matrix enthalpy is outside the inverse's domain. The solve freezes
+    # the water instead. The cell loses 100 W m-2 as in the testset above; its neighbors are dry
+    # at 273.15 K, so while it stays at the melting point no heat is conducted.
+    n = N_CELLS
+    ε = 0.97
+    T0 = GEMB.CtoK
+    lw_down = GEMB.SB * T0^4 - 100.0 / ε
+    dz1, ρ1, W = 0.0061, 93.4, 0.597
+    M1 = ρ1 * dz1
+    for hcm in (:CuffeyPaterson, :constant), solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal()),
+        dt in (1800.0, 7200.0)
+        mp = GEMB.ModelParameters(emissivity=ε, emissivity_method=:uniform,
+            surface_roughness_effective_ratio=0.1, thermal_conductivity_method=:Sturm,
+            thermal_solver=solver, heat_capacity_method=hcm, dt_divisors=[60.0])
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        cfs = GEMB.ClimateForcingStep(
+            dt, T0, 100000.0, 0.0, 5.0, 0.0, lw_down,
+            GEMB.saturation_vapor_pressure_water(T0), T0, 5.0, 0.0, 2.0, 2.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        hw = GEMB.specific_enthalpy_water(mp)
+        dz = [dz1; fill(DZ_UNIFORM, n - 1)]
+        density = [ρ1; fill(DENSITY_UNIFORM, n - 1)]
+        water = [W; zeros(n - 1)]
+        E0 = sum(density .* dz .* h.(fill(T0, n))) + W * hw
+        if dt == 1800.0
+            # Handing the cell off with its water liquid would need a matrix enthalpy below that
+            # of WET_HANDOFF_TEMPERATURE_MIN, and under eq. 9.1 below the inverse's domain.
+            h_matrix = (M1 * h(T0) - 100.0 * dt) / M1
+            @test h_matrix < h(GEMB.WET_HANDOFF_TEMPERATURE_MIN)
+            hcm === :CuffeyPaterson &&
+                @test_throws DomainError GEMB.temperature_from_specific_enthalpy(mp, h_matrix)
+        end
+        ws = GEMB.ThermalWorkspace()
+        t_out, lw_up, shf, lhf, basal, _, _, refrozen = GEMB.calculate_temperature(fill(T0, n),
+            dz, density, W, fill(GRAIN_RADIUS_UNIFORM, n), zeros(n), cfs, mp, true, ws; water)
+        M_new = density[1] * dz[1]
+        # Mass moves from water to matrix and nothing else changes.
+        @test M_new + water[1] ≈ M1 + W rtol = 1e-13
+        @test refrozen ≈ M_new - M1 rtol = 1e-12
+        @test ws.refrozen[1] == refrozen && all(==(0.0), ws.refrozen[2:n])
+        @test density[2:n] == fill(DENSITY_UNIFORM, n - 1) && dz[2:n] == fill(DZ_UNIFORM, n - 1)
+        # The column's enthalpy changes by exactly the energy crossing its boundaries.
+        E1 = sum(density .* dz .* h.(t_out)) + sum(water) * hw
+        @test E1 - E0 ≈ dt * (lw_down - lw_up + shf + lhf + basal) rtol = 1e-10
+        if dt == 1800.0
+            # 100 W m-2 for 1800 s freezes 0.538 of the 0.597 kg m-2 on the plateau.
+            @test t_out[1] == T0
+            @test all(t_out[2:end] .== T0)
+            @test refrozen ≈ 100.0 * dt / GEMB.LF rtol = 1e-9
+            @test dz[1] == dz1
+        else
+            # All of the water freezes after 1997 s; the cell then cools below the melting point.
+            @test water[1] == 0.0
+            @test refrozen == W
+            @test GEMB.WET_HANDOFF_TEMPERATURE_MIN < t_out[1] < T0
+        end
+        # What calculate_melt then finds is a cell it does not refreeze further.
+        out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n), zeros(n),
+            fill(0.5, n), zeros(n), mp, true)
+        @test out[12] ≈ 0.0 atol = 1e-12
+    end
+end
+
+@testset "Wet-cell handoff" begin
+    for hcm in (:CuffeyPaterson, :constant)
+        mp = GEMB.ModelParameters(heat_capacity_method=hcm)
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        hw = GEMB.specific_enthalpy_water(mp)
+        T0 = GEMB.CtoK
+        function handoff(H, M, W, dz)
+            t, d, ρ, w, r = [0.0], [dz], [M / dz], [W], [0.0]
+            f = GEMB._wet_cell_handoff!(mp, t, d, ρ, w, r, 1, H, M)
+            return (; f, T=t[1], dz=d[1], density=ρ[1], water=w[1], refrozen=r[1])
+        end
+        # A matrix temperature at or above WET_HANDOFF_TEMPERATURE_MIN is handed on with the
+        # water liquid, as `_matrix_temperature` gives it.
+        M, W = 40.0, 2.0
+        for T in (250.0, GEMB.WET_HANDOFF_TEMPERATURE_MIN)
+            H = M * h(T) + W * hw
+            o = handoff(H, M, W, 0.1)
+            @test o.f == 0.0 && o.refrozen == 0.0 && o.water == W && o.dz == 0.1 && o.density == M / 0.1
+            @test o.T == GEMB._matrix_temperature(mp, H, M, W)
+            @test o.T ≈ T rtol = 1e-12
+        end
+        # Thin, water-heavy cell (W/M = 1.04) on the plateau: half the water freezes at 273.15 K.
+        M, W, dz = 0.573, 0.597, 0.0061
+        o = handoff((M + W) * h(T0) + 0.5 * W * GEMB.LF, M, W, dz)
+        @test o.T == T0
+        @test o.f ≈ 0.5 * W rtol = 1e-12
+        @test o.refrozen == o.f
+        @test o.water ≈ 0.5 * W rtol = 1e-12
+        @test o.dz == dz
+        @test o.density ≈ (M + 0.5 * W) / dz rtol = 1e-12
+        # Below the plateau all the water freezes, and matrix and ice share one temperature.
+        o = handoff((M + W) * h(260.0), M, W, dz)
+        @test o.f == W && o.water == 0.0
+        @test o.T ≈ 260.0 rtol = 1e-12
+        # Freezing that would exceed the ice density leaves the cell at ice density, thicker.
+        M, W, dz = 91.0, 1.0, 0.1
+        o = handoff((M + W) * h(220.0), M, W, dz)
+        @test o.density == mp.density_ice
+        @test o.dz ≈ (M + W) / mp.density_ice rtol = 1e-14
+        @test o.T ≈ 220.0 rtol = 1e-12
+    end
+end
+
+@testset "Wet-cell temperature map" begin
+    for hcm in (:CuffeyPaterson, :constant)
+        mp = GEMB.ModelParameters(heat_capacity_method=hcm)
+        h(T) = GEMB.specific_enthalpy(mp, T)
+        M, W = 40.0, 2.0
+        H_lo = (M + W) * h(GEMB.CtoK)
+        H_hi = H_lo + W * GEMB.LF
+        @test GEMB._wet_cell_temperature(mp, H_hi, M, W) ≈ GEMB.CtoK rtol = 1e-15
+        @test GEMB._wet_cell_temperature(mp, 0.5 * (H_lo + H_hi), M, W) == GEMB.CtoK
+        @test GEMB._wet_cell_temperature(mp, H_lo, M, W) == GEMB.CtoK
+        # One kelvin above the plateau warms the matrix alone; one below cools matrix and
+        # frozen water together.
+        @test GEMB._wet_cell_temperature(mp, H_hi + M * (h(GEMB.CtoK + 1.0) - h(GEMB.CtoK)),
+            M, W) ≈ GEMB.CtoK + 1.0 rtol = 1e-12
+        @test GEMB._wet_cell_temperature(mp,
+            H_lo - (M + W) * (h(GEMB.CtoK) - h(GEMB.CtoK - 1.0)), M, W) ≈
+              GEMB.CtoK - 1.0 rtol = 1e-12
+    end
+end
+
+@testset "Explicit surface flux converges in the sub-step" begin
+    # A thin 300 kg m-3 surface cell under 15 m s-1 of air 15 K colder than it. The mean
+    # turbulent flux over the hour at the default safety factor agrees within 2% with the
+    # flux at a 16x smaller factor.
+    n = 40
+    dz = [0.02 * 1.08^(i - 1) for i in 1:n]
+    density = fill(300.0, n)
+    T0 = [255.0 + 10.0 * (i - 1) / (n - 1) for i in 1:n]
+    cfs = GEMB.ClimateForcingStep(3600.0, 240.0, 80000.0, 0.0, 15.0, 0.0, 180.0, 30.0,
+        250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    flux = map((GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR, 0.05)) do sf
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
+            thermal_explicit_safety_factor=sf,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        _, _, shf, lhf, = GEMB.calculate_temperature(copy(T0), dz, density, 0.0,
+            fill(0.3, n), zeros(n), cfs, mp, true)
+        shf + lhf
+    end
+    @test flux[1] ≈ flux[2] rtol = 0.02
+
+    # The linearized surface flux uses the analytic slope of the surface balance.
+    mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm,
+        dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+    sfc = GEMB._ThermalSurface(GEMB.air_density(80000.0, 240.0), mp.emissivity, false,
+        0.16 * 15.0, GEMB.GRAVITY * 10.0 / 15.0^2,
+        GEMB._stability_table(10.0, 2.0, GEMB.Z0_SNOW_DRY, 0.1 * GEMB.Z0_SNOW_DRY))
+    Q(T) = sum(GEMB._surface_energy_balance(T, mp.emissivity, sfc, cfs)[1:3])
+    Λ = GEMB._surface_energy_balance_and_slope(T0[1], mp.emissivity, sfc, cfs)[6]
+    @test Λ ≈ (Q(T0[1] + 1e-3) - Q(T0[1] - 1e-3)) / 2e-3 rtol = 1e-5
+    @test Λ < 0.0
+    parts = GEMB._surface_fluxes_and_slopes(T0[1], mp.emissivity, sfc, cfs)
+    @test parts[6] + parts[7] + parts[8] == Λ
+    @test all(iszero, GEMB._surface_fluxes_and_slopes(GEMB.CtoK, mp.emissivity, sfc, cfs)[6:8])
+end
+
+@testset "An all-low-density column stays stable under strong cooling" begin
+    # At 100 kg m-3 the conductivity is so small that the diffusive limit exceeds the forcing
+    # step, and only the linearized surface flux keeps the explicit scheme from oscillating. The result
+    # stays physical and close to the implicit solution.
+    n = 20
+    dz = fill(0.1, n)
+    density = fill(100.0, n)
+    cfs = GEMB.ClimateForcingStep(3600.0, 230.0, 80000.0, 0.0, 12.0, 0.0, 150.0, 10.0,
+        250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    T1 = map((GEMB.ExplicitThermal(), GEMB.ImplicitThermal())) do solver
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        t, = GEMB.calculate_temperature(fill(260.0, n), dz, density, 0.0, fill(0.3, n),
+            zeros(n), cfs, mp, true)
+        @test all(220.0 .< t .<= 260.0)
+        t[1]
+    end
+    @test T1[1] ≈ T1[2] atol = 2.0
+end
+
+# A forcing with no turbulent or radiative exchange at surface temperature `T_s`: air at
+# `T_s`, saturated over ice, calm, no longwave. Used with `emissivity = 0`.
+_quiet_cfs(dt, T_s) = GEMB.ClimateForcingStep(dt, T_s, 100000.0, 0.0, 0.0, 0.0, 0.0,
+    GEMB.saturation_vapor_pressure_ice(T_s), T_s, 0.0, 0.0, 2.0, 2.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+@testset "Semi-infinite solid under constant surface flux" begin
+    # F = 100 W m-2 absorbed in a 1 cm surface cell of solid ice 2 m deep, constant K and c.
+    # After 6 h the profile matches
+    #   T(z,t) = T₀ + (2F/k)√(κt/π)·exp(−z²/4κt) − (Fz/k)·erfc(z/2√(κt))
+    # to 2% of the surface rise.
+    erfc_(x) = begin   # Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
+        t = 1 / (1 + 0.3275911 * x)
+        t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 +
+            t * (-1.453152027 + t * 1.061405429)))) * exp(-x^2)
+    end
+    n = 200
+    dz = fill(0.01, n)
+    ρ = 917.0
+    T0 = 250.0
+    F = 100.0
+    t_end = 6 * 3600.0
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        # The closed form needs a constant heat capacity.
+        mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
+            thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            heat_capacity_method=:constant,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        k = GEMB.thermal_conductivity(fill(T0, n), fill(ρ, n), mp)[1]
+        κ = k / (ρ * mp.heat_capacity_ice)
+        sw = zeros(n); sw[1] = F
+        T = fill(T0, n)
+        ws = ThermalWorkspace()
+        for _ in 1:6
+            T, = GEMB.calculate_temperature(T, dz, fill(ρ, n), 0.0, fill(1.0, n), sw,
+                _quiet_cfs(3600.0, T0), mp, true, ws)
+        end
+        z = cumsum(dz) .- dz ./ 2
+        analytic = [T0 + (2F / k) * sqrt(κ * t_end / π) * exp(-zi^2 / (4κ * t_end)) -
+                    (F * zi / k) * erfc_(zi / (2 * sqrt(κ * t_end))) for zi in z]
+        rise = analytic[1] - T0
+        @test maximum(abs.(T[1:60] .- analytic[1:60])) < 0.02 * rise
+        @test T[end] == T0
+    end
+end
+
+@testset "Discrete linear steady state" begin
+    # Uniform K and dz, gradient F/K downward, F absorbed in cell 1, no surface exchange:
+    # every face carries F, so one step leaves T unchanged and the basal flux is −F.
+    n = 30
+    dz = fill(0.05, n)
+    ρ = 600.0
+    F = 20.0
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
+            thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        K = GEMB.thermal_conductivity(fill(250.0, n), fill(ρ, n), mp)[1]
+        z = cumsum(dz) .- dz ./ 2
+        T_in = [250.0 - (F / K) * (z[i] - z[1]) for i in 1:n]
+        sw = zeros(n); sw[1] = F
+        T, _, _, _, basal, = GEMB.calculate_temperature(copy(T_in), dz, fill(ρ, n), 0.0,
+            fill(1.0, n), sw, _quiet_cfs(3600.0, T_in[1]), mp, true)
+        @test maximum(abs.(T .- T_in)) < 1e-8
+        @test basal ≈ -F atol = 1e-8
+    end
+end
+
+@testset "Melting-point clamp on the surface flux" begin
+    # A surface cell above 273.15 K sees the surface fluxes of a 273.15 K surface, and its
+    # excess enthalpy is exactly what it received: M₁·(h(T₁) − h(273.15)) = Q·dt. The cell is dry
+    # and the air below saturation, so it loses the vapor mass flux of a 273.15 K surface, from
+    # ice, at LS (`_surface_liquid`).
+    n = 2
+    dz = [0.05, 50.0]
+    ρ = 400.0
+    T_in = [GEMB.CtoK, GEMB.CtoK]
+    lw_down = 300.0
+    cfs = GEMB.ClimateForcingStep(3600.0, 278.0, 90000.0, 0.0, 6.0, 0.0, lw_down, 500.0,
+        270.0, 6.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    sw = [400.0, 0.0]
+    for solver in (GEMB.ExplicitThermal(), GEMB.ImplicitThermal())
+        mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+            dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
+        T, lw_up, shf, lhf, basal, ec, ec_liquid = GEMB.calculate_temperature(copy(T_in), dz,
+            fill(ρ, n), 0.0, fill(0.5, n), sw, cfs, mp, true)
+        @test T[1] > GEMB.CtoK
+        ε = mp.emissivity
+        @test lw_up ≈ ε * GEMB.SB * GEMB.CtoK^4 + (1 - ε) * lw_down rtol = 1e-12
+        z0 = GEMB.surface_roughness(mp, ρ, 0.0)
+        shf_0, lhf_0, _ = GEMB.turbulent_heat_flux(GEMB.CtoK,
+            GEMB.air_density(cfs.pressure_air, cfs.temperature_air), z0,
+            mp.surface_roughness_effective_ratio * z0, mp.surface_roughness_effective_ratio * z0,
+            cfs)
+        @test shf ≈ shf_0 rtol = 1e-12
+        @test lhf_0 < 0.0
+        @test ec ≈ lhf_0 / GEMB.LV * 3600.0 rtol = 1e-12
+        @test ec_liquid == 0.0
+        @test lhf * 3600.0 ≈ GEMB.LS * ec rtol = 1e-12
+        Q = sw[1] + lw_down - lw_up + shf + lhf + basal
+        @test ρ * dz[1] * (GEMB.specific_enthalpy(mp, T[1]) - GEMB.specific_enthalpy(mp, GEMB.CtoK)) ≈
+              Q * 3600.0 rtol = 1e-9
+    end
+end
+
+@testset "A surface cell of the minimum snow-layer mass, both solvers" begin
+    # Layer management can leave fresh snow as a surface cell holding as little as
+    # `snow_layer_min_mass(dt)`, 1 kg m-2 at this 3-hour step (2.9 mm at 350 kg m-3). Over a 3-hour step under 15 m s-1 of air 20 K colder, and
+    # under sun absorbed in that cell, both solvers close the energy budget (verbose), the
+    # explicit sub-step resolves the surface relaxation (the hour-mean turbulent flux at the
+    # default safety factor agrees within 2% with a 16x smaller factor) and the two solvers
+    # agree.
+    n = 40
+    dz = [GEMB.snow_layer_min_mass(10800.0) / 350.0; [0.025 * 1.1^(i - 1) for i in 1:n-1]]
+    density = [350.0; fill(380.0, n - 1)]
+    T0 = fill(260.0, n)
+    grain_radius = [0.05; fill(0.5, n - 1)]
+    divisors = Float64.(GEMB.fast_divisors(108000000)) ./ 10000
+    for (Ta, sw1) in ((240.0, 0.0), (268.0, 150.0))
+        cfs = GEMB.ClimateForcingStep(10800.0, Ta, 80000.0, 0.0, 15.0, 0.0, 200.0, 30.0,
+            250.0, 10.0, 0.0, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        sw = [sw1; zeros(n - 1)]
+        res = map(((GEMB.ExplicitThermal(), GEMB.THERMAL_EXPLICIT_SAFETY_FACTOR),
+                   (GEMB.ExplicitThermal(), 0.05), (GEMB.ImplicitThermal(), 0.8))) do (solver, sf)
+            mp = GEMB.ModelParameters(thermal_conductivity_method=:Sturm, thermal_solver=solver,
+                thermal_explicit_safety_factor=sf, dt_divisors=divisors)
+            t, _, shf, lhf, = GEMB.calculate_temperature(copy(T0), dz, density, 0.0,
+                grain_radius, sw, cfs, mp, true)
+            @test all(isfinite, t)
+            (t[1], shf + lhf)
+        end
+        @test res[1][2] ≈ res[2][2] rtol = 0.02
+        @test res[1][2] ≈ res[3][2] rtol = 0.02
+        @test res[1][1] ≈ res[3][1] atol = 0.5
+    end
 end

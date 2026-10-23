@@ -19,6 +19,9 @@ Pages = [
     "spinup.jl",
     "profile_extract.jl",
     "forcing_climatology.jl",
+    "ground_column.jl",
+    "ground_driver.jl",
+    "prescribed_driver.jl",
 ]
 Order = [:module, :type, :constant, :function, :macro]
 ```

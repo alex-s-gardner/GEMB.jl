@@ -88,6 +88,8 @@ const OPTION_FIELDS = (
     :blowing_snow_method,
 )
 
+# `new_snow_method = :Constant` is Julia-only: it is absent from its tuple below, and its
+# `new_snow_density` from `NUMERIC_FIELDS`, so a C host steps with one of the fixed densities.
 const OPTION_VALUES = (
     (:HerronLangway, :Arthern, :ArthernB, :Barnola1991, :Crocus, :CrocusPure, :GSFC2020,
      :Simonsen2013, :Ligtenberg),
@@ -97,17 +99,17 @@ const OPTION_VALUES = (
     (:accumulation, :precipitation),
     (:arithmetic, :arrhenius),
     (:Constant150, :Constant315, :Constant350, :Fausto, :FaustoFit, :Pahaut, :Kaspers,
-     :KuipersMunneke),
+     :KuipersMunneke, :vanKampenhout2017, :vanKampenhout2017SNOTEL),
     (:uniform, :grain_radius_threshold, :grain_radius_w_threshold),
     (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019),
     (:constant, :CuffeyPaterson),
     (:water, :ice),
-    (:Marbouty, :Arthern, :hybrid),
+    (:Marbouty, :Arthern, :hybrid, :Taillandier2007, :FlannerZender2006),
     (:constant, :ColeouLesaffre),
     (:thickness, :density),
     (:instantaneous, :ZuoOerlemans, :Darcy),
     (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann),
-    (:none, :Crocus),
+    (:none, :Crocus, :Keenan2021),
 )
 
 const N_OPTIONS = length(OPTION_FIELDS)
@@ -140,6 +142,8 @@ const NUMERIC_FIELDS = (
     :surface_slope,
     :drift_rate,
     :thermal_explicit_safety_factor,
+    :destructive_metamorphism_density,
+    :drift_fetch_length,
 )
 
 const N_NUMERIC = length(NUMERIC_FIELDS)
@@ -149,12 +153,17 @@ const FLAG_FIELDS = (
     :shortwave_subsurface_absorption,
     :output_viscosity,
     :blowing_snow_sublimation,
+    :destructive_metamorphism,
 )
 
 const N_FLAGS = length(FLAG_FIELDS)
 
 const N_FORCING = fieldcount(GEMB.ClimateForcingStep)
 const N_FLUX = 21  # the flux scalars; `viscosity` comes back through its own buffer
+
+# Flux terms `gemb_core` returns that do not cross the C boundary: solver diagnostics, available
+# from the Julia driver's output only.
+const JULIA_ONLY_FLUX = (:refreeze_thermal, :refreeze_thermal_count)
 
 """
     _resolve_option(i, code) -> Symbol
@@ -233,9 +242,12 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         surface_slope=numeric[23],
         drift_rate=numeric[24],
         thermal_explicit_safety_factor=numeric[25],
+        destructive_metamorphism_density=numeric[26],
+        drift_fetch_length=numeric[27],
         shortwave_subsurface_absorption=f(1),
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),
+        destructive_metamorphism=f(4),
         dt_divisors=GEMB.fast_divisors(round(Int, dt * 10000)) ./ 10000,
     )
 end

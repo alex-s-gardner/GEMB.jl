@@ -13,6 +13,21 @@ Depending on model configuration:
 
 Returns `shortwave_flux` vector [W m-2] of absorbed shortwave radiation per grid cell.
 
+Every branch absorbs the same total, the net surface shortwave of
+[`shortwave_net_surface`](@ref): `albedo_broadband` applied to the direct beam
+`SW↓ − SW↓_diffuse` and `albedo_diffuse` to `SW↓_diffuse`. The branches differ only in how that
+total is distributed with depth, and on the subsurface branches the part transmitted through
+the base of the column is not absorbed:
+
+- surface absorption: all of it in the top cell;
+- density-dependent extinction: 36% in the top cell (wavelengths > 0.8 µm), the remaining
+  64% attenuated as `exp(−B·z)` with `B` linear in density from 10 m⁻¹ at 300 kg m⁻³ to
+  1.3 m⁻¹ at `mp.density_ice`;
+- `:BrunLefebre` spectral extinction: the net is split over three bands in proportion to
+  `sF_k·(1 − a_k)`, the spectral fractions and spectral albedos of
+  [`_albedo_brun_lefebre`](@ref); the 1.5–2.8 µm band is absorbed in the top cell and the
+  other two are attenuated with their own grain-size-dependent coefficients.
+
 # References
 - Lefebre, F., Gallée, H., van Ypersele, J.-P., and Greuell, W. (2003). Modeling of snow and
   ice melt at ETH Camp (West Greenland): a study of surface albedo. *J. Geophys. Res.* 108,
@@ -47,20 +62,15 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
     albedo_diffuse::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters)
 
-    # Initialize variables
     m = length(density)
     fill!(shortwave_flux, 0.0)
+
+    shortwave_net = shortwave_net_surface(albedo_broadband, albedo_diffuse, cfs)
 
     if (!mp.shortwave_subsurface_absorption) ||
        ((mp.density_ice - density[1]) < D_TOLERANCE)
         # all sw radiation is absorbed by the top grid cell
-
-        if mp.albedo_method == :GardnerSharp
-            shortwave_flux[1] = (1.0 - albedo_broadband) * max(0.0, (cfs.shortwave_downward - cfs.shortwave_downward_diffuse)) +
-                (1.0 - albedo_diffuse) * cfs.shortwave_downward_diffuse
-        else
-            shortwave_flux[1] = (1 - albedo_broadband) * cfs.shortwave_downward
-        end
+        shortwave_flux[1] = shortwave_net
 
     else  # sw radiation is absorbed at depth within the glacier
 
@@ -68,20 +78,17 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             # convert effective radius [mm] to grain size [m]
             gsz = (grain_radius .* 2) ./ 1000
 
-            # Spectral fractions [0.3-0.8um 0.8-1.5um 1.5-2.8um]
-            sF = [0.606, 0.301, 0.093]
-
-            # initialize variables
-            B1_cum = ones(m + 1)
-            B2_cum = ones(m + 1)
-
-            # spectral albedos:
-            a1 = min(0.98, 0.95 - 1.58 * gsz[1]^0.5)
-            a2 = max(0.0, 0.95 - 15.4 * gsz[1]^0.5)
-            a3 = max(0.127, 0.88 + 346.3 * gsz[1] - 32.31 * gsz[1]^0.5)
-
-            # separate net shortwave radiative flux into spectral ranges
-            swfS = (sF .* cfs.shortwave_downward) .* (1 .- [a1, a2, a3])
+            # Spectral fractions and surface band albedos, which set how the net is shared
+            # between the bands.
+            sF = BRUN_LEFEBRE_SPECTRAL_FRACTIONS
+            a1, a2, a3 = _brun_lefebre_band_albedos(grain_radius[1])
+            w = (sF[1] * (1 - a1), sF[2] * (1 - a2), sF[3] * (1 - a3))
+            w_total = w[1] + w[2] + w[3]
+            (all(>=(0.0), w) && w_total > 0.0) ||
+                error("BrunLefebre spectral absorption weights must be non-negative with a " *
+                      "positive sum: $(w) at grain radius $(grain_radius[1]) mm")
+            swfS = (shortwave_net * w[1] / w_total, shortwave_net * w[2] / w_total,
+                shortwave_net * w[3] / w_total)
 
             # absorption coefficient for spectral range
             h = density ./ (gsz .^ 0.5)
@@ -89,6 +96,8 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             B2 = 0.1098 .* h                 # 0.8 - 1.5um
 
             # cumulative extinction factors
+            B1_cum = ones(m + 1)
+            B2_cum = ones(m + 1)
             _extinction_profile!(B1_cum, B1, dz)
             _extinction_profile!(B2_cum, B2, dz)
 
@@ -109,10 +118,10 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
             SWs = 0.36
 
             # calculate surface shortwave radiation fluxes [W m-2]
-            swf_s = SWs * (1 - albedo_broadband) * cfs.shortwave_downward
+            swf_s = SWs * shortwave_net
 
             # calculate subsurface shortwave radiation fluxes [W m-2]
-            swf_ss = (1 - SWs) * (1 - albedo_broadband) * cfs.shortwave_downward
+            swf_ss = (1 - SWs) * shortwave_net
 
             # SW extinction coefficients
             Bs = 10.0    # snow SW extinction coefficient [m-1] (Bassford, 2002)
@@ -139,6 +148,34 @@ function calculate_shortwave_radiation!(shortwave_flux::AbstractVector, dz::Vect
     end
 
     return shortwave_flux
+end
+
+"""
+    shortwave_net_surface(albedo, albedo_diffuse, cfs) -> SW_net [W m-2]
+
+Shortwave absorbed by the surface, `(1 − albedo)·(SW↓ − SW↓_diffuse) +
+(1 − albedo_diffuse)·SW↓_diffuse`. Throws when `SW↓_diffuse > SW↓`.
+"""
+@inline function shortwave_net_surface(albedo::Float64, albedo_diffuse::Float64,
+    cfs::ClimateForcingStep)
+    direct = cfs.shortwave_downward - cfs.shortwave_downward_diffuse
+    direct >= 0.0 || error("shortwave_downward_diffuse ($(cfs.shortwave_downward_diffuse) " *
+                           "W m-2) exceeds shortwave_downward ($(cfs.shortwave_downward) W m-2)")
+    return (1.0 - albedo) * direct + (1.0 - albedo_diffuse) * cfs.shortwave_downward_diffuse
+end
+
+"""
+    effective_albedo(albedo, albedo_diffuse, cfs) -> α
+
+Shortwave-weighted surface albedo, `1 − SW_net/SW↓` with `SW_net` from
+[`shortwave_net_surface`](@ref): the reflected fraction of the incident shortwave. When
+`SW↓ = 0` there is nothing to weight by, and the direct-beam `albedo` is returned.
+"""
+@inline function effective_albedo(albedo::Float64, albedo_diffuse::Float64,
+    cfs::ClimateForcingStep)
+    sw = cfs.shortwave_downward
+    sw > 0.0 || return albedo
+    return 1.0 - shortwave_net_surface(albedo, albedo_diffuse, cfs) / sw
 end
 
 """

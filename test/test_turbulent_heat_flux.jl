@@ -70,10 +70,10 @@ end
 end
 
 @testset "Stability functions satisfy their definition" begin
-    # Ψ(ζ) = ∫₀^ζ (1 - φ(z))/z dz. Both branches are checked against this directly, by
-    # integrating their own profile function φ numerically and comparing to the closed form
-    # the module evaluates. This is the independent check: it uses only the definition and
-    # the published φ, never the closed forms themselves.
+    # Ψ(ζ) = ∫₀^ζ (1 - φ(z))/z dz. GEMB's closed forms are checked against this definition by
+    # integrating the published profile functions φ numerically. The φ below are retyped from
+    # the papers, not taken from GEMB, so this is the independent check; GEMB's own φ are then
+    # checked against them.
     function psi_numeric(phi, zeta; n=200_000)
         h = zeta / n
         s = 0.0
@@ -86,39 +86,42 @@ end
 
     a1, b1, c1, d1 = 1.0, 2.0 / 3.0, 5.0, 0.35
 
-    # Stable: Beljaars & Holtslag (1991) eq. 28 for momentum.
+    # Stable: Beljaars & Holtslag (1991) eqs. 28 (momentum) and 32 (heat).
     phi_m_stable(z) = 1 + a1 * z + b1 * z * (1 + c1 - d1 * z) * exp(-d1 * z)
-    psi_m_stable(z) = -(a1 * z + b1 * (z - c1 / d1) * exp(-d1 * z) + b1 * c1 / d1)
+    phi_h_stable(z) = 1 + z * (a1 * sqrt(1 + 2 * a1 * z / 3) + b1 * (1 + c1 - d1 * z) * exp(-d1 * z))
 
     # Unstable: Högström (1988) coefficients, normalized to φ(0) = 1.
     phi_m_unstable(z) = (1.0 - 19.0 * z)^(-0.25)
     phi_h_unstable(z) = (1.0 - 11.6 * z)^(-0.5)
-    function psi_m_unstable(z)
-        x = (1.0 - 19.0 * z)^0.25
-        2.0 * log((1 + x) / 2.0) + log((1 + x^2) / 2.0) - 2 * atan(x) + pi / 2
-    end
-    psi_h_unstable(z) = 2.0 * log((1.0 + (1.0 - 11.6 * z)^0.5) / 2.0)
 
     for zeta in (0.01, 0.1, 1.0, 5.0)
-        @test psi_m_stable(zeta) ≈ psi_numeric(phi_m_stable, zeta) rtol = 1e-5
+        @test GEMB.stability_psi_m(zeta) ≈ psi_numeric(phi_m_stable, zeta) rtol = 1e-5
+        @test GEMB.stability_psi_h(zeta) ≈ psi_numeric(phi_h_stable, zeta) rtol = 1e-5
+        @test GEMB.stability_phi_m(zeta) ≈ phi_m_stable(zeta) rtol = 1e-14
+        @test GEMB.stability_phi_h(zeta) ≈ phi_h_stable(zeta) rtol = 1e-14
     end
     for zeta in (-0.01, -0.1, -1.0, -5.0)
-        @test psi_m_unstable(zeta) ≈ psi_numeric(phi_m_unstable, zeta) rtol = 1e-5
-        @test psi_h_unstable(zeta) ≈ psi_numeric(phi_h_unstable, zeta) rtol = 1e-5
+        @test GEMB.stability_psi_m(zeta) ≈ psi_numeric(phi_m_unstable, zeta) rtol = 1e-5
+        @test GEMB.stability_psi_h(zeta) ≈ psi_numeric(phi_h_unstable, zeta) rtol = 1e-5
+        @test GEMB.stability_phi_m(zeta) ≈ phi_m_unstable(zeta) rtol = 1e-14
+        @test GEMB.stability_phi_h(zeta) ≈ phi_h_unstable(zeta) rtol = 1e-14
     end
 
     # Ψ(0) = 0 on every branch: the integrand vanishes at neutral.
-    @test psi_m_stable(0.0) ≈ 0.0 atol = 1e-12
-    @test psi_m_unstable(0.0) ≈ 0.0 atol = 1e-12
-    @test psi_h_unstable(0.0) ≈ 0.0 atol = 1e-12
+    for f in (GEMB.stability_psi_m, GEMB.stability_psi_h)
+        @test f(0.0) ≈ 0.0 atol = 1e-12
+        @test f(1e-12) ≈ 0.0 atol = 1e-10
+        @test f(-1e-12) ≈ 0.0 atol = 1e-10
+    end
 
     # Sign: unstable enhances exchange (Ψ > 0), stable suppresses it (Ψ < 0).
     for zeta in (-0.01, -0.1, -1.0, -5.0)
-        @test psi_m_unstable(zeta) > 0
-        @test psi_h_unstable(zeta) > 0
+        @test GEMB.stability_psi_m(zeta) > 0
+        @test GEMB.stability_psi_h(zeta) > 0
     end
     for zeta in (0.01, 0.1, 1.0, 5.0)
-        @test psi_m_stable(zeta) < 0
+        @test GEMB.stability_psi_m(zeta) < 0
+        @test GEMB.stability_psi_h(zeta) < 0
     end
 end
 
@@ -201,3 +204,280 @@ end
     @test lh ≈ GEMB.LV atol = 1e-6
 end
 
+
+# ---------------------------------------------------------------------------------------
+# Analytical checks: neutral limits, pressure invariance, continuity, and agreement with an
+# iterated Monin-Obukhov solution.
+# ---------------------------------------------------------------------------------------
+
+_thf_cfs(; T_air, pressure=80000.0, wind=5.0, vapor=300.0, z_T=2.0, z_w=10.0) =
+    GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=T_air, pressure_air=pressure,
+        wind_speed=wind, vapor_pressure=vapor, temperature_observation_height=z_T,
+        wind_observation_height=z_w)
+
+@testset "Neutral sensible coefficient" begin
+    T_s, ΔT, U, p = 260.0, 1e-4, 5.0, 60000.0
+    z0 = GEMB.Z0_SNOW_DRY
+    zT = 0.1 * z0
+    cfs = _thf_cfs(T_air=T_s + ΔT, pressure=p, wind=U)
+    ρa = GEMB.air_density(p, T_s + ΔT)
+    shf, _, _ = GEMB.turbulent_heat_flux(T_s, ρa, z0, zT, zT, cfs)
+    expected = ρa * GEMB.HEAT_CAPACITY_AIR * 0.4^2 * U / (log(10.0 / z0) * log(2.0 / zT))
+    @test shf / ΔT ≈ expected rtol = 1e-3
+end
+
+@testset "Neutral latent flux" begin
+    for (T, L, es) in ((260.0, GEMB.LS, GEMB.saturation_vapor_pressure_ice),
+                       (GEMB.CtoK, GEMB.LV, GEMB.saturation_vapor_pressure_water))
+        e_a = 150.0
+        z0 = GEMB.Z0_SNOW_WET
+        zQ = 0.1 * z0
+        cfs = _thf_cfs(T_air=T, wind=4.0, vapor=e_a)
+        _, lhf, lh = GEMB.turbulent_heat_flux(T, 1.2, z0, zQ, zQ, cfs)
+        @test lh == L
+        @test lhf ≈ 0.4^2 * 4.0 * L * (e_a - es(T)) /
+                    (461.9 * T * log(10.0 / z0) * log(2.0 / zQ)) rtol = 1e-4
+    end
+end
+
+@testset "Sensible flux per unit air density is pressure-invariant" begin
+    z0 = GEMB.Z0_SNOW_DRY
+    zT = 0.1 * z0
+    for ΔT in (-3.0, 0.0, 1e-4, 2.0)
+        r = map((100000.0, 60000.0)) do p
+            ρa = GEMB.air_density(p, 262.0)
+            GEMB.turbulent_heat_flux(260.0, ρa, z0, zT, zT,
+                _thf_cfs(T_air=260.0 + ΔT, pressure=p))[1] / ρa
+        end
+        @test r[1] ≈ r[2] rtol = 1e-6 atol = 1e-12
+    end
+end
+
+@testset "Stable sensible flux is continuous in ΔT" begin
+    # A scan in 0.01 K steps from neutral to 15 K: adjacent fluxes differ by less than 5%
+    # once ΔT ≥ 0.2 K (below that a 0.01 K step is itself more than 5% of ΔT).
+    T_s = 265.0
+    z0 = GEMB.Z0_SNOW_DRY
+    zT = 0.1 * z0
+    for U in (2.0, 4.0, 6.0, 8.0), z_w in (2.0, 10.0)
+        ΔTs = 0.0:0.01:15.0
+        shf = [GEMB.turbulent_heat_flux(T_s, 1.2, z0, zT, zT,
+            _thf_cfs(T_air=T_s + ΔT, wind=U, z_w=z_w))[1] for ΔT in ΔTs]
+        @test all(isfinite, shf)
+        @test shf[1] == 0.0
+        @test all(>(0.0), shf[2:end])
+        for k in eachindex(ΔTs)[2:end]
+            ΔTs[k-1] >= 0.2 || continue
+            @test abs(shf[k] - shf[k-1]) / shf[k-1] < 0.05
+        end
+    end
+end
+
+@testset "Agreement with an iterated Monin-Obukhov solution" begin
+    # Independent reference: the Beljaars-Holtslag / Högström functions as published, the
+    # Obukhov length found by bisection on z_w/L = Ri·F_m²/F_h, and the fluxes from u* and θ*.
+    a, b, c, d = 1.0, 2.0 / 3.0, 5.0, 0.35
+    ψm(ζ) = ζ > 0 ? -(a * ζ + b * (ζ - c / d) * exp(-d * ζ) + b * c / d) :
+            (x = (1 - 19ζ)^0.25; 2log((1 + x) / 2) + log((1 + x^2) / 2) - 2atan(x) + π / 2)
+    ψh(ζ) = ζ > 0 ? -((1 + 2a * ζ / 3)^1.5 + b * (ζ - c / d) * exp(-d * ζ) + b * c / d - 1) :
+            2log((1 + sqrt(1 - 11.6ζ)) / 2)
+    function reference_shf(T_s, T_a, U, ρa, z_w, z_T, z0, zT)
+        Fm(ζ) = log(z_w / z0) - ψm(ζ) + ψm(ζ * z0 / z_w)
+        Fh(ζ) = log(z_T / zT) - ψh(ζ * z_T / z_w) + ψh(ζ * zT / z_w)
+        Ri = 9.81 * (T_a - T_s) * z_w / (0.5 * (T_a + T_s) * U^2)
+        g(ζ) = ζ * Fh(ζ) - Ri * Fm(ζ)^2           # increasing in ζ, zero at the solution
+        lo, hi = Ri >= 0 ? (0.0, 1.0) : (-1.0, 0.0)
+        Ri >= 0 ? (while g(hi) < 0; hi *= 2; end) : (while g(lo) > 0; lo *= 2; end)
+        for _ in 1:200
+            m = 0.5 * (lo + hi)
+            g(m) > 0 ? (hi = m) : (lo = m)
+        end
+        ζ = 0.5 * (lo + hi)
+        u_star = 0.4 * U / Fm(ζ)
+        θ_star = 0.4 * (T_a - T_s) / Fh(ζ)
+        return ρa * GEMB.HEAT_CAPACITY_AIR * u_star * θ_star, ζ
+    end
+
+    n_checked = 0
+    for z0 in (GEMB.Z0_SNOW_DRY, GEMB.Z0_SNOW_WET, GEMB.Z0_ICE), (z_T, z_w) in ((2.0, 10.0),
+            (2.0, 2.0), (10.0, 2.0)), U in (1.0, 3.0, 8.0), ΔT in (-8.0, -2.0, -0.3, 0.3, 2.0, 8.0)
+        zT = 0.1 * z0
+        T_s = 263.0
+        cfs = _thf_cfs(T_air=T_s + ΔT, wind=U, z_T=z_T, z_w=z_w)
+        shf, _, _ = GEMB.turbulent_heat_flux(T_s, 1.2, z0, zT, zT, cfs)
+        ref, ζ = reference_shf(T_s, T_s + ΔT, U, 1.2, z_w, z_T, z0, zT)
+        (-100 < ζ < 1) || continue
+        n_checked += 1
+        @test shf ≈ ref rtol = 0.05
+        # The fixed-step closure is in fact far tighter than the 5% requirement.
+        @test shf ≈ ref rtol = 1e-8
+    end
+    @test n_checked > 100
+end
+
+@testset "Saturation vapor pressure over ice" begin
+    # Murphy & Koop (2005) eq. 7 in closed form, 611.657 Pa at the triple point.
+    T = 273.16
+    @test GEMB.saturation_vapor_pressure_ice(T) ≈
+          exp(9.550426 - 5723.265 / T + 3.53068 * log(T) - 0.00728332 * T) rtol = 1e-15
+    @test GEMB.saturation_vapor_pressure_ice(273.16) ≈ 611.657 rtol = 1e-4
+    # Against the IAPWS (2011) sublimation curve (Wagner et al., 2011, J. Phys. Chem. Ref.
+    # Data 40, 043103), which Murphy & Koop's eq. 7 reproduces to better than 0.1%.
+    function iapws(T)
+        θ = T / 273.16
+        a = (-0.212144006e2, 0.273203819e2, -0.610598130e1)
+        b = (0.333333333e-2, 0.120666667e1, 0.170333333e1)
+        return 611.657 * exp(sum(a[i] * θ^b[i] for i in 1:3) / θ)
+    end
+    for T in 200.0:5.0:273.15
+        @test GEMB.saturation_vapor_pressure_ice(T) ≈ iapws(T) rtol = 1e-3
+    end
+end
+
+# Murphy & Koop (2005) eqs. 7 (ice, p. 1542) and 10 (liquid water, p. 1552) evaluated in
+# 256-bit BigFloat from the paper's decimal coefficients.
+function _mk_ice_big(T)
+    T = big(T)
+    return exp(big"9.550426" - big"5723.265" / T + big"3.53068" * log(T) - big"0.00728332" * T)
+end
+function _mk_water_big(T)
+    T = big(T)
+    return exp(big"54.842763" - big"6763.22" / T - big"4.210" * log(T) + big"0.000367" * T +
+               tanh(big"0.0415" * (T - big"218.8")) *
+               (big"53.878" - big"1331.22" / T - big"9.44523" * log(T) + big"0.014025" * T))
+end
+
+@testset "Saturation vapor pressure over water" begin
+    setprecision(BigFloat, 256) do
+        # Eq. 10 against its BigFloat evaluation: supercooled, the melting point, above it.
+        for T in (240.0, GEMB.CtoK, 300.0)
+            @test GEMB.saturation_vapor_pressure_water(T) ≈ _mk_water_big(T) rtol = 1e-12
+        end
+    end
+    # Table C1 (p. 1561), "values recommended for checking computer codes", to half a unit in
+    # the last printed digit.
+    for (T, p, half_digit) in ((150.0, 1.562e-5, 0.0005e-5), (180.0, 0.011239, 0.0000005),
+                               (210.0, 1.2335, 0.00005), (240.0, 37.667, 0.0005),
+                               (273.15, 611.213, 0.0005), (273.16, 611.657, 0.0005),
+                               (300.0, 3536.8, 0.05))
+        @test abs(GEMB.saturation_vapor_pressure_water(T) - p) <= half_digit
+    end
+    # Table C1's ice column at the same two temperatures, for eq. 7.
+    @test abs(GEMB.saturation_vapor_pressure_ice(273.15) - 611.154) <= 0.0005
+    @test abs(GEMB.saturation_vapor_pressure_ice(240.0) - 27.272) <= 0.0005
+
+    # At the triple point both curves give the triple-point pressure 611.657 Pa (p. 1540;
+    # Table C1 lists 611.657 for both), so they agree to the paper's printed 1e-3 Pa.
+    e_w = GEMB.saturation_vapor_pressure_water(273.16)
+    e_i = GEMB.saturation_vapor_pressure_ice(273.16)
+    @test abs(e_w - 611.657) <= 0.0005
+    @test abs(e_i - 611.657) <= 0.0005
+    @test abs(e_w - e_i) < 0.001
+    # Below the triple point supercooled water has the higher vapor pressure (Fig. 9, p. 1553:
+    # p_liq − p_ice peaks near 27 Pa around 260 K and vanishes at the triple point).
+    for T in (250.0, 260.0, 270.0)
+        @test GEMB.saturation_vapor_pressure_water(T) > GEMB.saturation_vapor_pressure_ice(T)
+    end
+    # 273.15 K, the surface temperature at which the latent flux switches to the water curve.
+    @test GEMB.saturation_vapor_pressure_water(GEMB.CtoK) >
+          GEMB.saturation_vapor_pressure_ice(GEMB.CtoK)
+
+    # Eq. 10 is stated for 123 < T < 332 K.
+    for T in (123.0, 332.0, 100.0, 350.0, NaN)
+        @test_throws "valid for 123 < T < 332 K" GEMB.saturation_vapor_pressure_water(T)
+        @test_throws "valid for 123 < T < 332 K" GEMB.saturation_vapor_pressure_water_derivative(T)
+    end
+end
+
+@testset "Saturation vapor pressure derivatives" begin
+    # The analytic de_s/dT of both curves against a BigFloat central difference of the
+    # function itself (the generic method evaluated at 256 bits, step 1e-30 K, so the
+    # difference error is O(1e-60)).
+    setprecision(BigFloat, 256) do
+        h = big"1e-30"
+        cd(f, T) = (f(big(T) + h) - f(big(T) - h)) / (2h)
+        for T in (130.0, 200.0, 230.0, 250.0, 263.15, 270.0, 273.15, 273.16, 300.0, 330.0)
+            @test GEMB.saturation_vapor_pressure_water_derivative(T) ≈
+                  cd(GEMB.saturation_vapor_pressure_water, T) rtol = 1e-9
+        end
+        for T in (150.0, 200.0, 230.0, 250.0, 263.15, 270.0, 273.15)
+            @test GEMB.saturation_vapor_pressure_ice_derivative(T) ≈
+                  cd(GEMB.saturation_vapor_pressure_ice, T) rtol = 1e-9
+        end
+        # And against the derivative of the paper's decimal coefficients, not the code's.
+        for T in (250.0, GEMB.CtoK)
+            @test GEMB.saturation_vapor_pressure_water_derivative(T) ≈ cd(_mk_water_big, T) rtol = 1e-9
+            @test GEMB.saturation_vapor_pressure_ice_derivative(T) ≈ cd(_mk_ice_big, T) rtol = 1e-9
+        end
+    end
+end
+
+
+@testset "Stability table against the converged Monin-Obukhov solution" begin
+    # Independent reference: bisection on z_w/L = Ri·F_m²/F_h with the published functions.
+    a, b, c, d = 1.0, 2.0 / 3.0, 5.0, 0.35
+    ψm(ζ) = ζ > 0 ? -(a * ζ + b * (ζ - c / d) * exp(-d * ζ) + b * c / d) :
+            (x = (1 - 19ζ)^0.25; 2log((1 + x) / 2) + log((1 + x^2) / 2) - 2atan(x) + π / 2)
+    ψh(ζ) = ζ > 0 ? -((1 + 2a * ζ / 3)^1.5 + b * (ζ - c / d) * exp(-d * ζ) + b * c / d - 1) :
+            2log((1 + sqrt(1 - 11.6ζ)) / 2)
+    function reference(Ri, z_w, z_T, z0, zT)
+        Fm(ζ) = log(z_w / z0) - ψm(ζ) + ψm(ζ * z0 / z_w)
+        Fh(ζ) = log(z_T / zT) - ψh(ζ * z_T / z_w) + ψh(ζ * zT / z_w)
+        g(ζ) = ζ * Fh(ζ) - Ri * Fm(ζ)^2
+        lo, hi = Ri >= 0 ? (0.0, 1.0) : (-1.0, 0.0)
+        Ri >= 0 ? (while g(hi) < 0; hi *= 2; end) : (while g(lo) > 0 && lo > -1e3; lo *= 2; end)
+        for _ in 1:300
+            m = 0.5 * (lo + hi)
+            g(m) > 0 ? (hi = m) : (lo = m)
+        end
+        ζ = max(0.5 * (lo + hi), GEMB.ZETA_UNSTABLE_MIN)
+        return ζ, Fm(ζ) * Fh(ζ)
+    end
+    worst_ζ = 0.0
+    worst_F = 0.0
+    worst_dG = 0.0
+    for (z_w, z_T) in ((10.0, 2.0), (2.0, 2.0)), z0 in (GEMB.Z0_SNOW_DRY, GEMB.Z0_ICE)
+        zT = 0.1 * z0
+        tab = GEMB._stability_table(z_w, z_T, z0, zT)
+        # A grid that falls between the table's nodes, spanning both signs and every regime.
+        for sgn in (1.0, -1.0), q in range(log(1e-12), log(1e6); length=1777)
+            Ri = sgn * exp(q)
+            ζ_ref, FF_ref = reference(Ri, z_w, z_T, z0, zT)
+            ζ = GEMB._stability_zeta(tab, Ri)
+            G, dG = GEMB._stability_lookup(tab, Ri)
+            worst_ζ = max(worst_ζ, abs(ζ / ζ_ref - 1))
+            worst_F = max(worst_F, abs(exp(-G) * FF_ref - 1))
+            # The tabulated derivative against a central difference of the reference.
+            if abs(Ri) > 1e-6 && ζ_ref > GEMB.ZETA_UNSTABLE_MIN + 1
+                δ = 1e-5 * abs(Ri)
+                Gp = log(reference(Ri + δ, z_w, z_T, z0, zT)[2])
+                Gm = log(reference(Ri - δ, z_w, z_T, z0, zT)[2])
+                ref = (Gp - Gm) / (2δ) * Ri          # dG/d ln|Ri|
+                worst_dG = max(worst_dG, abs(dG * Ri - ref) / max(1.0, abs(ref)))
+            end
+        end
+    end
+    @test worst_ζ < 1e-6
+    @test worst_F < 1e-6
+    @test worst_dG < 1e-6
+
+    # The tabulated fluxes agree with the exact path of `turbulent_heat_flux`, and their
+    # T_surface derivatives with a central difference.
+    tab = GEMB._stability_table(10.0, 2.0, GEMB.Z0_SNOW_WET, 0.1 * GEMB.Z0_SNOW_WET)
+    for (T_s, T_a, U) in ((260.0, 268.0, 3.0), (265.0, 255.0, 6.0), (GEMB.CtoK, 278.0, 0.5))
+        cfs = _thf_cfs(T_air=T_a, wind=U)
+        C = 0.16 * U
+        ri_scale = GEMB.GRAVITY * 10.0 / U^2
+        shf, lhf, L, dshf, dlhf = GEMB._table_turbulent_heat_flux(tab, T_s, 1.2, C, ri_scale, cfs)
+        shf_e, lhf_e, L_e = GEMB.turbulent_heat_flux(T_s, 1.2, GEMB.Z0_SNOW_WET,
+            0.1 * GEMB.Z0_SNOW_WET, 0.1 * GEMB.Z0_SNOW_WET, cfs)
+        @test L == L_e
+        @test shf ≈ shf_e rtol = 1e-6
+        @test lhf ≈ lhf_e rtol = 1e-6
+        T_d = min(T_s, GEMB.CtoK - 1e-3)
+        f(T) = GEMB._table_turbulent_heat_flux(tab, T, 1.2, C, ri_scale, cfs)
+        h = 1e-4
+        @test f(T_d)[4] ≈ (f(T_d + h)[1] - f(T_d - h)[1]) / 2h rtol = 1e-5
+        @test f(T_d)[5] ≈ (f(T_d + h)[2] - f(T_d - h)[2]) / 2h rtol = 1e-5
+    end
+end

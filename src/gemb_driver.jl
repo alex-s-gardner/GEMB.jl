@@ -1,4 +1,30 @@
 """
+    _forcing_or_parameter(layer, value, tdim) -> DimArray
+
+`layer` unless it is identically zero, in which case a `Fill` of the scalar `value` on `tdim`.
+"""
+_forcing_or_parameter(layer::AbstractVector, value::Float64, tdim) =
+    all(iszero, layer) ? DimArray(Fill(value, length(tdim)), (tdim,)) : layer
+
+"""
+    _parameter_layer(layer, value, name, tdim) -> DimArray
+
+A `Fill` of the `ModelParameters` scalar `value` on `tdim`, after checking that the forcing
+layer `name` holds that same value at every step. The run takes `name` from
+`ModelParameters`, so a forcing layer that differs anywhere would otherwise be discarded
+without notice; that is an `ArgumentError`.
+"""
+function _parameter_layer(layer::AbstractVector, value::Float64, name::Symbol, tdim)
+    i = findfirst(!=(value), layer)
+    i === nothing || throw(ArgumentError(
+        "forcing layer `$name` is $(layer[i]) at step $i, but `ModelParameters.$name` is " *
+        "$value. `gemb` takes `$name` from `ModelParameters` and would discard the forcing " *
+        "layer; build the forcing with `$name = $value` or set `ModelParameters.$name` to " *
+        "match it."))
+    return DimArray(Fill(value, length(tdim)), (tdim,))
+end
+
+"""
     gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParameters;
          verbose=false, thermal_workspace=ThermalWorkspace(),
          column_workspace=ColumnWorkspace())
@@ -14,6 +40,13 @@ writes. `mp` is an immutable description and holds no scratch, so a single `mp` 
 by any number of threads stepping columns concurrently. `thermal_workspace` is the mutable
 half: it is reused across timesteps within a run, so each concurrent run needs its own (the
 default gives every call a fresh one). See [`ThermalWorkspace`](@ref).
+
+# Radiation geometry
+`solar_zenith_angle`, `cloud_optical_thickness` and `shortwave_downward_diffuse` come from the
+forcing layers of those names. Where a layer is identically zero (what
+[`initialize_forcing`](@ref) builds when none is supplied), the `mp` field of the same name is
+used for every step instead. The merged layers are range-checked per step by
+[`validate_radiation_geometry`](@ref).
 
 # Provenance
 The output metadata records where the forcing came from (`dataset`, `latitude`,
@@ -47,16 +80,21 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
     n = length(times)
     tdim = Ti(times)
 
-    # Prescribed drift: the forcing layer wins, `mp.drift_rate` is the fallback for a run with
-    # no drift product. "The forcing carries one" is resolved as *not identically zero*, which
-    # is exactly the state the `ClimateForcing` constructor leaves the layer in when the caller
-    # supplies no `snow_drift` — so an absent layer and a layer of zeros are the same thing, and
-    # a forcing that does carry drift is never overridden by a stray scalar. The scan is once
-    # per run, not per timestep.
-    snow_drift_forcing = climate_forcing.snow_drift
-    if mp.drift_rate != 0.0 && all(iszero, snow_drift_forcing)
-        snow_drift_forcing = DimArray(Fill(mp.drift_rate, n), (tdim,))
-    end
+    # Prescribed drift and radiation geometry: the forcing layer wins, and the `mp` scalar is
+    # the fallback for a run without one. "The forcing carries one" is resolved as *not
+    # identically zero*, which is exactly the state the `ClimateForcing` constructor and
+    # `initialize_forcing` leave a layer in when the caller supplies nothing — so an absent
+    # layer and a layer of zeros are the same thing, and a forcing that does carry a layer is
+    # never overridden by a stray scalar. The scans are once per run, not per timestep.
+    snow_drift_forcing = _forcing_or_parameter(climate_forcing.snow_drift, mp.drift_rate, tdim)
+    cloud_optical_thickness = _forcing_or_parameter(climate_forcing.cloud_optical_thickness,
+        mp.cloud_optical_thickness, tdim)
+    solar_zenith_angle = _forcing_or_parameter(climate_forcing.solar_zenith_angle,
+        mp.solar_zenith_angle, tdim)
+    shortwave_downward_diffuse = _forcing_or_parameter(
+        climate_forcing.shortwave_downward_diffuse, mp.shortwave_downward_diffuse, tdim)
+    validate_radiation_geometry(solar_zenith_angle, cloud_optical_thickness,
+        shortwave_downward_diffuse, climate_forcing.shortwave_downward)
 
     # TODO: time evolving parameters should all be handled in ClimateForcing, not ModelParameters, as inputs to gemb.
     climate_forcing = ClimateForcing(
@@ -67,12 +105,15 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.shortwave_downward,
         climate_forcing.longwave_downward,
         climate_forcing.vapor_pressure,
-        DimArray(Fill(mp.black_carbon_snow, n), (tdim,)),
-        DimArray(Fill(mp.black_carbon_ice, n), (tdim,)),
-        DimArray(Fill(mp.cloud_optical_thickness, n), (tdim,)),
-        DimArray(Fill(mp.solar_zenith_angle, n), (tdim,)),
-        DimArray(Fill(mp.shortwave_downward_diffuse, n), (tdim,)),
-        DimArray(Fill(mp.cloud_fraction, n), (tdim,)),
+        _parameter_layer(climate_forcing.black_carbon_snow, mp.black_carbon_snow,
+            :black_carbon_snow, tdim),
+        _parameter_layer(climate_forcing.black_carbon_ice, mp.black_carbon_ice,
+            :black_carbon_ice, tdim),
+        cloud_optical_thickness,
+        solar_zenith_angle,
+        shortwave_downward_diffuse,
+        _parameter_layer(climate_forcing.cloud_fraction, mp.cloud_fraction, :cloud_fraction,
+            tdim),
         climate_forcing.time_step,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
@@ -80,6 +121,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.temperature_observation_height,
         climate_forcing.wind_observation_height;
         snow_drift=snow_drift_forcing,
+        temperature_ground=climate_forcing.temperature_ground,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -98,6 +140,16 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
          if !(field in DERIVED_PARAMETERS))...,
         dt_divisors=fast_divisors(dt_int * 10000) ./ 10000
     )
+
+    if mp.lower_boundary === :ground
+        validate_ground_parameters(mp)
+        return _gemb_ground(profile, climate_forcing, mp, model_parameters; verbose,
+            thermal_workspace, column_workspace)
+    elseif mp.lower_boundary === :prescribed
+        validate_prescribed_parameters(mp)
+        return _gemb_prescribed(profile, climate_forcing, mp, model_parameters; verbose,
+            thermal_workspace, column_workspace)
+    end
 
     # Initialize column state from profile. Every layer read here is in `RESTART_LAYERS`, which
     # `_assert_restart_layers` has already checked for above — so a profile that reaches this point
@@ -153,6 +205,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         runoff=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         refreeze=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        refreeze_thermal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        refreeze_thermal_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         evaporation_condensation=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         shortwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         longwave_net=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -383,6 +437,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_melt = parent(output[:melt])
     out_runoff = parent(output[:runoff])
     out_refreeze = parent(output[:refreeze])
+    out_refreeze_thermal = parent(output[:refreeze_thermal])
+    out_refreeze_thermal_count = parent(output[:refreeze_thermal_count])
     out_ec = parent(output[:evaporation_condensation])
     out_dcomp = parent(output[:densification_from_compaction])
     out_dmelt = parent(output[:densification_from_melt])
@@ -427,6 +483,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_melt = 0.0
     cum_runoff = 0.0
     cum_refreeze = 0.0
+    cum_refreeze_thermal = 0.0
+    cum_refreeze_thermal_count = 0
     cum_ec = 0.0
     cum_rain = 0.0
     cum_mass_added = 0.0
@@ -513,6 +571,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_melt += flux.melt
         cum_runoff += flux.runoff
         cum_refreeze += flux.refreeze
+        cum_refreeze_thermal += flux.refreeze_thermal
+        cum_refreeze_thermal_count += flux.refreeze_thermal_count
         cum_ec += state.evaporation_condensation
         cum_rain += flux.rain
         cum_mass_added += flux.mass_added
@@ -564,6 +624,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_melt[oi] = cum_melt
                 out_runoff[oi] = cum_runoff
                 out_refreeze[oi] = cum_refreeze
+                out_refreeze_thermal[oi] = cum_refreeze_thermal
+                out_refreeze_thermal_count[oi] = cum_refreeze_thermal_count
                 out_ec[oi] = cum_ec
                 out_dcomp[oi] = cum_densification_compaction
                 out_dmelt[oi] = cum_densification_melt
@@ -643,6 +705,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_melt = 0.0
             cum_runoff = 0.0
             cum_refreeze = 0.0
+            cum_refreeze_thermal = 0.0
+            cum_refreeze_thermal_count = 0
             cum_ec = 0.0
             cum_rain = 0.0
             cum_mass_added = 0.0

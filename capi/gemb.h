@@ -32,8 +32,8 @@ extern "C" {
 /* --- Array sizes. ------------------------------------------------------------------------- */
 
 #define GEMB_N_OPTIONS  15
-#define GEMB_N_NUMERIC  25
-#define GEMB_N_FLAGS     3
+#define GEMB_N_NUMERIC  27
+#define GEMB_N_FLAGS     4
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
 
@@ -94,6 +94,8 @@ extern "C" {
 #define GEMB_NEW_SNOW_PAHAUT           6
 #define GEMB_NEW_SNOW_KASPERS          7
 #define GEMB_NEW_SNOW_KUIPERSMUNNEKE   8
+#define GEMB_NEW_SNOW_VANKAMPENHOUT2017 9
+#define GEMB_NEW_SNOW_VANKAMPENHOUT2017_SNOTEL 10
 
 /* emissivity_method */
 #define GEMB_EMISSIVITY_UNIFORM                    1
@@ -119,6 +121,8 @@ extern "C" {
 #define GEMB_GRAIN_GROWTH_MARBOUTY  1
 #define GEMB_GRAIN_GROWTH_ARTHERN   2
 #define GEMB_GRAIN_GROWTH_HYBRID    3
+#define GEMB_GRAIN_GROWTH_TAILLANDIER2007    4
+#define GEMB_GRAIN_GROWTH_FLANNERZENDER2006  5
 
 /* water_irreducible_method */
 #define GEMB_IRREDUCIBLE_CONSTANT         1
@@ -142,6 +146,7 @@ extern "C" {
 /* blowing_snow_method */
 #define GEMB_BLOWING_SNOW_NONE    1
 #define GEMB_BLOWING_SNOW_CROCUS  2
+#define GEMB_BLOWING_SNOW_KEENAN2021  3
 
 /* --- numeric[] indices. --------------------------------------------------------------- */
 
@@ -170,12 +175,17 @@ extern "C" {
 #define GEMB_NUM_SURFACE_SLOPE                     22
 #define GEMB_NUM_DRIFT_RATE                        23
 #define GEMB_NUM_THERMAL_EXPLICIT_SAFETY_FACTOR    24
+#define GEMB_NUM_DESTRUCTIVE_METAMORPHISM_DENSITY  25
+#define GEMB_NUM_DRIFT_FETCH_LENGTH                26
 
 /* --- flags[] indices. Nonzero is true. ----------------------------------------------- */
 
 #define GEMB_FLAG_SHORTWAVE_SUBSURFACE_ABSORPTION  0
 #define GEMB_FLAG_OUTPUT_VISCOSITY                 1
 #define GEMB_FLAG_BLOWING_SNOW_SUBLIMATION         2
+/* gemb_defaults sets this flag (the default densification is Crocus); a host that selects another
+ * densification method must clear it, or validation rejects the parameters. */
+#define GEMB_FLAG_DESTRUCTIVE_METAMORPHISM         3
 
 /* --- forcing[] indices. --------------------------------------------------------------- */
 
