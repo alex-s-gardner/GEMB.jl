@@ -588,6 +588,16 @@ slope of column-mean density against cycle over the trailing `drift_window` cycl
 steadily at just under the delta tolerance passes the step test while still densifying. When
 both are given, both must hold.
 
+`drift_window_closeoff_fraction` (default `nothing`) sets the window to that fraction of the
+input column's [`close_off_age`](@ref), floored at `drift_window`. A fixed window is short
+against the relaxation of a cold, low-accumulation column. Over ERA5-Land forcing at Dome C
+(21 kg m⁻² yr⁻¹, close-off age ≈ 6900 yr, 3-year cycles, FAC tolerance 1e-4 m yr⁻¹), the
+10-cycle slope first passed while FAC was 0.41 m above equilibrium and, at equilibrium, passed
+on 56% of cycles; a 200-cycle window first passed within 0.09 m and on every equilibrium cycle.
+At Summit (close-off age ≈ 300 yr) a 10-cycle window already passes cleanly, and a fraction of
+0.1 leaves it there. A longer window reduces the noise in the slope; it does not change what
+the tolerance means, and a slowly relaxing column can still pass with some drift remaining.
+
 **Spinup forcing.** `forcing_climatology(method=:average)` (default) averages complete years
 into a one-year cycle. It preserves each field's mean but shrinks its variance by
 ~`1/n_years`, and melt is *rectified* — zero until the surface energy balance reaches the melt

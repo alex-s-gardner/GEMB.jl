@@ -1,6 +1,7 @@
 using Test
 using GEMB
 using Dates
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
 
 @testset "gemb_spinup" begin
     @testset "Basic spinup execution" begin
@@ -496,7 +497,9 @@ using Dates
             time, fill(255.0, n), fill(85000.0, n), fill(0.5, n), fill(3.0, n),
             fill(50.0, n), fill(180.0, n), fill(80.0, n);
             temperature_air_mean=255.0, wind_speed_mean=3.0, precipitation_mean=182.6)
-        params = initialize_parameters(output_frequency=:last)
+        # The close-off age and windows measured below are those of the Community Firn Model
+        # snow configuration's initial guess.
+        params = initialize_parameters(; output_frequency=:last, CFM_SNOW...)
         profile = initialize_profile(params, forcing)
 
         # Drift alone, loose tolerance. It cannot fire before the window is full, so the
@@ -508,6 +511,7 @@ using Dates
         @test pd[:spinup_converged] == true
         @test pd[:spinup_cycles] == 3
         @test pd[:spinup_drift_window] == 3
+        @test pd[:spinup_drift_window_closeoff_fraction] === nothing
         @test pd[:spinup_convergence_drift_density] == 1e3
         @test isfinite(pd[:spinup_final_drift_density])
         @test pd[:spinup_final_drift_density] >= 0.0   # magnitude, not signed slope
@@ -537,6 +541,41 @@ using Dates
         # A window too short to fit a slope is rejected up front, not silently ignored.
         @test_throws ErrorException gemb_spinup(profile, forcing, params;
             simulation_years_maximum=1 * GEMB._years_per_cycle(forcing), convergence_drift_density=1.0, drift_window=1)
+
+        @testset "Drift window scaled by close-off age" begin
+            ypc = GEMB._years_per_cycle(forcing)
+            # This column closes off at about 790 yr, so a fraction of 0.006 is a 5-cycle window.
+            age_yr = close_off_age(parent(profile[:density]), parent(profile[:age])) / 365.25
+            @test 760 < age_yr < 820
+            fraction = 0.006
+            window = ceil(Int, fraction * age_yr / ypc)
+            @test window == 5
+            @test GEMB._closeoff_drift_window(profile, 3, fraction, ypc) == window
+            # Floored at `drift_window`.
+            @test GEMB._closeoff_drift_window(profile, 7, fraction, ypc) == 7
+            # An open column has no close-off age, so it keeps the floor.
+            open = DimStack((dz=profile[:dz], density=fill(400.0, dims(profile[:dz])),
+                             age=profile[:age]))
+            @test GEMB._closeoff_drift_window(open, 3, fraction, ypc) == 3
+
+            # A loose tolerance converges as soon as the window is full, so the scaled window,
+            # not the floor, sets the exit; provenance records the window that was used.
+            scaled = DimensionalData.metadata(gemb_spinup(profile, forcing, params;
+                simulation_years_maximum=8 * ypc, convergence_drift_fac=1e3,
+                drift_window=3, drift_window_closeoff_fraction=fraction))
+            @test scaled[:spinup_converged] == true
+            @test scaled[:spinup_cycles] == window
+            @test scaled[:spinup_drift_window] == window
+            @test scaled[:spinup_drift_window_closeoff_fraction] == fraction
+
+            # A window the ceiling cannot fill is an error up front, not a run to the ceiling.
+            @test_throws "exceeds the 4-cycle ceiling" gemb_spinup(profile, forcing, params;
+                simulation_years_maximum=4 * ypc, convergence_drift_fac=1e3,
+                drift_window=3, drift_window_closeoff_fraction=fraction)
+            @test_throws "drift_window_closeoff_fraction must be positive" gemb_spinup(
+                profile, forcing, params; simulation_years_maximum=ypc,
+                convergence_drift_fac=1.0, drift_window_closeoff_fraction=0.0)
+        end
     end
 
     @testset "FAC convergence criterion" begin

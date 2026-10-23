@@ -204,7 +204,8 @@ Depth-limited totals — conventionally to 10 m or 20 m — are what the firn-co
 reports (e.g. Vandecrux et al., 2019), so they are what a whole-column value cannot be
 compared against.
 
-Allocation-free: called every timestep from the `gemb` time loop.
+Allocation-free. The `gemb` time loop computes the whole-column, 10 m and 20 m values in one
+pass with `_firn_air_content_whole_10_20`, which must stay bit-identical to this function.
 
 # References
 - Vandecrux, B., et al. (2019). Firn data compilation reveals widespread decrease of firn air
@@ -225,6 +226,26 @@ function firn_air_content(dz::AbstractVector, density::AbstractVector,
         z += dz[i]
     end
     return fac / density_ice
+end
+
+# Whole-column, 10 m and 20 m firn air content in one pass, bit-identical to three
+# `firn_air_content` calls: each sum takes the same terms in the same order. The `gemb` time
+# loop needs all three every timestep for their interval means.
+function _firn_air_content_whole_10_20(dz::AbstractVector, density::AbstractVector,
+    density_ice::Real)
+
+    fac = 0.0
+    fac10 = 0.0
+    fac20 = 0.0
+    z = 0.0
+    for i in eachindex(dz, density)
+        air = density_ice - min(density[i], density_ice)
+        fac += dz[i] * air
+        z < 10.0 && (fac10 += min(dz[i], 10.0 - z) * air)
+        z < 20.0 && (fac20 += min(dz[i], 20.0 - z) * air)
+        z += dz[i]
+    end
+    return fac / density_ice, fac10 / density_ice, fac20 / density_ice
 end
 
 """

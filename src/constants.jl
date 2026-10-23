@@ -45,6 +45,7 @@ const DENSITY_WATER = 1000.0  # Density of water [kg m-3]
 const VON_KARMAN = 0.4     # Von Karman constant [-]
 
 const SECONDS_PER_YEAR = 365.25 * 86400.0  # Seconds in a (Julian) year [s]
+const DAYS_PER_YEAR = SECONDS_PER_YEAR / 86400.0  # Days in a (Julian) year [d]
 
 # Ratio of the molar masses of water vapour and dry air, `M_v/M_d = 18.0153/28.9644`. Converts
 # vapour pressure to specific humidity in `specific_humidity`. SURFEX's `XRD/XRV` (0.6220);
