@@ -32,7 +32,7 @@ _rd_cols(; dz=[0.05, 0.05, 0.1, 0.2], density=[150.0, 180.0, 250.0, 500.0],
     copy(density), copy(water), copy(grain_radius), copy(dendricity), copy(sphericity),
     zeros(length(dz)))
 
-const _MP_RD = GEMB.ModelParameters(blowing_snow_method=:Keenan2021)
+const _MP_RD = GEMB.ModelParameters(blowing_snow_method=:Keenan2021, grain_growth_method=:hybrid)
 
 @testset "Keenan 2021 eq. 4: redeposited density" begin
     setprecision(BigFloat, 256) do

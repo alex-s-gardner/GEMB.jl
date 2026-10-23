@@ -5,6 +5,8 @@ using Dates: month, hour, DateTime, Hour
 using GEMB: ClimateForcingStep, CtoK, LF, HEAT_CAPACITY_WATER, MATERIAL_SNOW, MATERIAL_GROUND,
     MATERIAL_EMPTY, ThermalWorkspace
 
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
+
 # erf by composite Simpson on [0, x]; agrees with erf(1) to 1e-15.
 function _erf_simpson(x; n=4000)
     x == 0 && return 0.0
@@ -356,7 +358,8 @@ end
     MAGT = 276.25
     cf = synthetic_seasonal_forcing(years=1, temperature_mean=272.95, amplitude=9.0,
         precipitation_annual=900.0, emissivity_clear=0.85)
-    mp = GEMB.initialize_parameters(lower_boundary=:ground, ground_temperature_deep=MAGT)
+    mp = GEMB.initialize_parameters(; lower_boundary=:ground, ground_temperature_deep=MAGT,
+        CFM_SNOW...)
     sp = gemb_spinup_ground(initialize_profile(mp, cf), cf, mp; simulation_years_maximum=30)
     @test GEMB.DD.metadata(sp).spinup_converged
     o = gemb(sp, cf, mp)

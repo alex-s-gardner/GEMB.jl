@@ -414,7 +414,12 @@ author-year mentions to full entries in one place.
 """
 Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # --- Density & Densification ---
-    densification_method::Symbol = :Arthern
+    # `new_snow_method`, `densification_method`, `destructive_metamorphism`,
+    # `destructive_metamorphism_density` and `grain_growth_method` default to one set that is
+    # calibrated together; see the Model Parameters page of the documentation. `destructive_metamorphism`
+    # takes its default from `densification_method`, so its field must stay below
+    # `densification_method` in this struct: `@kwdef` evaluates defaults in field order.
+    densification_method::Symbol = :Crocus
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
     # Which climatological mass flux the accumulation-driven schemes compact against.
     # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:
@@ -433,14 +438,18 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # destructive-metamorphism settling of fresh snow to the overburden strain rate, with the
     # coefficients of van Kampenhout et al. (2017) eq. 5 and the density taper of Schneider et
     # al. (2022) eq. 3. The rate is a strain rate summed with the viscous one, so the switch is
-    # rejected with any other densification scheme. `false` (the default) leaves output
-    # bit-identical. See `destructive_metamorphism_rate`.
-    destructive_metamorphism::Bool = false
-    # Density [kg m-3] above which destructive metamorphism tapers exponentially, `ρ_dm`.
-    # 175 is the CLM5 value of van Kampenhout et al. (2017, p. 2587). Read only when
-    # `destructive_metamorphism` is set.
+    # rejected with any other densification scheme. Under `:Crocus` and `:CrocusPure` it is on unless
+    # set to `false`, so an explicit `densification_method = :Crocus` gets destructive metamorphism
+    # at `destructive_metamorphism_density`. Under any other scheme it is off, and an explicit
+    # `true` is rejected. See `destructive_metamorphism_rate`.
+    destructive_metamorphism::Bool = densification_method in (:Crocus, :CrocusPure)
+    # Density [kg m-3] above which destructive metamorphism tapers exponentially, `ρ_dm`. The
+    # default 100 is the CLM4 value; 175 is CLM5's (van Kampenhout et al., 2017, p. 2587). Read
+    # only when `destructive_metamorphism` is set.
     destructive_metamorphism_density::Float64 = DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT
-    # Fresh-snow density parameterization. The default `:Constant350` is a constant 350 kg m-3,
+    # Fresh-snow density parameterization. The default `:vanKampenhout2017SNOTEL` is
+    # `:vanKampenhout2017` with the SNOTEL-calibrated temperature term of
+    # `snotel_density_temperature`. `:Constant350` is a constant 350 kg m-3,
     # matching the Community Firn Model's shipped `rhos0: 350.0`. `:Constant150` and
     # `:Constant315` are the other bare constants. `:Fausto` is the Fausto et al.
     # (2018) Greenland fit frozen at a single temperature (315 kg m-3, that fit evaluated at
@@ -454,11 +463,11 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # `:vanKampenhout2017` is the CLM5 deposition density (van Kampenhout et al., 2017,
     # eqs. 2-4): a temperature term plus a 10 m wind term, evaluated at the instantaneous
     # timestep, with the default fresh-grain properties. It is a deposition density, so it
-    # needs a settling scheme (`densification_method = :Crocus` with
-    # `destructive_metamorphism = true`) to reach observed near-surface densities. See
+    # needs a settling scheme (`densification_method = :Crocus`, which includes destructive
+    # metamorphism by default) to reach observed near-surface densities. See
     # `fresh_snow_density`. `:Constant` is a bare constant of `new_snow_density`, with the default
     # fresh-grain properties as `:Constant350`.
-    new_snow_method::Symbol = :Constant350
+    new_snow_method::Symbol = :vanKampenhout2017SNOTEL
     # Fresh-snow density [kg m-3] of `new_snow_method = :Constant`; no other method reads it.
     new_snow_density::Float64 = 350.0
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
@@ -506,19 +515,20 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     rain_heat_capacity::Symbol = :water
 
     # --- Grain Growth ---
-    # Selects the non-dendritic *dry* grain-growth law. `:hybrid` (the default) uses Marbouty
-    # (1980) temperature-gradient growth in snow below `DENSITY_MARBOUTY_MAX` and Arthern et al.
-    # (2010) `dr²/dt = kgr·exp(-Eg/RT)` at or above it. `:Arthern` (what the Community Firn
-    # Model ships as `GrGrowPhysics: "Arthern"`) applies the firn law at every density, where
-    # dry surface snow barely coarsens. `:Marbouty` stops growing grains at
-    # `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen in deep firn — where `:ArthernB`
-    # and `:Crocus` densification read it as `1/r²`. `:Taillandier2007` replaces Marbouty
-    # below `DENSITY_MARBOUTY_MAX` by the measured specific-surface-area decay of dry snow
-    # (Taillandier et al., 2007). `:FlannerZender2006` ages all snow below it, and all dendritic
-    # snow, by the SNICAR law of CLM5.0 (Flanner and Zender, 2006; Flanner et al., 2007), with
-    # radius as state of its own. Both coarsen surface snow at low gradients, where Marbouty's
-    # law is zero. See `calculate_grain_size`.
-    grain_growth_method::Symbol = :hybrid
+    # Selects the non-dendritic *dry* grain-growth law. The default is `:FlannerZender2006`,
+    # which ages all snow below `DENSITY_MARBOUTY_MAX`, and all dendritic snow, by the SNICAR law
+    # of CLM5.0 (Flanner and Zender, 2006; Flanner et al., 2007), with radius as state of its
+    # own. `:hybrid` uses Marbouty (1980) temperature-gradient growth in snow below
+    # `DENSITY_MARBOUTY_MAX` and Arthern et al. (2010) `dr²/dt = kgr·exp(-Eg/RT)` at or above
+    # it. `:Arthern` (what the Community Firn Model ships as `GrGrowPhysics: "Arthern"`)
+    # applies the firn law at every density, where dry surface snow barely coarsens.
+    # `:Marbouty` stops growing grains at `DENSITY_MARBOUTY_MAX`, which leaves the radius frozen
+    # in deep firn — where `:ArthernB` and `:Crocus` densification read it as `1/r²`.
+    # `:Taillandier2007` replaces Marbouty below `DENSITY_MARBOUTY_MAX` by the measured
+    # specific-surface-area decay of dry snow (Taillandier et al., 2007). `:Arthern`,
+    # `:Taillandier2007` and `:FlannerZender2006` coarsen surface snow at low gradients, where
+    # Marbouty's law is zero. See `calculate_grain_size`.
+    grain_growth_method::Symbol = :FlannerZender2006
 
     # --- Melt & Water ---
     # `:ColeouLesaffre` (the default) makes the irreducible water content density-dependent

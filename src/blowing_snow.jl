@@ -158,7 +158,7 @@ Wind speed at 10 m above the surface, from a `wind_speed` [m s-1] observed at
     U₁₀ = U·log(10/z₀)/log(z_u/z₀)
 
 The identity when `wind_observation_height = 10`. It is the profile [`drift_wind_speed`](@ref)
-uses, without the gust factor. Read by `new_snow_method = :vanKampenhout2017`, whose wind
+uses, without the gust factor. Read by the two `new_snow_method = :vanKampenhout2017` methods, whose wind
 term is defined on the 10 m wind (van Kampenhout et al., 2017, eq. 4, p. 2587), and by
 `blowing_snow_method = :Keenan2021`, whose friction velocity and redeposited density are
 defined on it (Keenan et al., 2021, pp. 1067-1068). Callers pass `z0` from [`surface_roughness`](@ref), so

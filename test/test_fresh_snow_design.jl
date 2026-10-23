@@ -11,8 +11,12 @@ using GEMB: Ti, dims
 # `verbose=true` makes `gemb` check the mass and energy budgets at every step and over the run,
 # and throw if either fails, so a completed run is the closure test.
 
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
 isdefined(@__MODULE__, :synthetic_maritime_forcing) ||
     include(joinpath(@__DIR__, "synthetic_maritime_forcing.jl"))
+
+# The options are measured against the schemes they replace.
+const _FS_OLD = CFM_SNOW
 
 const _FS_CONFIGS = [
     "vK17 deposition" => (; new_snow_method=:vanKampenhout2017, densification_method=:Crocus),
@@ -32,7 +36,7 @@ end
 
 @testset "fresh-snow options: multi-year mass and energy closure" begin
     for (site, cf) in _fs_forcings()
-        mp0 = initialize_parameters(output_frequency=:monthly)
+        mp0 = initialize_parameters(; output_frequency=:monthly, _FS_OLD...)
         profile = initialize_profile(mp0, cf)
         z_target = sum(profile[:dz])
         n_cells = length(profile[:dz])
@@ -40,7 +44,7 @@ end
 
         for (label, kw) in _FS_CONFIGS
             @testset "$site: $label" begin
-                mp = initialize_parameters(; output_frequency=:monthly, kw...)
+                mp = initialize_parameters(; output_frequency=:monthly, _FS_OLD..., kw...)
                 out = gemb(profile, cf, mp; verbose=true)
                 # The packing and settling terms move no mass across the column boundary.
                 @test all(iszero, out[:blowing_snow])
@@ -65,11 +69,11 @@ end
 
 @testset "fresh-snow options: the new settings are inert when off" begin
     cf = synthetic_maritime_forcing(; years=1)
-    mp0 = initialize_parameters(output_frequency=:monthly)
+    mp0 = initialize_parameters(; output_frequency=:monthly, _FS_OLD...)
     profile = initialize_profile(mp0, cf)
     out0 = gemb(profile, cf, mp0)
     # Off-state values of the new settings that are only read when their option is on.
-    out1 = gemb(profile, cf, initialize_parameters(output_frequency=:monthly,
+    out1 = gemb(profile, cf, initialize_parameters(; output_frequency=:monthly, _FS_OLD...,
         destructive_metamorphism=false, destructive_metamorphism_density=300.0,
         drift_fetch_length=3.0))
     for k in (:temperature, :density, :dz, :melt, :runoff, :refreeze)
@@ -80,10 +84,10 @@ end
 @testset "fresh-snow options: wind packing raises near-surface density" begin
     cf = initialize_forcing(GEMB_ClimateForcing.simulate_climate_forcing("test_1", 3))[
         Ti(1:(8 * 365))]
-    base = (; output_frequency=:monthly, new_snow_method=:vanKampenhout2017,
+    base = (; output_frequency=:monthly, CFM_SNOW..., new_snow_method=:vanKampenhout2017,
         densification_method=:Crocus, destructive_metamorphism=true)
     mp_off = initialize_parameters(; base...)
-    profile = initialize_profile(initialize_parameters(output_frequency=:monthly), cf)
+    profile = initialize_profile(initialize_parameters(; output_frequency=:monthly, _FS_OLD...), cf)
     top_mean(out) = sum(view(parent(out[:density]), 1, :)) / size(out[:density], 2)
     ρ_off = top_mean(gemb(profile, cf, mp_off))
     ρ_on = top_mean(gemb(profile, cf, initialize_parameters(; base...,

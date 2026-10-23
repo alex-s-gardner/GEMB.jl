@@ -262,7 +262,7 @@ end
 end
 
 @testset "Grain size cap" begin
-    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp)
+    mp = GEMB.ModelParameters(albedo_method=:GardnerSharp, grain_growth_method=:hybrid)
     cfs = _make_grain_cfs(dt=86400.0 * 50)
 
     temperature = [GEMB.CtoK, GEMB.CtoK, GEMB.CtoK]
@@ -299,9 +299,9 @@ end
     r_arthern = _grow(:Arthern)
     r_hybrid = _grow(:hybrid)
 
-    # `:hybrid` is the default; `:Marbouty` stops dead at DENSITY_MARBOUTY_MAX, so it shows no
+    # `:FlannerZender2006` is the default; `:Marbouty` stops dead at DENSITY_MARBOUTY_MAX, so it shows no
     # growth in cells 3-5.
-    @test GEMB.ModelParameters().grain_growth_method === :hybrid
+    @test GEMB.ModelParameters().grain_growth_method === :FlannerZender2006
     @test all(r_marbouty[1:2] .> 0.5)
     @test r_marbouty[3:5] == fill(0.5, 3)
 
@@ -335,7 +335,7 @@ end
     dt = 86400.0 * 2
     dt_d = 2.0
     cfs = _make_grain_cfs(dt=dt)
-    mp = GEMB.ModelParameters()
+    mp = GEMB.ModelParameters(grain_growth_method=:hybrid)
     ex(T) = exp(-6e3 / T)
     d_of(gd, gs) = 0.1 * (gd / 0.99 + (1 - gd / 0.99) * (gs / 0.99 * 3 + (1 - gs / 0.99) * 4))
     dz = [0.1, 0.1, 0.1]
@@ -399,7 +399,7 @@ end
     for (gs, cap) in ((1.0, 2.0), (0.0, 5.0))
         r, _, _ = GEMB.calculate_grain_size(fill(GEMB.CtoK, 3), fill(0.1, 3), fill(300.0, 3),
             fill(3.0, 3), fill(cap / 2 - 0.01, 3), zeros(3), fill(gs, 3), cfs,
-            GEMB.ModelParameters())
+            GEMB.ModelParameters(grain_growth_method=:hybrid))
         @test all(2 .* r .== cap)
     end
 end
@@ -584,5 +584,6 @@ end
     @test GEMB.mix_grains(0.0, 0.3, 0.2, 30.0, 1.0, 0.5, 0.05, 10.0, true) ==
           GEMB.mix_grains(0.0, 0.3, 0.2, 30.0, 1.0, 0.5, 0.05, 10.0)
     @test GEMB.independent_grain_radius(GEMB.ModelParameters(grain_growth_method=:FlannerZender2006))
-    @test !GEMB.independent_grain_radius(GEMB.ModelParameters())
+    @test GEMB.independent_grain_radius(GEMB.ModelParameters())
+    @test !GEMB.independent_grain_radius(GEMB.ModelParameters(grain_growth_method=:hybrid))
 end

@@ -5,6 +5,8 @@ using Dates
 using InteractiveUtils   # code_typed, for the type-stability guard in test_heat_capacity.jl
 using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
 
+include("cfm_snow_configuration.jl")
+
 @testset "GEMB.jl" begin
     @testset "Heat Capacity" begin
         include("test_heat_capacity.jl")
@@ -41,6 +43,9 @@ using GEMB: DimensionalData, DimArray, DimStack, Ti, Z, At, Near, dims
     end
     @testset "Fresh Snow: van Kampenhout 2017" begin
         include("test_fresh_snow_vankampenhout.jl")
+    end
+    @testset "Fresh Snow: van Kampenhout 2017, SNOTEL temperature term" begin
+        include("test_fresh_snow_snotel.jl")
     end
     @testset "Fresh Snow: constant of choice" begin
         include("test_fresh_snow_constant.jl")

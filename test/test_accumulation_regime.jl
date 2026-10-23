@@ -17,6 +17,8 @@
 # `verbose=true` throughout, so the per-timestep mass/energy checks, the grid invariants, and
 # the whole-run mass budget are enforced rather than merely exercised.
 
+isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_configuration.jl"))
+
 @testset "Accumulation regime" begin
     # Cold interior site: mean 248 K with a 15 K seasonal amplitude, 0.6 kg m-2 d-1 of
     # snowfall, and a low longwave and shortwave load, so the surface never approaches
@@ -32,7 +34,7 @@
         temperature_air_mean=248.0, wind_speed_mean=4.0,
         precipitation_mean=0.6 * 365.25)
 
-    mp = ModelParameters(output_frequency=:daily)
+    mp = ModelParameters(; output_frequency=:daily, CFM_SNOW...)
     profile = initialize_profile(mp, cf)
 
     # --- The regime, as the summary sees it ----------------------------------------

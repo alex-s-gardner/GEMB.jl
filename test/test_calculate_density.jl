@@ -696,7 +696,8 @@ end
 end
 
 @testset "CrocusPure densification" begin
-    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure,
+        destructive_metamorphism=false)
     cfs = _make_density_cfs(dt=86400.0)     # 1 day
 
     dz = [0.05, 0.05, 0.05]

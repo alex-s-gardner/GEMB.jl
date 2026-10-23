@@ -95,6 +95,7 @@ extern "C" {
 #define GEMB_NEW_SNOW_KASPERS          7
 #define GEMB_NEW_SNOW_KUIPERSMUNNEKE   8
 #define GEMB_NEW_SNOW_VANKAMPENHOUT2017 9
+#define GEMB_NEW_SNOW_VANKAMPENHOUT2017_SNOTEL 10
 
 /* emissivity_method */
 #define GEMB_EMISSIVITY_UNIFORM                    1
@@ -182,6 +183,8 @@ extern "C" {
 #define GEMB_FLAG_SHORTWAVE_SUBSURFACE_ABSORPTION  0
 #define GEMB_FLAG_OUTPUT_VISCOSITY                 1
 #define GEMB_FLAG_BLOWING_SNOW_SUBLIMATION         2
+/* gemb_defaults sets this flag (the default densification is Crocus); a host that selects another
+ * densification method must clear it, or validation rejects the parameters. */
 #define GEMB_FLAG_DESTRUCTIVE_METAMORPHISM         3
 
 /* --- forcing[] indices. --------------------------------------------------------------- */

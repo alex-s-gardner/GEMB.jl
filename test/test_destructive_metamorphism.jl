@@ -85,8 +85,9 @@ function _one_cell_big(; ρ, dz, T, dt, dm::Bool)
 end
 
 @testset "one-step closed form, single layer" begin
-    mp_on = GEMB.ModelParameters(densification_method=:CrocusPure, destructive_metamorphism=true)
-    mp_off = GEMB.ModelParameters(densification_method=:CrocusPure)
+    mp_on = GEMB.ModelParameters(densification_method=:CrocusPure, destructive_metamorphism=true,
+        destructive_metamorphism_density=175.0)
+    mp_off = GEMB.ModelParameters(densification_method=:CrocusPure, destructive_metamorphism=false)
     setprecision(BigFloat, 256) do
         for (ρ, T, dt) in ((150.0, 263.15, 3600.0), (100.0, 243.15, 10800.0),
                            (300.0, 268.15, 86400.0))
@@ -116,8 +117,9 @@ end
 end
 
 @testset "under :Crocus, cells handed to :GSFC2020 are untouched" begin
-    mp_on = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=true)
-    mp_off = GEMB.ModelParameters(densification_method=:Crocus)
+    mp_on = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=true,
+        destructive_metamorphism_density=175.0)
+    mp_off = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=false)
     for ρ in (450.0, 600.0)
         @test _one_cell(mp_on; ρ) == _one_cell(mp_off; ρ)
     end
@@ -132,8 +134,9 @@ end
 
 @testset "destructive metamorphism: switch is inert when off and guarded" begin
     # Off, the density threshold is unread: bit-identical outputs.
-    mp_a = GEMB.ModelParameters(densification_method=:Crocus)
-    mp_b = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism_density=300.0)
+    mp_a = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=false)
+    mp_b = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=false,
+        destructive_metamorphism_density=300.0)
     @test _one_cell(mp_a) == _one_cell(mp_b)
 
     # Only the two viscous schemes accept it.

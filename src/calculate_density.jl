@@ -4,10 +4,10 @@
 
 Compute the densification of snow/firn using one of several models:
 - `:HerronLangway`: Herron and Langway (1980)
-- `:Arthern`: semi-empirical model of Arthern et al. (2010) [default]
+- `:Arthern`: semi-empirical model of Arthern et al. (2010)
 - `:ArthernB`: physical model from Appendix B of Arthern et al. (2010)
 - `:Crocus`: viscous settling of Vionnet et al. (2012) below `CROCUS_HYBRID_DENSITY`,
-  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix
+  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix [default]
 - `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
 - `:Simonsen2013`: Arthern retuned for Greenland by Simonsen et al. (2013)

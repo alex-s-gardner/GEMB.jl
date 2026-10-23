@@ -19,13 +19,13 @@ other setting.
 - `:Arthern` — `dr²/dt = kgr·exp(-Eg/RT)` (`GRAIN_GROWTH_KGR`, `GRAIN_GROWTH_EG`) at every
   density, dropping the temperature-gradient dependence entirely. Fitted to firn, it barely
   coarsens dry surface snow.
-- `:hybrid` (the default) — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it.
+- `:hybrid` — Marbouty below `DENSITY_MARBOUTY_MAX`, Arthern at or above it.
   Seasonal snow keeps the temperature-gradient physics; firn grains keep growing, which
   matters because `:ArthernB` densification goes as `1/r²`.
 - `:Taillandier2007` — below `DENSITY_MARBOUTY_MAX`, the SSA decay of dry snow of Taillandier
   et al. (2007), equitemperature or temperature-gradient by the cell's gradient
   ([`taillandier_ssa`](@ref)); Arthern at or above it.
-- `:FlannerZender2006` — the snow aging of SNICAR in CLM5.0 ([`snicar_aging_radius`](@ref)):
+- `:FlannerZender2006` (the default) — the snow aging of SNICAR in CLM5.0 ([`snicar_aging_radius`](@ref)):
   the radius of every dendritic cell and every cell below `DENSITY_MARBOUTY_MAX`, dry or wet,
   grows by the Flanner and Zender (2006) law with the parameters of the SNICAR table at the
   cell's temperature, gradient and density, plus CLM's wet growth, and is capped at

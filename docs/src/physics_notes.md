@@ -11,7 +11,10 @@ function that implements it.
 
 ## Densification
 
-**`:Arthern`** (Arthern et al., 2010) is the default: `dρ/dt = c(ρᵢ − ρ)` in two stages
+The default is **`:Crocus`** with destructive metamorphism (below), part of the snow set described
+on the Model Parameters page.
+
+**`:Arthern`** (Arthern et al., 2010), the Community Firn Model's scheme: `dρ/dt = c(ρᵢ − ρ)` in two stages
 either side of 550 kg m⁻³, driven by mean accumulation and an Arrhenius factor in mean
 annual temperature.
 
@@ -71,12 +74,12 @@ Two departures from the published law:
 The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
 Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
 
-**`destructive_metamorphism`** [default `false`] adds the destructive-metamorphism settling
+**`destructive_metamorphism`** [default `true` under `:Crocus` and `:CrocusPure`, else `false`] adds the destructive-metamorphism settling
 of fresh snow (Anderson, 1976) to the `:Crocus`/`:CrocusPure` strain rate, as CLM5 does:
 `r = c3·c2·c1·exp(−c4·(T_frz − T))` with `c3 = 2.777×10⁻⁶ s⁻¹`, `c4 = 0.04 K⁻¹`, `c2 = 2`
 when the cell holds liquid water (van Kampenhout et al., 2017, eq. 5, p. 2587), and
 `c1 = exp(−0.046·(ρ − ρ_dm))` above `ρ_dm = destructive_metamorphism_density`, default
-175 kg m⁻³ (Schneider et al., 2022, eq. 3, p. 3). The two strain rates are summed and the step
+100 kg m⁻³ (CLM5 uses 175; Schneider et al., 2022, eq. 3, p. 3). The two strain rates are summed and the step
 is `D·exp(−(σ/η + r)·dt)`. Cells `:Crocus` hands to `:GSFC2020` do not get the term, which is
 below 3.2×10⁻⁶ of its fresh-snow value there. The switch is rejected with any other
 densification scheme. At −10 °C it takes dry snow below 175 kg m⁻³ to that density at
@@ -199,13 +202,14 @@ every setting but `:FlannerZender2006`. Because `:ArthernB` densification goes a
 
 | Option | Form |
 |---|---|
-| `:Constant350` (default), `:Constant315`, `:Constant150` | Bare constants; 350 is what the Community Firn Model ships |
+| `:Constant350`, `:Constant315`, `:Constant150` | Bare constants; 350 is what the Community Firn Model ships |
 | `:Constant` | `new_snow_density`, a bare constant in [50, 550] kg m⁻³ |
 | `:Fausto` | 315 kg m⁻³, the Fausto et al. (2018) regression at 256.2 K |
 | `:FaustoFit` | `362.1 + 2.78·(T_air − 273.15)`, the regression itself, clamped to `[1, ρᵢ]` since it reaches zero near 143 K |
 | `:Pahaut` | `max(50, 109 + 6·(T_air − 273.15) + 26·√U)` |
 | `:Kaspers`, `:KuipersMunneke` | Temperature-dependent polar fits |
 | `:vanKampenhout2017` | `ρ_T(T_air) + 266.861·(½(1 + tanh(U₁₀/5)))^8.8`, van Kampenhout et al. (2017) eqs. 2–4 |
+| `:vanKampenhout2017SNOTEL` (default) | `56 + 0.85·(clamp(ΔT, −8, 2) + 15)^1.5 + ρ_W(U₁₀)`: the vK17 form refitted to SNOTEL snowfall days |
 
 `:Pahaut` is Pahaut (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35. It is
 the only option fitted to alpine seasonal snow rather than to a polar ice sheet, and it is
@@ -222,10 +226,20 @@ published 50 kg m⁻³ floor is retained; it binds below about −10 °C in calm
 term is defined on the 10 m wind: the forcing wind is carried from `wind_observation_height`
 to 10 m through a neutral log profile over the surface roughness the turbulent fluxes use.
 The formula spans 50–436 kg m⁻³. It is a deposition density, not a near-surface density, so
-it needs a settling scheme: with `densification_method = :Crocus` and
-`destructive_metamorphism = true` the snow settles within
-days, while with an accumulation-driven scheme the top metre stays near the deposition density
-for years. It keeps the default fresh-grain properties.
+it needs a settling scheme: with `densification_method = :Crocus` (which includes destructive
+metamorphism by default) the snow settles within days, while with an accumulation-driven
+scheme the top metre stays near the deposition density for years. It keeps the default fresh-grain properties.
+
+`:vanKampenhout2017SNOTEL` keeps the vK17 wind term and replaces `ρ_T` by
+`56 + 0.85·(clamp(ΔT, −8, 2) + 15)^1.5`: the vK17 middle-branch form, refitted, and level at
+71.74 kg m⁻³ at and below −8 °C instead of falling to 50 at −15 °C. It was fitted to the
+density of new snow on calm snowfall days (gain in pillow mass over gain in depth) at 23 SNOTEL
+stations in Alaska and Colorado, storm air temperatures −16 to 0 °C, net of the same-day
+settling of `:Crocus` with destructive metamorphism at `destructive_metamorphism_density = 100`,
+so it is calibrated for that settling. Observed there, new-snow density rises by about
+3 kg m⁻³ K⁻¹ above −8 °C and is level below; the published term rises by about 7. The wind term
+is not constrained by those calm storms, and below about −25 °C the published cold branch is
+denser than the floor, where the calibration has no data.
 
 `:Fausto`, `:FaustoFit` and `:Pahaut` also select the Crocus (Vionnet et al., 2012)
 wind-dependent fresh-grain dendricity and sphericity, those being what Crocus itself pairs

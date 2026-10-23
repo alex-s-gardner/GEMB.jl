@@ -295,7 +295,7 @@ end
     end
 
     @testset "fragmentation: dendricity falls, sphericity rises, size falls" begin
-        mp = initialize_parameters(blowing_snow_method=:Crocus)
+        mp = initialize_parameters(blowing_snow_method=:Crocus, grain_growth_method=:hybrid)
 
         # Dendritic branch (eq. 65). Grain radius is diagnostic while dendricity is nonzero, so
         # what is pinned is the direction of the two shape variables plus the re-derivation.

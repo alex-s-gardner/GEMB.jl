@@ -74,7 +74,8 @@ end
     sph = [0.6, 0.9, 0.2, 0.2]
     dt = 86400.0
     cfs = _f2_cfs(dt)
-    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    mp = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure,
+        destructive_metamorphism=false)
     visc = fill(-1.0, 4)
     (dz_out, d_out) = GEMB.calculate_density(T, copy(dz), copy(density), r, water, cfs, mp;
         grain_dendricity=dend, grain_sphericity=sph, viscosity=visc)

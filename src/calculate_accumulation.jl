@@ -12,9 +12,9 @@ profile).
 
 `T_air` and `wind_speed` are the *instantaneous* air temperature [K] and wind speed
 [m s-1], read only by the methods whose fits are meant to apply at the moment of snowfall
-rather than to a climatology: `T_air` by `:FaustoFit`, `:Pahaut` and `:vanKampenhout2017`,
-`wind_speed` by `:Pahaut` and `:vanKampenhout2017`. They default to their climatological
-counterparts so that the steady-state march — which has no instantaneous forcing to offer —
+rather than to a climatology: `T_air` by `:FaustoFit`, `:Pahaut`, `:vanKampenhout2017` and
+`:vanKampenhout2017SNOTEL`, `wind_speed` by `:Pahaut` and the two `:vanKampenhout2017`
+methods. They default to their climatological counterparts so that the steady-state march — which has no instantaneous forcing to offer —
 gets a well-defined climatological ρ₀ from the same call, and so that callers of the older
 methods need not pass them.
 
@@ -56,12 +56,15 @@ Methods:
   speed, which is `wind_speed` carried from `wind_observation_height` to 10 m by
   [`wind_speed_10m`](@ref) over roughness `z0`. It keeps GEMB's default fresh-grain
   properties. It is a deposition density (50-436 kg m-3), so its near-surface density
-  depends on the settling scheme: pair it with `densification_method = :Crocus` and
-  `destructive_metamorphism = true`. Under an accumulation-driven densification scheme the
-  snow stays near its deposition density for years.
+  depends on the settling scheme: pair it with `densification_method = :Crocus`
+  (destructive metamorphism is on by default there). Under an accumulation-driven
+  densification scheme the snow stays near its deposition density for years.
+- `:vanKampenhout2017SNOTEL` → `ρ_T,SNOTEL(T_air) + ρ_W(U₁₀)`: `:vanKampenhout2017` with the
+  SNOTEL-calibrated temperature term [`snotel_density_temperature`](@ref); the wind term and
+  fresh-grain properties are unchanged.
 
-`wind_observation_height` [m] and `z0` [m] are read only by `:vanKampenhout2017`. Their
-defaults treat `wind_speed` as a 10 m wind over dry snow.
+`wind_observation_height` [m] and `z0` [m] are read only by `:vanKampenhout2017` and
+`:vanKampenhout2017SNOTEL`. Their defaults treat `wind_speed` as a 10 m wind over dry snow.
 
 Throws an `ErrorException` for an unrecognized `mp.new_snow_method`.
 
@@ -110,12 +113,20 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
                 6.69e-2 * precip_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
     elseif mp.new_snow_method == :KuipersMunneke
         return 481.0 + 4.834 * (T_air_mean - CtoK)
-    elseif mp.new_snow_method == :vanKampenhout2017
-        return vankampenhout_density_temperature(T_air) +
-               vankampenhout_density_wind(
-                   wind_speed_10m(wind_speed, wind_observation_height, z0))
+    elseif mp.new_snow_method in (:vanKampenhout2017, :vanKampenhout2017SNOTEL)
+        ρ_T = mp.new_snow_method === :vanKampenhout2017SNOTEL ?
+              snotel_density_temperature(T_air) : vankampenhout_density_temperature(T_air)
+        return ρ_T + vankampenhout_density_wind(
+            wind_speed_10m(wind_speed, wind_observation_height, z0))
     end
     error("unrecognized new_snow_method: $(mp.new_snow_method)")
+end
+
+# Throws an `ArgumentError` unless `T_air` [K] is finite and positive.
+function _air_temperature_check(T_air::Real)
+    (isfinite(T_air) && T_air > 0) ||
+        throw(ArgumentError("air temperature must be finite and positive [K], got $T_air"))
+    return nothing
 end
 
 """
@@ -137,8 +148,7 @@ down by 5e-4 kg m-3 there, as published.
 Throws an `ArgumentError` unless `T_air` is finite and positive.
 """
 function vankampenhout_density_temperature(T_air::Real)
-    (isfinite(T_air) && T_air > 0) ||
-        throw(ArgumentError("air temperature must be finite and positive [K], got $T_air"))
+    _air_temperature_check(T_air)
     ΔT = T_air - CtoK
     if ΔT > DENSITY_NEW_SNOW_VK17_DT_WARM
         return DENSITY_NEW_SNOW_VK17_A + DENSITY_NEW_SNOW_VK17_B *
@@ -149,6 +159,30 @@ function vankampenhout_density_temperature(T_air::Real)
     else
         return DENSITY_NEW_SNOW_VK17_C1 * ΔT + DENSITY_NEW_SNOW_VK17_C2 * ΔT^2
     end
+end
+
+"""
+    snotel_density_temperature(T_air) -> ρ_T [kg m-3]
+
+Temperature term of `new_snow_method = :vanKampenhout2017SNOTEL`, with `T_air` the
+near-surface air temperature [K] and `ΔT = T_air - 273.15`:
+
+    ρ_T = 56 + 0.85·(clamp(ΔT, -8, 2) + 15)^1.5
+
+The form of the van Kampenhout et al. (2017) middle branch
+([`vankampenhout_density_temperature`](@ref)) with refitted coefficients and a floor in place
+of its cold branch: ρ_T is 71.74 kg m-3 at and below -8 °C and is held at its +2 °C value
+above. It is calibrated with `densification_method = :Crocus`, destructive metamorphism and
+`destructive_metamorphism_density = 100`; see the Physics Notes. The fit has no data below
+about -25 °C, where the published cold branch exceeds the floor.
+
+Throws an `ArgumentError` unless `T_air` is finite and positive.
+"""
+function snotel_density_temperature(T_air::Real)
+    _air_temperature_check(T_air)
+    ΔT = clamp(T_air - CtoK, DENSITY_NEW_SNOW_SNOTEL_DT_FLOOR, DENSITY_NEW_SNOW_SNOTEL_DT_WARM)
+    return DENSITY_NEW_SNOW_SNOTEL_A +
+           DENSITY_NEW_SNOW_SNOTEL_B * (ΔT - DENSITY_NEW_SNOW_SNOTEL_DT_REF)^1.5
 end
 
 """
@@ -177,8 +211,8 @@ end
     fresh_snow_properties(cfs, mp, z0) -> (density, grain_radius, grain_dendricity, grain_sphericity)
 
 Density [kg m-3] and grain state of the snow falling in step `cfs`, onto a surface of roughness
-`z0` [m] (read by `new_snow_method = :vanKampenhout2017` only): [`fresh_snow_density`](@ref)
-clamped to `[1, mp.density_ice]`, and GEMB's fresh-grain constants, or under `:Fausto`,
+`z0` [m] (read by the two `new_snow_method = :vanKampenhout2017` methods only):
+[`fresh_snow_density`](@ref) clamped to `[1, mp.density_ice]`, and GEMB's fresh-grain constants, or under `:Fausto`,
 `:FaustoFit` and `:Pahaut` the wind-dependent grains of Crocus (Vionnet et al., 2012). Shared
 by [`calculate_accumulation`](@ref) and the snow-free ground of `lower_boundary = :ground`.
 """
@@ -191,8 +225,8 @@ function fresh_snow_properties(cfs::ClimateForcingStep, mp::ModelParameters, z0:
 
     # Density of fresh snow [kg m-3] (shared with initialize_profile). The instantaneous air
     # temperature and wind speed are passed as the fifth and sixth arguments, for `:FaustoFit`,
-    # `:Pahaut` and `:vanKampenhout2017`; the other methods ignore them. The wind height and
-    # the roughness of the surface the snow lands on are read by `:vanKampenhout2017` only.
+    # `:Pahaut` and the two `:vanKampenhout2017` methods; the other methods ignore them. The wind
+    # height and the roughness of the surface the snow lands on are read by those two only.
     # Clamped for the same reason `steady_state_profile` clamps its own call: the Fausto fit
     # is a linear regression with no bounds, so a sufficiently cold forcing step would
     # otherwise hand a non-positive density to the `dz = mass/density` below. (`:Pahaut`

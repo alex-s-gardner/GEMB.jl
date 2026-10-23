@@ -172,6 +172,13 @@ const DENSITY_NEW_SNOW_VK17_DT_WARM = 2.0     # ΔT above which ρ_T is constant
 const DENSITY_NEW_SNOW_VK17_DT_COLD = -15.0   # ΔT at or below which the cold branch applies [K]
 const DENSITY_NEW_SNOW_VK17_A = 50.0          # middle branch: A + B·(ΔT + 15)^1.5 [kg m-3]
 const DENSITY_NEW_SNOW_VK17_B = 1.7           # [kg m-3 K-1.5]
+# Temperature term of `new_snow_method = :vanKampenhout2017SNOTEL`:
+# A + B·(clamp(ΔT, DT_FLOOR, DT_WARM) − DT_REF)^1.5. See `snotel_density_temperature`.
+const DENSITY_NEW_SNOW_SNOTEL_A = 56.0         # [kg m-3]
+const DENSITY_NEW_SNOW_SNOTEL_B = 0.85         # [kg m-3 K-1.5]
+const DENSITY_NEW_SNOW_SNOTEL_DT_REF = -15.0   # reference ΔT of the power law [K]
+const DENSITY_NEW_SNOW_SNOTEL_DT_FLOOR = -8.0  # ΔT at or below which ρ_T is constant [K]
+const DENSITY_NEW_SNOW_SNOTEL_DT_WARM = 2.0    # ΔT above which ρ_T is constant [K]
 const DENSITY_NEW_SNOW_VK17_C1 = -3.8328      # cold branch: C1·ΔT + C2·ΔT² [kg m-3 K-1]
 const DENSITY_NEW_SNOW_VK17_C2 = -0.0333      # [kg m-3 K-2]
 const DENSITY_NEW_SNOW_VK17_W = 266.861       # wind term: W·(½(1 + tanh(U/U_s)))^n [kg m-3]
@@ -185,7 +192,7 @@ const DESTRUCTIVE_METAMORPHISM_C3 = 2.777e-6   # [s-1], vK17 p. 2587 (Schneider:
 const DESTRUCTIVE_METAMORPHISM_C4 = 0.04       # [K-1], both papers
 const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-3)
 const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
-const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 175.0  # ρ_dm [kg m-3], vK17 p. 2587
+const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 100.0  # ρ_dm [kg m-3]: CLM4 value (CLM5/vK17 p. 2587: 175)
 
 # Fetch length L [m] of the Keenan et al. (2021) saltation flux, eq. 3, p. 1067: the
 # horizontal scale over which the saltation transport is eroded from the surface. Keenan et

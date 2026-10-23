@@ -649,7 +649,7 @@ end
     # Top cell: 3-hour-old fresh snow, 0.02 m at 150 kg m-3 (3 kg m-2); 2 kg m-2 more at
     # 150 kg m-3 is 0.0133 m, under column_dzmin 0.05 m and not distinct from it.
     mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05,
-        heat_capacity_method=:constant)
+        heat_capacity_method=:constant, grain_growth_method=:hybrid)
     d1, s1 = 0.98, 0.52
     r1 = _brun_dendritic_radius(d1, s1)
     col = _layer_column(dz1=0.02, ρ1=150.0, r1=r1, d1=d1, s1=s1, age1=0.125, T1=262.0)
@@ -749,7 +749,7 @@ end
     # Four 3-hourly snowfalls of 2 kg m-2 (5.7 mm each at 350 kg m-3) onto old non-dendritic
     # snow of 1 mm grains, with a grain-growth step and layer management between them. The
     # first forms a fresh layer, the others join it; the old cell is never touched.
-    mp = GEMB.ModelParameters(new_snow_method=:Constant350)
+    mp = GEMB.ModelParameters(new_snow_method=:Constant350, grain_growth_method=:hybrid)
     col = _layer_column()
     n = length(col[2])
     cfs_dry = GEMB.ClimateForcingStep(; dt=10800.0, temperature_air=258.0)
