@@ -922,6 +922,112 @@ end
     @test (d_wet[2] - density[2]) * 365.0 > hybrid[2]
 end
 
+@testset "Crocus handoff settings" begin
+    # The defaults are the fixed 450 handover to `:GSFC2020` the testsets above pin.
+    mp0 = GEMB.ModelParameters()
+    @test mp0.crocus_handoff_density == GEMB.CROCUS_HYBRID_DENSITY
+    @test mp0.crocus_handoff_law === :GSFC2020 && mp0.crocus_handoff_rule === :density
+
+    n = 6
+    dz = fill(0.1, n)
+    density = [300.0, 420.0, 480.0, 520.0, 600.0, 750.0]
+    t_vec = fill(263.15, n)
+    grain_radius = fill(0.3, n)
+    cfs = _make_density_cfs(dt=86400.0)
+    run(; kw...) = GEMB.calculate_density(t_vec, copy(dz), copy(density), copy(grain_radius),
+        zeros(n), cfs, GEMB.ModelParameters(density_ice=910.0; kw...);
+        grain_dendricity=zeros(n), grain_sphericity=zeros(n))
+
+    # Explicit defaults are the defaults, bit for bit.
+    @test run() == run(densification_method=:Crocus, crocus_handoff_density=450.0,
+        crocus_handoff_law=:GSFC2020, crocus_handoff_rule=:density)
+
+    (_, d_pure) = run(densification_method=:CrocusPure)
+    (_, d_gsfc) = run(densification_method=:GSFC2020, destructive_metamorphism=false)
+    (_, d_arth) = run(densification_method=:Arthern, destructive_metamorphism=false)
+
+    # The handoff density moves the branch: at 500, the 480 cell is Crocus and the 520 cell is
+    # the law. Each cell above equals that scheme exactly, below equals pure Crocus.
+    (_, d_500) = run(crocus_handoff_density=500.0)
+    @test d_500[1:3] == d_pure[1:3]
+    @test d_500[4:6] == d_gsfc[4:6]
+
+    # The handoff law: `:Arthern` above the threshold is exactly `:Arthern`.
+    (_, d_ha) = run(crocus_handoff_law=:Arthern)
+    @test d_ha[1:2] == d_pure[1:2]
+    @test d_ha[3:6] == d_arth[3:6]
+    @test d_ha[3:6] != d_gsfc[3:6]
+
+    # Rate matching: above the floor each cell takes whichever law compacts it faster, by
+    # dρ/dt at the start of the step, and below the floor it is Crocus.
+    for law in (:GSFC2020, :Arthern)
+        (_, d_rm) = run(crocus_handoff_law=law, crocus_handoff_rule=:rate_match)
+        d_law = law === :Arthern ? d_arth : d_gsfc
+        @test d_rm[1:2] == d_pure[1:2]
+        for i in 3:n
+            r_pure, r_law = d_pure[i] - density[i], d_law[i] - density[i]
+            @test d_rm[i] == (r_law >= r_pure ? d_law[i] : d_pure[i])
+        end
+    end
+end
+
+@testset "Crocus rate-matched handoff is continuous in rate" begin
+    # One cell under a fixed overburden, swept in density. Under `:density` the rate steps at the
+    # handoff density; under `:rate_match`, with the floor below the crossing, it is the
+    # pointwise maximum of the two laws, so it is continuous where they cross. The sweep stops
+    # short of `DENSITY_STAGE_TRANSITION`, where `:GSFC2020` has a step of its own.
+    T, gr, σ_load = 258.15, 0.5, 2000.0              # load above the cell [kg m-2]
+    cfs = _make_density_cfs(dt=3600.0)
+    ρs = 400.0:0.5:545.0
+    rate(mp, ρ) = begin
+        (_, d) = GEMB.calculate_density([T, T], [σ_load / ρ, 0.01], [ρ, ρ], [gr, gr], zeros(2),
+            cfs, mp; grain_dendricity=zeros(2), grain_sphericity=zeros(2))
+        d[2] - ρ
+    end
+    mp_d = GEMB.ModelParameters(density_ice=910.0)
+    mp_r = GEMB.ModelParameters(density_ice=910.0, crocus_handoff_density=400.0,
+        crocus_handoff_rule=:rate_match)
+    mp_p = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
+    mp_g = GEMB.ModelParameters(density_ice=910.0, densification_method=:GSFC2020,
+        destructive_metamorphism=false)
+    r_d = [rate(mp_d, ρ) for ρ in ρs]
+    r_r = [rate(mp_r, ρ) for ρ in ρs]
+    r_p = [rate(mp_p, ρ) for ρ in ρs]
+    r_g = [rate(mp_g, ρ) for ρ in ρs]
+
+    # The two laws cross inside the sweep, so the test is not vacuous.
+    cross = findfirst(i -> r_g[i] >= r_p[i], eachindex(ρs))
+    @test cross !== nothing && first(eachindex(ρs)) < cross
+    @test r_r ≈ max.(r_p, r_g) rtol = 1e-5
+    # Largest relative jump between neighbouring densities: smooth under `:rate_match`, a step
+    # at 450 under `:density`.
+    jump(r) = maximum(abs(r[i+1] - r[i]) / max(abs(r[i]), abs(r[i+1])) for i in 1:length(r)-1)
+    @test jump(r_r) < 0.02
+    @test jump(r_d) > 0.1
+end
+
+@testset "Crocus handoff validation and steady-state march" begin
+    @test_throws "crocus_handoff_law must be GSFC2020 or Arthern" initialize_parameters(
+        crocus_handoff_law=:Ligtenberg)
+    @test_throws "crocus_handoff_rule must be density or rate_match" initialize_parameters(
+        crocus_handoff_rule=:blend)
+    @test_throws "crocus_handoff_density must be in [200, 830.0]" initialize_parameters(
+        crocus_handoff_density=900.0)
+    @test_throws "read only by densification_method = :Crocus" initialize_parameters(
+        densification_method=:GSFC2020, crocus_handoff_density=500.0)
+    @test initialize_parameters(densification_method=:GSFC2020).crocus_handoff_law === :GSFC2020
+
+    # The steady-state fallback follows the handoff law.
+    mp_ha = GEMB.ModelParameters(crocus_handoff_law=:Arthern)
+    mp_a = GEMB.ModelParameters(densification_method=:Arthern)
+    p_ha = GEMB.DensificationCoeffs(mp_ha, 300.0, 250.0)
+    @test p_ha.k0 == 1.0 && p_ha.k1 == 1.0 && p_ha.handoff_law === :Arthern
+    for ρ in (500.0, 700.0)
+        @test GEMB._densification_rate(p_ha, ρ, 250.0) ==
+              GEMB._densification_rate(GEMB.DensificationCoeffs(mp_a, 300.0, 250.0), ρ, 250.0)
+    end
+end
+
 @testset "Barnola f(ρ) (Barnola et al. 1991)" begin
     ρ_i = 910.0
 

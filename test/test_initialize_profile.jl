@@ -559,6 +559,16 @@ end
     @test lo_density[argmin(abs.(lo_z .- 10.0))] < 600.0
     @test all(diff(lo_density) .>= -1e-9)
 
+    # The handoff settings reach the march: every variant is a graded column that reaches ice,
+    # and moving the handoff or the law changes it.
+    for kw in ((crocus_handoff_density=550.0,), (crocus_handoff_law=:Arthern,),
+               (crocus_handoff_density=350.0, crocus_handoff_rule=:rate_match))
+        d = collect(GEMB.initialize_profile(GEMB.ModelParameters(; kw...), cf)[:density])
+        @test all(diff(d) .>= -1e-9)
+        @test d[end] > 0.98 * mp.density_ice
+        @test d != density
+    end
+
     # `_march_crocus_step` against its closed form at one parcel, with the wave averaged over the
     # 24 phases it samples: a step short enough to be a single sub-step.
     p = GEMB.DensificationCoeffs(mp, cf.accumulation_mean, cs.temperature_air_mean)

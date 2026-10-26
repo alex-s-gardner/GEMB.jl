@@ -430,6 +430,16 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # takes its default from `densification_method`, so its field must stay below
     # `densification_method` in this struct: `@kwdef` evaluates defaults in field order.
     densification_method::Symbol = :Crocus
+    # How `:Crocus` hands firn to an accumulation-driven law; read by no other scheme, and
+    # rejected with any other scheme when changed from the defaults. `crocus_handoff_law` is
+    # the law (`:GSFC2020` or `:Arthern`). Under `crocus_handoff_rule = :density` every cell
+    # at or above `crocus_handoff_density` [kg m-3] uses it. Under `:rate_match` such a cell
+    # uses whichever of the Crocus strain rate and the law's rate densifies it faster, so the
+    # switch falls where the two rates cross and `crocus_handoff_density` is only the floor
+    # below which Crocus always governs. See `CROCUS_HYBRID_DENSITY`.
+    crocus_handoff_density::Float64 = CROCUS_HYBRID_DENSITY
+    crocus_handoff_law::Symbol = :GSFC2020
+    crocus_handoff_rule::Symbol = :density
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
     # Which climatological mass flux the accumulation-driven schemes compact against.
     # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:

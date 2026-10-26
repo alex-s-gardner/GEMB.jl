@@ -6,8 +6,9 @@ Compute the densification of snow/firn using one of several models:
 - `:HerronLangway`: Herron and Langway (1980)
 - `:Arthern`: semi-empirical model of Arthern et al. (2010)
 - `:ArthernB`: physical model from Appendix B of Arthern et al. (2010)
-- `:Crocus`: viscous settling of Vionnet et al. (2012) below `CROCUS_HYBRID_DENSITY`,
-  `:GSFC2020` above; the only scheme here in which liquid water weakens the matrix [default]
+- `:Crocus`: viscous settling of Vionnet et al. (2012), handing firn to an
+  accumulation-driven law (`:GSFC2020` by default) as `mp.crocus_handoff_*` set; the only
+  scheme here in which liquid water weakens the matrix [default]
 - `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
 - `:Simonsen2013`: Arthern retuned for Greenland by Simonsen et al. (2013)
@@ -23,7 +24,7 @@ new array (recomputed from the conserved cell mass).
 Pass a length-`m` `viscosity` vector to have the per-cell effective viscosity [Pa s]
 written into it. It is filled with `NaN` first and written only by the
 `:Crocus`/`:CrocusPure` settling branch, the one place a viscosity is genuinely formed;
-under every other scheme, and for the cells `:Crocus` hands to `:GSFC2020`, it stays
+under every other scheme, and for the cells `:Crocus` hands to its firn law, it stays
 `NaN`. Omitting the keyword leaves the hot path untouched: the default is the empty
 `NO_VISCOSITY`, and an empty vector means "not requested" (a concrete type on both
 settings — see the note in `gemb_core.jl`).
@@ -33,8 +34,8 @@ destructive-metamorphism settling of fresh snow ([`destructive_metamorphism_rate
 its overburden strain rate. Both are strain rates `(1/D)·dD/dt`, and van Kampenhout et al.
 (2017, Sect. 3.4) and Schneider et al. (2022, p. 3) sum them, so one step is
 `D·exp(-(σ/η + r_dm)·dt)` with both rates taken at the start-of-step state. The cells
-`:Crocus` hands to `:GSFC2020` (ρ ≥ `CROCUS_HYBRID_DENSITY`) do not get the term; there it is
-below `exp(-0.046·275) = 3.2e-6` of its fresh-snow value. Requesting it with any other
+`:Crocus` hands to its firn law do not get the term; at the default handoff density of 450 it is
+below `exp(-0.046·350) = 1e-7` of its fresh-snow value. Requesting it with any other
 densification scheme throws.
 
 `water` [kg m-2] is read only by the stress-driven schemes: `:ArthernB` and `:Barnola1991`
@@ -266,15 +267,18 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         # constant σ and η its exact integral is `D exp(-σ/η·dt)`, which is used directly —
         # unconditionally positive, where a forward-Euler step on the same law is not.
         #
-        # `:Crocus` hands cells at or above `CROCUS_HYBRID_DENSITY` to `:GSFC2020`, because
-        # eq. 7 is fitted to a 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn —
-        # see `CROCUS_HYBRID_DENSITY`. `:CrocusPure` applies eq. 5 at every density.
+        # `:Crocus` hands firn to an accumulation-driven law, because eq. 7 is fitted to a
+        # 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn — see
+        # `CROCUS_HYBRID_DENSITY` and `mp.crocus_handoff_*`. `:CrocusPure` applies eq. 5 at
+        # every density.
         (length(grain_dendricity) == m && length(grain_sphericity) == m) ||
             throw(ArgumentError(":$(method) densification gates eq. 9 on grain shape and needs " *
                                 "grain_dendricity and grain_sphericity for all $m cells; got " *
                                 "$(length(grain_dendricity)) and $(length(grain_sphericity))"))
         hybrid = method == :Crocus
         p = hybrid ? DensificationCoeffs(mp, pm, tam) : nothing
+        handoff_density = mp.crocus_handoff_density
+        rate_match = mp.crocus_handoff_rule === :rate_match
         dt_seconds = cfs.dt
         settling = mp.destructive_metamorphism
         density_dm = mp.destructive_metamorphism_density
@@ -282,28 +286,39 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         @inbounds for i in 1:m
             d0 = density[i]
             dz0 = dz[i]
+            T = temperature[i]
             self_load = d0 * dz0 + water[i]
-            if hybrid && d0 >= CROCUS_HYBRID_DENSITY - D_TOLERANCE
-                c = _gsfc2020_c(d0, temperature[i], tam, p.k0, p.k1)
+            # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
+            # midpoint: every cell carries the overlying load plus half its own weight.
+            # Crocus adds the half-own-weight term to the uppermost layer only (the paper's
+            # note under eq. 6; `snowcro.F90` SNOWCROCOMPACTN), so a lower cell there is
+            # loaded at its top. The midpoint stress converges to the continuous profile
+            # from closer as cells coarsen; with fine layering the two agree. For the first
+            # cell the self term is the difference between compacting and not.
+            σ = (load + 0.5 * self_load) * GRAVITY              # [Pa]
+            use_law = false
+            c = 0.0
+            strain_rate = η = NaN
+            if hybrid && d0 >= handoff_density - D_TOLERANCE
+                c = _crocus_handoff_c(p, d0, T)
+                use_law = true
+                if rate_match
+                    strain_rate, η = _crocus_strain_rate(d0, T, water[i], dz0, grain_radius[i],
+                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm)
+                    # Both as dρ/dt [kg m-3 s-1]: the law's `c·(ρᵢ − ρ)` per densification
+                    # year, Crocus's `ρ·(1/D)·dD/dt`.
+                    use_law = c * (density_ice - d0) / (DAYS_PER_YEAR_DENSIFICATION * 86400.0) >=
+                              d0 * strain_rate
+                end
+            end
+            if use_law
                 _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
             else
-                # Eq. 6 with cos(Θ) = 1 (GEMB carries no local slope), evaluated at the cell
-                # midpoint: every cell carries the overlying load plus half its own weight.
-                # Crocus adds the half-own-weight term to the uppermost layer only (the paper's
-                # note under eq. 6; `snowcro.F90` SNOWCROCOMPACTN), so a lower cell there is
-                # loaded at its top. The midpoint stress converges to the continuous profile
-                # from closer as cells coarsen; with fine layering the two agree. For the first
-                # cell the self term is the difference between compacting and not.
-                σ = (load + 0.5 * self_load) * GRAVITY          # [Pa]
-                η = _crocus_viscosity(d0, temperature[i], water[i], dz0, grain_radius[i],
-                    crocus_f2_applies(grain_dendricity[i], grain_sphericity[i], water[i],
-                        grain_radius[i]))
-                isempty(viscosity) || (viscosity[i] = η)
-                strain_rate = σ / η                              # [s-1]
-                if settling
-                    strain_rate += destructive_metamorphism_rate(d0, temperature[i],
-                        water[i] > WATER_TOLERANCE, density_dm)
+                if isnan(strain_rate)
+                    strain_rate, η = _crocus_strain_rate(d0, T, water[i], dz0, grain_radius[i],
+                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm)
                 end
+                isempty(viscosity) || (viscosity[i] = η)
                 dz_new = dz0 * exp(-strain_rate * dt_seconds)
                 d = d0 * dz0 / dz_new
                 if d > density_ice - D_TOLERANCE
@@ -687,7 +702,8 @@ The first two err toward stiffening, the third toward softening.
 """
     CROCUS_HYBRID_DENSITY
 
-Density [kg m-3] at which `:Crocus` hands a cell over to `:GSFC2020`.
+Default `mp.crocus_handoff_density` [kg m-3]: the density at which `:Crocus` hands a cell to
+its firn law (`mp.crocus_handoff_law`, `:GSFC2020` by default).
 
 Eq. 7 is fitted to a 1-2 m alpine snowpack, and `exp(bη·ρ)` reaches ~1e9 at ρ = 900: on a
 Greenland firn profile the pure law gives 0.7-0.8 of `:Arthern`'s compaction rate in the top
@@ -697,8 +713,12 @@ type govern settling, `:GSFC2020` where creep does.
 
 450 kg m-3 is the threshold the Community Firn Model's `Crocus` scheme uses for the same
 purpose (its `RHO_CC`), and it sits between the two laws' calibration ranges rather than
-inside either. The blend is a discontinuous handover, not a weighted average: nothing in
-either paper prescribes a blending function. `:CrocusPure` applies eq. 5 at every density.
+inside either. The handover is a branch, not a weighted average: nothing in either paper
+prescribes a blending function. Under `crocus_handoff_rule = :density` it is a step in the
+compaction rate. Under `:rate_match` a cell above the handoff density takes the faster of the
+two laws, so the switch falls where their rates cross and the rate is continuous there; a step
+remains only at the handoff density itself, where the law's rate exceeds Crocus's.
+`:CrocusPure` applies eq. 5 at every density.
 """
 const CROCUS_HYBRID_DENSITY = 450.0
 
@@ -786,6 +806,38 @@ temperature.
 end
 
 """
+    _crocus_strain_rate(ρ, T, water, dz, grain_radius, dendricity, sphericity, σ, settling,
+        density_dm) -> (strain_rate [s-1], η [kg s-1 m-1])
+
+The strain rate `(1/D)·dD/dt` the Crocus law compacts a cell at under the stress `σ` [Pa]: `σ/η`
+with `η` from [`_crocus_viscosity`](@ref) (eq. 9 by [`crocus_f2_applies`](@ref)), plus
+[`destructive_metamorphism_rate`](@ref) when `settling` is set.
+"""
+@inline function _crocus_strain_rate(ρ::Float64, T::Float64, water::Float64, dz::Float64,
+    grain_radius::Float64, dendricity::Float64, sphericity::Float64, σ::Float64,
+    settling::Bool, density_dm::Float64)
+    η = _crocus_viscosity(ρ, T, water, dz, grain_radius,
+        crocus_f2_applies(dendricity, sphericity, water, grain_radius))
+    rate = σ / η
+    if settling
+        rate += destructive_metamorphism_rate(ρ, T, water > WATER_TOLERANCE, density_dm)
+    end
+    return rate, η
+end
+
+"""
+    _crocus_handoff_c(p::DensificationCoeffs, ρ, T) -> c [yr-1]
+
+Rate coefficient of the accumulation-driven law `:Crocus` hands firn to, `p.handoff_law`:
+`:GSFC2020` or `:Arthern`. `p` must come from `DensificationCoeffs` under `:Crocus`, which hoists
+that law's terms.
+"""
+@inline _crocus_handoff_c(p, ρ::Float64, T::Float64) =
+    p.handoff_law === :Arthern ?
+        _arthern_scaled_c(ρ, T, p.tam, p.precip_force, p.k0, p.k1) :
+        _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1)
+
+"""
     DensificationCoeffs(mp::ModelParameters, pm, tam)
 
 Loop-invariant densification terms for `mp.densification_method`, hoisted out of
@@ -801,10 +853,11 @@ their *meaning* is per-method while their arity is not:
 | `:Arthern`, `:ArthernB`, `:Barnola1991`, `:CrocusPure`, `:HerronLangway` | unused (1.0) |
 | `:Ligtenberg` | the accumulation-dependent `M0`, `M1` |
 | `:Simonsen2013` | `F0 = 0.8` and `F1·γ` |
-| `:GSFC2020`, `:Crocus` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
+| `:GSFC2020` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
+| `:Crocus` | those of `mp.crocus_handoff_law`: as `:GSFC2020`, or 1.0 for `:Arthern` |
 
 `pm` is mean annual accumulation [kg m-2 yr-1] and `tam` mean annual air
-temperature [K].
+temperature [K]. `handoff_law` is `mp.crocus_handoff_law` under `:Crocus` and `:none` otherwise.
 """
 struct DensificationCoeffs
     method::Symbol
@@ -813,6 +866,7 @@ struct DensificationCoeffs
     precip_force::Float64
     k0::Float64
     k1::Float64
+    handoff_law::Symbol
 end
 
 function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
@@ -828,9 +882,11 @@ function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
     pm_nonneg = max(pm, 0.0)
 
     k0 = k1 = 1.0
-    if method == :GSFC2020 || method == :Crocus
-        # `:Crocus` is a hybrid whose above-threshold branch *is* `:GSFC2020`, so it needs
-        # that scheme's hoisted accumulation powers. `:CrocusPure` has no such branch.
+    handoff_law = method == :Crocus ? mp.crocus_handoff_law : :none
+    if method == :GSFC2020 || handoff_law === :GSFC2020
+        # `:Crocus` hands firn to its handoff law, so it needs that law's hoisted terms:
+        # `:GSFC2020`'s accumulation powers here, nothing beyond `precip_force` for `:Arthern`.
+        # `:CrocusPure` has no such branch.
         # `pm` is kg m-2 yr-1 (see `_gsfc2020_c`); `^0.91` of a negative would be NaN.
         k0 = pm_nonneg^0.91 * GRAVITY
         k1 = pm_nonneg^0.644 * GRAVITY
@@ -853,7 +909,7 @@ function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
             k1 = max(M01[2, 3] - (M01[2, 4] * log(pm)), 0.25)
         end
     end
-    return DensificationCoeffs(method, pm, tam, pm * GRAVITY, k0, k1)
+    return DensificationCoeffs(method, pm, tam, pm * GRAVITY, k0, k1, handoff_law)
 end
 
 """
@@ -866,9 +922,9 @@ the per-method functions directly, so it takes the branch once per call.
 
 The stress-driven schemes cannot be evaluated from a rate coefficient alone. `steady_state_profile`
 marches `:Crocus` and `:CrocusPure` by their own strain rate ([`_march_crocus_step`](@ref)), and
-calls this function only for `:Crocus` cells above `CROCUS_HYBRID_DENSITY`, where the transient
-run also uses `:GSFC2020`. Otherwise each stress-driven scheme falls back to the nearest
-accumulation-driven law — `:Crocus` to `:GSFC2020`; `:Barnola1991` to `:HerronLangway`, whose
+calls this function only for the `:Crocus` cells the transient run hands to its firn law.
+Otherwise each stress-driven scheme falls back to the nearest accumulation-driven law —
+`:Crocus` to its handoff law (`mp.crocus_handoff_law`); `:Barnola1991` to `:HerronLangway`, whose
 stage 1 *is* its own below-threshold branch, so the two agree exactly below
 `DENSITY_STAGE_TRANSITION` and the fallback is only an approximation above it; `:ArthernB` and
 `:CrocusPure` to `:Arthern`. That fallback is what `steady_state_density` uses for every scheme.
@@ -876,8 +932,10 @@ stage 1 *is* its own below-threshold branch, so the two agree exactly below
 @inline function _densification_rate(p::DensificationCoeffs, ρ::Float64, T::Float64)
     if p.method == :HerronLangway || p.method == :Barnola1991
         return ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? _hl_c0(T, p.pm) : _hl_c1(T, p.pm)
-    elseif p.method == :GSFC2020 || p.method == :Crocus
+    elseif p.method == :GSFC2020
         return _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1)
+    elseif p.method == :Crocus
+        return _crocus_handoff_c(p, ρ, T)
     elseif p.method == :Arthern || p.method == :ArthernB || p.method == :CrocusPure ||
            p.method == :Simonsen2013 || p.method == :Ligtenberg
         # One kernel for the whole scaled-Arthern family; `k0`/`k1` are 1.0 for `:Arthern`.

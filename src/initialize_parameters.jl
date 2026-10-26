@@ -29,6 +29,16 @@ function validate_parameters(mp::ModelParameters)
     end
     @assert 50 <= mp.destructive_metamorphism_density <= 450 "destructive_metamorphism_density must be in [50, 450] kg m-3 (got $(mp.destructive_metamorphism_density))"
 
+    # The Crocus handoff. Its settings are read only under `:Crocus`, so a non-default value
+    # with any other scheme would be silently ignored.
+    @assert mp.crocus_handoff_law in (:GSFC2020, :Arthern) "crocus_handoff_law must be GSFC2020 or Arthern (got :$(mp.crocus_handoff_law))"
+    @assert mp.crocus_handoff_rule in (:density, :rate_match) "crocus_handoff_rule must be density or rate_match (got :$(mp.crocus_handoff_rule))"
+    @assert 200 <= mp.crocus_handoff_density <= DENSITY_PORE_CLOSEOFF "crocus_handoff_density must be in [200, $(DENSITY_PORE_CLOSEOFF)] kg m-3 (got $(mp.crocus_handoff_density))"
+    if mp.densification_method !== :Crocus
+        @assert (mp.crocus_handoff_density == CROCUS_HYBRID_DENSITY &&
+                 mp.crocus_handoff_law === :GSFC2020 && mp.crocus_handoff_rule === :density) "crocus_handoff_density, crocus_handoff_law and crocus_handoff_rule are read only by densification_method = :Crocus; got :$(mp.densification_method)"
+    end
+
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
         :Ant_RACMO_GS_SW0, :Ant_Ligtenberg, :Gre_ERA5_GS_SW0,
