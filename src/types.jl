@@ -440,6 +440,21 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     crocus_handoff_density::Float64 = CROCUS_HYBRID_DENSITY
     crocus_handoff_law::Symbol = :GSFC2020
     crocus_handoff_rule::Symbol = :density
+    # Calibration factors on the handoff law and on Crocus settling, read only by `:Crocus`
+    # and rejected with any other scheme when changed from the defaults, which leave both laws
+    # exactly as published. `crocus_handoff_k0`/`_k1` multiply the law's rate below/above
+    # `crocus_handoff_stage_density` [kg m-3]. `crocus_handoff_activation_energy_shift`
+    # [J mol-1] is added to the law's creep activation energy and
+    # `crocus_handoff_accumulation_exponent_scale` multiplies its accumulation exponent, each
+    # pivoting about `CROCUS_HANDOFF_REFERENCE_TEMPERATURE` / `_ACCUMULATION`, where it leaves
+    # the rate unchanged. `crocus_overburden_factor` multiplies the Crocus viscous strain rate,
+    # ramped in over `CROCUS_OVERBURDEN_RAMP`. See `_crocus_handoff_c`.
+    crocus_handoff_k0::Float64 = 1.0
+    crocus_handoff_k1::Float64 = 1.0
+    crocus_handoff_activation_energy_shift::Float64 = 0.0
+    crocus_handoff_accumulation_exponent_scale::Float64 = 1.0
+    crocus_handoff_stage_density::Float64 = DENSITY_STAGE_TRANSITION
+    crocus_overburden_factor::Float64 = 1.0
     densification_coeffs_M01::Symbol = :Gre_RACMO_GS_SW0
     # Which climatological mass flux the accumulation-driven schemes compact against.
     # `:accumulation` uses `cf.accumulation_mean` (snowfall only) and is the default:

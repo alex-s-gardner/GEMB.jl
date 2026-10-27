@@ -578,7 +578,8 @@ end
     # The handoff settings reach the march: every variant is a graded column that reaches ice,
     # and moving the handoff or the law changes it.
     for kw in ((crocus_handoff_density=550.0,), (crocus_handoff_law=:Arthern,),
-               (crocus_handoff_density=350.0, crocus_handoff_rule=:rate_match))
+               (crocus_handoff_density=350.0, crocus_handoff_rule=:rate_match),
+               (crocus_overburden_factor=1.4,), (crocus_handoff_k1=1.5,))
         d = collect(GEMB.initialize_profile(GEMB.ModelParameters(; kw...), cf)[:density])
         @test all(diff(d) .>= -1e-9)
         @test d[end] > 0.98 * mp.density_ice

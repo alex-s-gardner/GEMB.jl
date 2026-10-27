@@ -302,7 +302,8 @@ One age step `dt` [yr] of the steady-state march under `densification_method = :
 `:CrocusPure`, by the law [`calculate_density`](@ref) integrates. In steady state the parcel of
 age `t` [yr] carries the snow buried since, so its overburden stress is `σ = g·b·t`, and it
 compacts at the strain rate `σ/η` with `η` from [`_crocus_viscosity`](@ref) (dry; `f2` by
-[`crocus_f2_applies`](@ref) on the marched grain state), plus
+[`crocus_f2_applies`](@ref) on the marched grain state; under `:Crocus` scaled by
+[`_crocus_overburden_scale`](@ref)), plus
 [`destructive_metamorphism_rate`](@ref) when `mp.destructive_metamorphism` is set. Both rates
 rise steeply with temperature, so the rate is averaged over the annual temperature wave at the
 parcel's depth (the wave of [`_steady_state_temperature`](@ref), sampled at
@@ -358,9 +359,11 @@ end
 @inline function _crocus_march_rate(ρ::Float64, T::Float64, σ::Float64, amplitude::Float64,
     grain_radius::Float64, f2::Bool, mp::ModelParameters)
     rate = 0.0
+    overburden = mp.densification_method === :Crocus ?
+                 _crocus_overburden_scale(ρ, mp.crocus_overburden_factor) : 1.0
     for k in 1:CROCUS_MARCH_PHASES
         Tk = min(T + amplitude * cos(2π * (k - 0.5) / CROCUS_MARCH_PHASES), CtoK)
-        r = σ / _crocus_viscosity(ρ, Tk, 0.0, 1.0, grain_radius, f2)
+        r = σ / _crocus_viscosity(ρ, Tk, 0.0, 1.0, grain_radius, f2) * overburden
         if mp.destructive_metamorphism
             r += destructive_metamorphism_rate(ρ, Tk, false, mp.destructive_metamorphism_density)
         end

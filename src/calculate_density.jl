@@ -282,6 +282,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         dt_seconds = cfs.dt
         settling = mp.destructive_metamorphism
         density_dm = mp.destructive_metamorphism_density
+        overburden = hybrid ? mp.crocus_overburden_factor : 1.0
         load = 0.0       # Σ (ρⱼdzⱼ + waterⱼ) over cells above the current one [kg m-2]
         @inbounds for i in 1:m
             d0 = density[i]
@@ -304,7 +305,8 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
                 use_law = true
                 if rate_match
                     strain_rate, η = _crocus_strain_rate(d0, T, water[i], dz0, grain_radius[i],
-                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm)
+                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm,
+                        overburden)
                     # Both as dρ/dt [kg m-3 s-1]: the law's `c·(ρᵢ − ρ)` per densification
                     # year, Crocus's `ρ·(1/D)·dD/dt`.
                     use_law = c * (density_ice - d0) / (DAYS_PER_YEAR_DENSIFICATION * 86400.0) >=
@@ -316,7 +318,8 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             else
                 if isnan(strain_rate)
                     strain_rate, η = _crocus_strain_rate(d0, T, water[i], dz0, grain_radius[i],
-                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm)
+                        grain_dendricity[i], grain_sphericity[i], σ, settling, density_dm,
+                        overburden)
                 end
                 isempty(viscosity) || (viscosity[i] = η)
                 dz_new = dz0 * exp(-strain_rate * dt_seconds)
@@ -413,9 +416,10 @@ end
 # `:GSFC2020` is *not* in this family: it refits both the accumulation exponent and the
 # activation energies, so it keeps its own kernel below.
 @inline function _arthern_scaled_c(ρ::Float64, T::Float64, tam::Float64,
-    precip_force::Float64, k0::Float64, k1::Float64)
+    precip_force::Float64, k0::Float64, k1::Float64,
+    ρ_stage::Float64=DENSITY_STAGE_TRANSITION)
     H = exp((-60000.0 / (T * R_GAS)) + (GRAIN_GROWTH_EG / (tam * R_GAS))) * precip_force
-    return ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? k0 * (0.07 * H) : k1 * (0.03 * H)
+    return ρ <= ρ_stage + D_TOLERANCE ? k0 * (0.07 * H) : k1 * (0.03 * H)
 end
 
 @inline _arthern_c(ρ::Float64, T::Float64, tam::Float64, precip_force::Float64) =
@@ -434,9 +438,9 @@ end
 # feeding m i.e. yr-1 would not merely rescale the rate, it would change its accumulation
 # dependence. CFM converts to kg m-2 yr-1 for both schemes, which is the convention followed.
 @inline function _gsfc2020_c(ρ::Float64, T::Float64, tam::Float64,
-    A_pow_g_0::Float64, A_pow_g_1::Float64)
+    A_pow_g_0::Float64, A_pow_g_1::Float64, ρ_stage::Float64=DENSITY_STAGE_TRANSITION)
     grain_growth = GRAIN_GROWTH_EG / (tam * R_GAS)
-    return if ρ <= DENSITY_STAGE_TRANSITION + D_TOLERANCE
+    return if ρ <= ρ_stage + D_TOLERANCE
         0.07 * A_pow_g_0 * exp(-59500.0 / (T * R_GAS) + grain_growth)
     else
         0.03 * A_pow_g_1 * exp(-56870.0 / (T * R_GAS) + grain_growth)
@@ -810,14 +814,18 @@ end
         density_dm) -> (strain_rate [s-1], η [kg s-1 m-1])
 
 The strain rate `(1/D)·dD/dt` the Crocus law compacts a cell at under the stress `σ` [Pa]: `σ/η`
-with `η` from [`_crocus_viscosity`](@ref) (eq. 9 by [`crocus_f2_applies`](@ref)), plus
-[`destructive_metamorphism_rate`](@ref) when `settling` is set.
+with `η` from [`_crocus_viscosity`](@ref) (eq. 9 by [`crocus_f2_applies`](@ref)) divided by
+[`_crocus_overburden_scale`](@ref) of `overburden_factor`, plus
+[`destructive_metamorphism_rate`](@ref) when `settling` is set. The returned `η` is that scaled,
+effective viscosity.
 """
+
 @inline function _crocus_strain_rate(ρ::Float64, T::Float64, water::Float64, dz::Float64,
     grain_radius::Float64, dendricity::Float64, sphericity::Float64, σ::Float64,
-    settling::Bool, density_dm::Float64)
+    settling::Bool, density_dm::Float64, overburden_factor::Float64=1.0)
     η = _crocus_viscosity(ρ, T, water, dz, grain_radius,
-        crocus_f2_applies(dendricity, sphericity, water, grain_radius))
+        crocus_f2_applies(dendricity, sphericity, water, grain_radius)) /
+        _crocus_overburden_scale(ρ, overburden_factor)
     rate = σ / η
     if settling
         rate += destructive_metamorphism_rate(ρ, T, water > WATER_TOLERANCE, density_dm)
@@ -825,17 +833,48 @@ with `η` from [`_crocus_viscosity`](@ref) (eq. 9 by [`crocus_f2_applies`](@ref)
     return rate, η
 end
 
+# The overburden factor's ramp [kg m-3]: below its start Crocus settling is as published, so
+# seasonal snow is untouched; above its end the factor applies in full.
+const CROCUS_OVERBURDEN_RAMP = (300.0, 350.0)
+
+"""
+    _crocus_overburden_scale(ρ, factor) -> Float64
+
+The multiplier `mp.crocus_overburden_factor` puts on the Crocus viscous strain rate at density
+`ρ`: 1 below `CROCUS_OVERBURDEN_RAMP[1]`, `factor` above `CROCUS_OVERBURDEN_RAMP[2]`, linear
+between, so the strain rate stays continuous in density. Exactly 1 at `factor = 1`.
+"""
+@inline function _crocus_overburden_scale(ρ::Float64, factor::Float64)
+    lo, hi = CROCUS_OVERBURDEN_RAMP
+    return 1.0 + (factor - 1.0) * clamp((ρ - lo) / (hi - lo), 0.0, 1.0)
+end
+
+# The climate about which `crocus_handoff_activation_energy_shift` and
+# `crocus_handoff_accumulation_exponent_scale` pivot: a firn cell at this temperature [K] under
+# this mean accumulation [kg m-2 yr-1] keeps the handoff law's rate when either changes. It sits
+# at the median climate of glacier firn cores, so the two factors act on the departures from it
+# and leave the overall rate to `crocus_handoff_k0`/`_k1`.
+const CROCUS_HANDOFF_REFERENCE_TEMPERATURE = 258.15
+const CROCUS_HANDOFF_REFERENCE_ACCUMULATION = 600.0
+
 """
     _crocus_handoff_c(p::DensificationCoeffs, ρ, T) -> c [yr-1]
 
 Rate coefficient of the accumulation-driven law `:Crocus` hands firn to, `p.handoff_law`:
 `:GSFC2020` or `:Arthern`. `p` must come from `DensificationCoeffs` under `:Crocus`, which hoists
-that law's terms.
+that law's terms with `mp.crocus_handoff_k0`/`_k1` and the accumulation-exponent scale folded
+into its stage scalars, and the stage transition at `mp.crocus_handoff_stage_density`. The
+activation-energy shift `ΔE` multiplies the rate by
+`exp(−ΔE/R·(1/T − 1/CROCUS_HANDOFF_REFERENCE_TEMPERATURE))`.
 """
-@inline _crocus_handoff_c(p, ρ::Float64, T::Float64) =
-    p.handoff_law === :Arthern ?
-        _arthern_scaled_c(ρ, T, p.tam, p.precip_force, p.k0, p.k1) :
-        _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1)
+@inline function _crocus_handoff_c(p, ρ::Float64, T::Float64)
+    c = p.handoff_law === :Arthern ?
+        _arthern_scaled_c(ρ, T, p.tam, p.precip_force, p.k0, p.k1, p.stage_density) :
+        _gsfc2020_c(ρ, T, p.tam, p.k0, p.k1, p.stage_density)
+    p.activation_energy_shift == 0.0 && return c
+    return c * exp(-p.activation_energy_shift / R_GAS *
+                   (1.0 / T - 1.0 / CROCUS_HANDOFF_REFERENCE_TEMPERATURE))
+end
 
 """
     DensificationCoeffs(mp::ModelParameters, pm, tam)
@@ -854,10 +893,13 @@ their *meaning* is per-method while their arity is not:
 | `:Ligtenberg` | the accumulation-dependent `M0`, `M1` |
 | `:Simonsen2013` | `F0 = 0.8` and `F1·γ` |
 | `:GSFC2020` | `pm^α · g` with α0 = 0.91, α1 = 0.644 |
-| `:Crocus` | those of `mp.crocus_handoff_law`: as `:GSFC2020`, or 1.0 for `:Arthern` |
+| `:Crocus` | those of `mp.crocus_handoff_law` (as `:GSFC2020`, or 1.0 for `:Arthern`), times `mp.crocus_handoff_k0`/`_k1` and the accumulation-exponent scale's `(pm/A_ref)^((s − 1)·α)` |
 
 `pm` is mean annual accumulation [kg m-2 yr-1] and `tam` mean annual air
-temperature [K]. `handoff_law` is `mp.crocus_handoff_law` under `:Crocus` and `:none` otherwise.
+temperature [K]. `handoff_law` is `mp.crocus_handoff_law` under `:Crocus` and `:none` otherwise;
+`stage_density` and `activation_energy_shift` are `mp.crocus_handoff_stage_density` and
+`mp.crocus_handoff_activation_energy_shift` under `:Crocus`, and `DENSITY_STAGE_TRANSITION` and 0
+otherwise.
 """
 struct DensificationCoeffs
     method::Symbol
@@ -867,6 +909,8 @@ struct DensificationCoeffs
     k0::Float64
     k1::Float64
     handoff_law::Symbol
+    stage_density::Float64
+    activation_energy_shift::Float64
 end
 
 function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
@@ -882,14 +926,28 @@ function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
     pm_nonneg = max(pm, 0.0)
 
     k0 = k1 = 1.0
-    handoff_law = method == :Crocus ? mp.crocus_handoff_law : :none
+    hybrid = method == :Crocus
+    handoff_law = hybrid ? mp.crocus_handoff_law : :none
+    # The accumulation-exponent scale `s` of the handoff law, pivoted at `A_ref` so that
+    # `pm = A_ref` keeps the law's rate: 1 everywhere else.
+    s = hybrid ? mp.crocus_handoff_accumulation_exponent_scale : 1.0
+    A_ref = CROCUS_HANDOFF_REFERENCE_ACCUMULATION
     if method == :GSFC2020 || handoff_law === :GSFC2020
         # `:Crocus` hands firn to its handoff law, so it needs that law's hoisted terms:
         # `:GSFC2020`'s accumulation powers here, nothing beyond `precip_force` for `:Arthern`.
         # `:CrocusPure` has no such branch.
         # `pm` is kg m-2 yr-1 (see `_gsfc2020_c`); `^0.91` of a negative would be NaN.
-        k0 = pm_nonneg^0.91 * GRAVITY
-        k1 = pm_nonneg^0.644 * GRAVITY
+        if s == 1.0
+            k0 = pm_nonneg^0.91 * GRAVITY
+            k1 = pm_nonneg^0.644 * GRAVITY
+        else
+            k0 = pm_nonneg^(0.91 * s) * A_ref^(0.91 * (1.0 - s)) * GRAVITY
+            k1 = pm_nonneg^(0.644 * s) * A_ref^(0.644 * (1.0 - s)) * GRAVITY
+        end
+    elseif handoff_law === :Arthern && s != 1.0
+        # Arthern's accumulation enters linearly through `precip_force`; the scale raises it to
+        # `s`. `(pm/A_ref)^(s − 1)` is Inf at pm = 0 for s < 1, where `precip_force` is 0.
+        k0 = k1 = pm_nonneg > 0.0 ? (pm_nonneg / A_ref)^(s - 1.0) : 1.0
     elseif method == :Simonsen2013
         k0 = 0.8
         # `γ ∝ 1/sqrt(pm)` is Inf at pm = 0, and the rate also carries `precip_force ∝ pm`, so
@@ -909,7 +967,16 @@ function DensificationCoeffs(mp::ModelParameters, pm::Real, tam::Real)
             k1 = max(M01[2, 3] - (M01[2, 4] * log(pm)), 0.25)
         end
     end
-    return DensificationCoeffs(method, pm, tam, pm * GRAVITY, k0, k1, handoff_law)
+    stage_density = DENSITY_STAGE_TRANSITION
+    activation_energy_shift = 0.0
+    if hybrid
+        k0 *= mp.crocus_handoff_k0
+        k1 *= mp.crocus_handoff_k1
+        stage_density = mp.crocus_handoff_stage_density
+        activation_energy_shift = mp.crocus_handoff_activation_energy_shift
+    end
+    return DensificationCoeffs(method, pm, tam, pm * GRAVITY, k0, k1, handoff_law,
+                               stage_density, activation_energy_shift)
 end
 
 """

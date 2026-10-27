@@ -1028,6 +1028,95 @@ end
     end
 end
 
+@testset "Crocus calibration factors" begin
+    n = 6
+    dz = fill(0.1, n)
+    density = [300.0, 420.0, 480.0, 520.0, 600.0, 750.0]
+    t_vec = fill(263.15, n)
+    grain_radius = fill(0.3, n)
+    cfs = _make_density_cfs(dt=86400.0)
+    run(; kw...) = GEMB.calculate_density(t_vec, copy(dz), copy(density), copy(grain_radius),
+        zeros(n), cfs, GEMB.ModelParameters(density_ice=910.0; kw...);
+        grain_dendricity=zeros(n), grain_sphericity=zeros(n))
+
+    # The defaults leave both laws as published, bit for bit.
+    @test run() == run(crocus_handoff_k0=1.0, crocus_handoff_k1=1.0,
+        crocus_handoff_activation_energy_shift=0.0, crocus_handoff_accumulation_exponent_scale=1.0,
+        crocus_handoff_stage_density=550.0, crocus_overburden_factor=1.0)
+
+    # Each factor against the closed form of the handoff rate it scales. `c` from the
+    # coefficients is the law's rate; a cell's one-day change is `c·(ρᵢ − ρ)·dt/365`, so ratios
+    # of changes are ratios of `c`.
+    tam = 250.0
+    for law in (:GSFC2020, :Arthern), ρ in (500.0, 700.0)
+        mp(; kw...) = GEMB.ModelParameters(crocus_handoff_law=law; kw...)
+        c(m, T=255.0) = GEMB._crocus_handoff_c(GEMB.DensificationCoeffs(m, 300.0, tam), ρ, T)
+        c0 = c(mp())
+        k = ρ <= 550 ? :crocus_handoff_k0 : :crocus_handoff_k1
+        @test c(mp(; k => 1.7)) ≈ 1.7 * c0 rtol = 1e-14
+        # The stage scalar of the other stage does not reach this cell.
+        @test c(mp(; (ρ <= 550 ? :crocus_handoff_k1 : :crocus_handoff_k0) => 1.7)) == c0
+        # An activation-energy shift is an Arrhenius factor pivoting at the reference temperature.
+        ΔE = 5000.0
+        Tr = GEMB.CROCUS_HANDOFF_REFERENCE_TEMPERATURE
+        @test c(mp(crocus_handoff_activation_energy_shift=ΔE)) ≈
+              c0 * exp(-ΔE / GEMB.R_GAS * (1 / 255.0 - 1 / Tr)) rtol = 1e-12
+        @test c(mp(crocus_handoff_activation_energy_shift=ΔE), Tr) ≈ c(mp(), Tr) rtol = 1e-12
+        # A higher activation energy slows the colder cell.
+        @test c(mp(crocus_handoff_activation_energy_shift=ΔE)) < c0
+        # The exponent scale raises the accumulation dependence about the reference accumulation.
+        α = law === :Arthern ? 1.0 : (ρ <= 550 ? 0.91 : 0.644)
+        Ar = GEMB.CROCUS_HANDOFF_REFERENCE_ACCUMULATION
+        @test c(mp(crocus_handoff_accumulation_exponent_scale=1.2)) ≈
+              c0 * (300.0 / Ar)^(0.2 * α) rtol = 1e-12
+        pr = GEMB.DensificationCoeffs(mp(crocus_handoff_accumulation_exponent_scale=1.2), Ar, tam)
+        @test GEMB._crocus_handoff_c(pr, ρ, 255.0) ≈
+              GEMB._crocus_handoff_c(GEMB.DensificationCoeffs(mp(), Ar, tam), ρ, 255.0) rtol = 1e-12
+    end
+    # Zero accumulation stays finite under an exponent scale below 1.
+    p0 = GEMB.DensificationCoeffs(GEMB.ModelParameters(crocus_handoff_law=:Arthern,
+        crocus_handoff_accumulation_exponent_scale=0.8), 0.0, tam)
+    @test GEMB._crocus_handoff_c(p0, 700.0, 255.0) == 0.0
+
+    # The stage density moves the law's own stage transition: at 600, the 600 cell takes stage 1.
+    for law in (:GSFC2020, :Arthern)
+        p = GEMB.DensificationCoeffs(GEMB.ModelParameters(crocus_handoff_law=law,
+            crocus_handoff_stage_density=600.0), 300.0, tam)
+        p_ref = GEMB.DensificationCoeffs(GEMB.ModelParameters(crocus_handoff_law=law), 300.0, tam)
+        # The rate coefficient depends on density only through its stage.
+        @test GEMB._crocus_handoff_c(p, 600.0, 255.0) == GEMB._crocus_handoff_c(p_ref, 540.0, 255.0)
+        @test GEMB._crocus_handoff_c(p, 610.0, 255.0) == GEMB._crocus_handoff_c(p_ref, 610.0, 255.0)
+    end
+
+    # The overburden factor scales only the viscous Crocus rate, ramped from 300 to 350, and
+    # leaves the cells the law governs alone.
+    @test GEMB._crocus_overburden_scale(250.0, 1.4) == 1.0
+    @test GEMB._crocus_overburden_scale(325.0, 1.4) ≈ 1.2 rtol = 1e-14
+    @test GEMB._crocus_overburden_scale(400.0, 1.4) == 1.4
+    @test GEMB._crocus_overburden_scale(400.0, 1.0) == 1.0
+    (_, d1) = run(destructive_metamorphism=false)
+    (_, d14) = run(destructive_metamorphism=false, crocus_overburden_factor=1.4)
+    Δ1, Δ14 = d1 .- density, d14 .- density
+    @test Δ14[1] ≈ Δ1[1] rtol = 1e-14                    # 300: at the start of the ramp
+    @test Δ14[2] ≈ 1.4 * Δ1[2] rtol = 1e-4               # 420: the full factor (strain small)
+    @test d14[3:6] == d1[3:6]                            # 480 and above: the handoff law
+
+    # Validation: bounds, and the defaults are required under any other scheme.
+    @test_throws "crocus_handoff_k0 and crocus_handoff_k1 must be in (0, 10]" initialize_parameters(
+        crocus_handoff_k1=0.0)
+    @test_throws "crocus_handoff_activation_energy_shift must be in" initialize_parameters(
+        crocus_handoff_activation_energy_shift=1e5)
+    @test_throws "crocus_handoff_accumulation_exponent_scale must be in (0, 3]" initialize_parameters(
+        crocus_handoff_accumulation_exponent_scale=-1.0)
+    @test_throws "crocus_handoff_stage_density must be in [400, 830.0)" initialize_parameters(
+        crocus_handoff_stage_density=830.0)
+    @test_throws "crocus_overburden_factor must be in (0, 10]" initialize_parameters(
+        crocus_overburden_factor=0.0)
+    @test_throws "are read only by densification_method = :Crocus" initialize_parameters(
+        densification_method=:GSFC2020, crocus_handoff_k1=1.5)
+    @test initialize_parameters(crocus_handoff_k1=1.5, crocus_overburden_factor=0.8).crocus_handoff_k1 == 1.5
+end
+
 @testset "Barnola f(ρ) (Barnola et al. 1991)" begin
     ρ_i = 910.0
 

@@ -74,6 +74,14 @@ Two departures from the published law:
   `crocus_handoff_rule = :rate_match` a cell above the handoff density takes whichever law
   compacts it faster, so the switch falls where the two rates cross and carries no step in
   the rate there. `:CrocusPure` applies eq. 5 at every density.
+- Six calibration factors adjust the hybrid without changing either law's form, each leaving
+  it as published at its default: `crocus_handoff_k0`/`_k1` scale the handoff law's two
+  stages, `crocus_handoff_stage_density` moves its stage transition,
+  `crocus_handoff_activation_energy_shift` and `crocus_handoff_accumulation_exponent_scale`
+  change its temperature and accumulation sensitivity about a reference climate (258.15 K,
+  600 kg m⁻² yr⁻¹) at which they leave the rate unchanged, and `crocus_overburden_factor`
+  scales the Crocus viscous strain rate above 350 kg m⁻³, ramped in from 300 so seasonal
+  snow is untouched.
 
 The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
 Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.
