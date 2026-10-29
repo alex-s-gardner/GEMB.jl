@@ -86,6 +86,8 @@ const OPTION_FIELDS = (
     :runoff_method,
     :albedo_method,
     :blowing_snow_method,
+    :crocus_handoff_law,
+    :crocus_handoff_rule,
 )
 
 # `new_snow_method = :Constant` is Julia-only: it is absent from its tuple below, and its
@@ -110,6 +112,8 @@ const OPTION_VALUES = (
     (:instantaneous, :ZuoOerlemans, :Darcy),
     (:None, :GardnerSharp, :BrunLefebre, :GreuellKonzelmann),
     (:none, :Crocus, :Keenan2021),
+    (:GSFC2020, :Arthern),
+    (:density, :rate_match),
 )
 
 const N_OPTIONS = length(OPTION_FIELDS)
@@ -144,6 +148,13 @@ const NUMERIC_FIELDS = (
     :thermal_explicit_safety_factor,
     :destructive_metamorphism_density,
     :drift_fetch_length,
+    :crocus_handoff_density,
+    :crocus_handoff_k0,
+    :crocus_handoff_k1,
+    :crocus_handoff_activation_energy_shift,
+    :crocus_handoff_accumulation_exponent_scale,
+    :crocus_handoff_stage_density,
+    :crocus_overburden_factor,
 )
 
 const N_NUMERIC = length(NUMERIC_FIELDS)
@@ -217,6 +228,8 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         runoff_method=o(13),
         albedo_method=o(14),
         blowing_snow_method=o(15),
+        crocus_handoff_law=o(16),
+        crocus_handoff_rule=o(17),
         density_ice=numeric[1],
         rain_temperature_threshold=numeric[2],
         emissivity=numeric[3],
@@ -244,6 +257,13 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         thermal_explicit_safety_factor=numeric[25],
         destructive_metamorphism_density=numeric[26],
         drift_fetch_length=numeric[27],
+        crocus_handoff_density=numeric[28],
+        crocus_handoff_k0=numeric[29],
+        crocus_handoff_k1=numeric[30],
+        crocus_handoff_activation_energy_shift=numeric[31],
+        crocus_handoff_accumulation_exponent_scale=numeric[32],
+        crocus_handoff_stage_density=numeric[33],
+        crocus_overburden_factor=numeric[34],
         shortwave_subsurface_absorption=f(1),
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),

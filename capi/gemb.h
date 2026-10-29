@@ -31,8 +31,8 @@ extern "C" {
 
 /* --- Array sizes. ------------------------------------------------------------------------- */
 
-#define GEMB_N_OPTIONS  15
-#define GEMB_N_NUMERIC  27
+#define GEMB_N_OPTIONS  17
+#define GEMB_N_NUMERIC  34
 #define GEMB_N_FLAGS     4
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
@@ -54,6 +54,8 @@ extern "C" {
 #define GEMB_OPT_RUNOFF_METHOD               12
 #define GEMB_OPT_ALBEDO_METHOD               13
 #define GEMB_OPT_BLOWING_SNOW_METHOD         14
+#define GEMB_OPT_CROCUS_HANDOFF_LAW          15  /* consulted only by GEMB_DENSIFICATION_CROCUS */
+#define GEMB_OPT_CROCUS_HANDOFF_RULE         16  /* consulted only by GEMB_DENSIFICATION_CROCUS */
 
 /* densification_method */
 #define GEMB_DENSIFICATION_HERRON_LANGWAY  1
@@ -148,6 +150,14 @@ extern "C" {
 #define GEMB_BLOWING_SNOW_CROCUS  2
 #define GEMB_BLOWING_SNOW_KEENAN2021  3
 
+/* crocus_handoff_law */
+#define GEMB_CROCUS_HANDOFF_LAW_GSFC2020  1
+#define GEMB_CROCUS_HANDOFF_LAW_ARTHERN   2
+
+/* crocus_handoff_rule */
+#define GEMB_CROCUS_HANDOFF_RULE_DENSITY     1
+#define GEMB_CROCUS_HANDOFF_RULE_RATE_MATCH  2
+
 /* --- numeric[] indices. --------------------------------------------------------------- */
 
 #define GEMB_NUM_DENSITY_ICE                        0
@@ -177,6 +187,16 @@ extern "C" {
 #define GEMB_NUM_THERMAL_EXPLICIT_SAFETY_FACTOR    24
 #define GEMB_NUM_DESTRUCTIVE_METAMORPHISM_DENSITY  25
 #define GEMB_NUM_DRIFT_FETCH_LENGTH                26
+/* The Crocus firn handoff and its calibration factors, consulted only by GEMB_DENSIFICATION_CROCUS.
+ * gemb_defaults sets the calibrated defaults; under any other densification method they must stay
+ * at those values, or validation rejects the parameters. */
+#define GEMB_NUM_CROCUS_HANDOFF_DENSITY                       27
+#define GEMB_NUM_CROCUS_HANDOFF_K0                            28
+#define GEMB_NUM_CROCUS_HANDOFF_K1                            29
+#define GEMB_NUM_CROCUS_HANDOFF_ACTIVATION_ENERGY_SHIFT       30
+#define GEMB_NUM_CROCUS_HANDOFF_ACCUMULATION_EXPONENT_SCALE   31
+#define GEMB_NUM_CROCUS_HANDOFF_STAGE_DENSITY                 32
+#define GEMB_NUM_CROCUS_OVERBURDEN_FACTOR                     33
 
 /* --- flags[] indices. Nonzero is true. ----------------------------------------------- */
 

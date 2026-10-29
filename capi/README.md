@@ -56,6 +56,7 @@ int flags[GEMB_N_FLAGS];
 gemb_defaults(options, numeric, flags);
 
 options[GEMB_OPT_DENSIFICATION_METHOD] = GEMB_DENSIFICATION_LIGTENBERG;
+flags[GEMB_FLAG_DESTRUCTIVE_METAMORPHISM] = 0;   /* read only by the Crocus schemes */
 flags[GEMB_FLAG_SHORTWAVE_SUBSURFACE_ABSORPTION] = 1;
 
 int params, workspace;
