@@ -69,6 +69,11 @@ march and no climate summary.
   `forcing_climatology(method=:representative)` needs the record's summary for its accumulation
   guard and would otherwise pay for an identical second one: measured at 346 ms of a 3020 ms call
   on a 32-year 3-hourly record.
+- `depth_minimum` [m]: the shallowest column the climate-derived depth may produce, for a column
+  that must reach a known depth, such as a firn core's. The derived depth rests on the steady-state
+  march's ice depth, and a transient column can densify more slowly than that march, so the firn
+  below the derived depth would otherwise be cut off. At most `mp.column_depth_max`; ignored by the
+  two flag paths, which use `mp.column_depth_max`.
 
 Every path here returns temperature at or below the melt point (273.15 K): the
 climate-derived march clamps in [`_steady_state_temperature`](@ref), and the
@@ -89,10 +94,12 @@ choice is output-only.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false,
-    climate_summary=nothing, density_seed::Symbol=:steady_state)
+    climate_summary=nothing, density_seed::Symbol=:steady_state, depth_minimum::Real=0.0)
 
     density_seed in (:steady_state, :HerronLangway) || throw(ArgumentError(
         "density_seed must be :steady_state or :HerronLangway, got :$(density_seed)"))
+    0 <= depth_minimum <= mp.column_depth_max || throw(ArgumentError(
+        "depth_minimum must be in [0, column_depth_max = $(mp.column_depth_max)] m, got $(depth_minimum)"))
 
     # The ground column is set by its parameters alone: no snow, soil at the deep temperature.
     if mp.lower_boundary === :ground
@@ -146,7 +153,7 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     A_dens = densification_accumulation(mp, cf)
 
     depth = (constant_density || constant_temperature) ? mp.column_depth_max :
-            _derive_column_depth(mp, cs, A_dens)
+            max(_derive_column_depth(mp, cs, A_dens), depth_minimum)
 
     dz = initialize_grid(mp, depth)
     m = length(dz)

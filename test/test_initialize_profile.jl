@@ -529,6 +529,22 @@ end
     @test all(collect(GEMB.initialize_profile(mp_ss, cf_ablation)[:age]) .== 0.0)
 end
 
+@testset "Steady-state init: depth_minimum" begin
+    # An ablation column buries nothing, so its derived depth is the thermal floor, far shallower
+    # than the ceiling. Same forcing as the ablation case of "initialize_age".
+    cf = _dry_snow_forcing(T_mean=270.5, T_amp=4.0, precip=0.8, shortwave=100.0, longwave=325.0)
+    mp = GEMB.ModelParameters()
+    @test GEMB.initialize_climate_summary(cf, mp).balance < 0.0
+    derived = sum(GEMB.initialize_profile(mp, cf)[:dz])
+    @test derived + 30.0 < mp.column_depth_max
+    # A floor below the derived depth changes nothing; one above it deepens the grid to it.
+    @test sum(GEMB.initialize_profile(mp, cf; depth_minimum=derived / 2)[:dz]) == derived
+    deep = GEMB.initialize_profile(mp, cf; depth_minimum=derived + 30.0)
+    @test derived + 30.0 <= sum(deep[:dz]) < derived + 30.0 + deep[:dz][end]
+    @test_throws "depth_minimum must be in [0, column_depth_max" GEMB.initialize_profile(mp, cf;
+        depth_minimum=mp.column_depth_max + 1)
+end
+
 @testset "Steady-state init: the Crocus march" begin
     # Under `:Crocus` with destructive metamorphism (the default) the march compacts by the
     # transient law, so the guess is a graded firn column that starts denser than fresh snow
@@ -556,8 +572,22 @@ end
     lo = _dry_snow_forcing(precip=0.5)
     lo_density = collect(GEMB.initialize_profile(mp, lo)[:density])
     lo_z = -GEMB.dz2z(collect(GEMB.initialize_profile(mp, lo)[:dz]))
-    @test lo_density[argmin(abs.(lo_z .- 10.0))] < 600.0
+    # At `n_age = 2000` the rate-matched Crocus march overestimates the density here by about
+    # 25 kg m-3 against a step-converged march (604 against 580 kg m-3 at 10 m).
+    @test lo_density[argmin(abs.(lo_z .- 10.0))] < 650.0
     @test all(diff(lo_density) .>= -1e-9)
+
+    # The handoff settings reach the march: every variant is a graded column that reaches ice,
+    # and moving the handoff or the law changes it. Each variant changes one setting of the default
+    # calibration (`CROCUS_FIRN_CALIBRATION`).
+    for kw in ((crocus_handoff_density=550.0,), (crocus_handoff_law=:Arthern,),
+               (crocus_handoff_density=400.0, crocus_handoff_rule=:density),
+               (crocus_overburden_factor=1.4,), (crocus_handoff_k1=0.7,))
+        d = collect(GEMB.initialize_profile(GEMB.ModelParameters(; kw...), cf)[:density])
+        @test all(diff(d) .>= -1e-9)
+        @test d[end] > 0.98 * mp.density_ice
+        @test d != density
+    end
 
     # `_march_crocus_step` against its closed form at one parcel, with the wave averaged over the
     # 24 phases it samples: a step short enough to be a single sub-step.

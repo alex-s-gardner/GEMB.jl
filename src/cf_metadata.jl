@@ -198,7 +198,7 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         comment="Present only when output_viscosity is set. Populated by the " *
                 "Crocus/CrocusPure viscous-settling law, the only densification scheme " *
                 "here that forms an effective viscosity; NaN under every other scheme, and " *
-                "NaN for the cells Crocus hands to GSFC2020 above CROCUS_HYBRID_DENSITY. " *
+                "NaN for the cells Crocus hands to its firn law (crocus_handoff_law). " *
                 "Instantaneous value from the densification call at this timestamp, not an " *
                 "interval mean. No CF standard name exists."),
     :age => CFAttrs("d", "mass-weighted layer age", "time: point";

@@ -302,7 +302,8 @@ One age step `dt` [yr] of the steady-state march under `densification_method = :
 `:CrocusPure`, by the law [`calculate_density`](@ref) integrates. In steady state the parcel of
 age `t` [yr] carries the snow buried since, so its overburden stress is `σ = g·b·t`, and it
 compacts at the strain rate `σ/η` with `η` from [`_crocus_viscosity`](@ref) (dry; `f2` by
-[`crocus_f2_applies`](@ref) on the marched grain state), plus
+[`crocus_f2_applies`](@ref) on the marched grain state; under `:Crocus` scaled by
+[`_crocus_overburden_scale`](@ref)), plus
 [`destructive_metamorphism_rate`](@ref) when `mp.destructive_metamorphism` is set. Both rates
 rise steeply with temperature, so the rate is averaged over the annual temperature wave at the
 parcel's depth (the wave of [`_steady_state_temperature`](@ref), sampled at
@@ -310,9 +311,11 @@ parcel's depth (the wave of [`_steady_state_temperature`](@ref), sampled at
 seasonal mean of the rate is several times its value at the mean temperature. The step is
 integrated in sub-steps of `ρ ← ρ·exp(rate·h)` (the exact integral at fixed rate), each moving
 the density by at most `CROCUS_MARCH_MAX_STRAIN` in log, with the rate and the overburden
-re-evaluated at each, and the density capped at `ρi`. Under `:Crocus` a
-parcel at or above `CROCUS_HYBRID_DENSITY` steps by the `:GSFC2020` relaxation of
-[`_march_density_step`](@ref), as the transient run hands such cells over.
+re-evaluated at each, and the density capped at `ρi`. Under `:Crocus` a parcel at or above
+`mp.crocus_handoff_density` steps by the handoff law's relaxation
+([`_march_density_step`](@ref)), as the transient run hands such cells over; under
+`crocus_handoff_rule = :rate_match` only when that law's rate, at the start of the step, is
+the faster of the two.
 
 Depth advances by mass balance with the trapezoidal density, as in `_march_density_step`.
 """
@@ -320,13 +323,22 @@ Depth advances by mass balance with the trapezoidal density, as in `_march_densi
     dt::Float64, T::Float64, age::Float64, grain_radius::Float64, dendricity::Float64,
     sphericity::Float64, cs::ClimateSummary, mp::ModelParameters)
 
-    if mp.densification_method === :Crocus && ρ >= CROCUS_HYBRID_DENSITY - D_TOLERANCE
+    handoff = mp.densification_method === :Crocus &&
+              ρ >= mp.crocus_handoff_density - D_TOLERANCE
+    handoff && mp.crocus_handoff_rule === :density &&
         return _march_density_step(p, ρ, z, b, ρi, dt, T)
-    end
     f2 = crocus_f2_applies(dendricity, sphericity, 0.0, grain_radius)
     # The annual wave about the mean at this depth (`_steady_state_temperature` without the
     # phase, which a seasonal mean does not depend on).
     amplitude = cs.temperature_amplitude * exp(-z / thermal_damping_depth(T, ρ, mp))
+    if handoff
+        # `:rate_match`. Both rates as dρ/dt per year: the law's `c·(ρᵢ − ρ)`, Crocus's
+        # `ρ·(1/D)·dD/dt`.
+        crocus = ρ * SECONDS_PER_YEAR *
+                 _crocus_march_rate(ρ, T, GRAVITY * b * age, amplitude, grain_radius, f2, mp)
+        _densification_rate(p, ρ, T) * (ρi - ρ) >= crocus &&
+            return _march_density_step(p, ρ, z, b, ρi, dt, T)
+    end
     # Sub-stepped so the density changes by at most `CROCUS_MARCH_MAX_STRAIN` per sub-step: the
     # rate falls steeply as fresh snow densifies (destructive metamorphism tapers above `ρ_dm`),
     # so one step at the rate of its start would overshoot.
@@ -347,9 +359,11 @@ end
 @inline function _crocus_march_rate(ρ::Float64, T::Float64, σ::Float64, amplitude::Float64,
     grain_radius::Float64, f2::Bool, mp::ModelParameters)
     rate = 0.0
+    overburden = mp.densification_method === :Crocus ?
+                 _crocus_overburden_scale(ρ, mp.crocus_overburden_factor) : 1.0
     for k in 1:CROCUS_MARCH_PHASES
         Tk = min(T + amplitude * cos(2π * (k - 0.5) / CROCUS_MARCH_PHASES), CtoK)
-        r = σ / _crocus_viscosity(ρ, Tk, 0.0, 1.0, grain_radius, f2)
+        r = σ / _crocus_viscosity(ρ, Tk, 0.0, 1.0, grain_radius, f2) * overburden
         if mp.destructive_metamorphism
             r += destructive_metamorphism_rate(ρ, Tk, false, mp.destructive_metamorphism_density)
         end

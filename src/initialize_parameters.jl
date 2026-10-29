@@ -29,6 +29,22 @@ function validate_parameters(mp::ModelParameters)
     end
     @assert 50 <= mp.destructive_metamorphism_density <= 450 "destructive_metamorphism_density must be in [50, 450] kg m-3 (got $(mp.destructive_metamorphism_density))"
 
+    # The Crocus handoff. Its settings are read only under `:Crocus`, so a non-default value
+    # with any other scheme would be silently ignored.
+    @assert mp.crocus_handoff_law in (:GSFC2020, :Arthern) "crocus_handoff_law must be GSFC2020 or Arthern (got :$(mp.crocus_handoff_law))"
+    @assert mp.crocus_handoff_rule in (:density, :rate_match) "crocus_handoff_rule must be density or rate_match (got :$(mp.crocus_handoff_rule))"
+    @assert 200 <= mp.crocus_handoff_density <= DENSITY_PORE_CLOSEOFF "crocus_handoff_density must be in [200, $(DENSITY_PORE_CLOSEOFF)] kg m-3 (got $(mp.crocus_handoff_density))"
+    @assert 0 < mp.crocus_handoff_k0 <= 10 && 0 < mp.crocus_handoff_k1 <= 10 "crocus_handoff_k0 and crocus_handoff_k1 must be in (0, 10] (got $(mp.crocus_handoff_k0), $(mp.crocus_handoff_k1))"
+    @assert abs(mp.crocus_handoff_activation_energy_shift) <= 60000 "crocus_handoff_activation_energy_shift must be in [-60000, 60000] J mol-1 (got $(mp.crocus_handoff_activation_energy_shift))"
+    @assert 0 < mp.crocus_handoff_accumulation_exponent_scale <= 3 "crocus_handoff_accumulation_exponent_scale must be in (0, 3] (got $(mp.crocus_handoff_accumulation_exponent_scale))"
+    @assert 400 <= mp.crocus_handoff_stage_density < DENSITY_PORE_CLOSEOFF "crocus_handoff_stage_density must be in [400, $(DENSITY_PORE_CLOSEOFF)) kg m-3 (got $(mp.crocus_handoff_stage_density))"
+    @assert 0 < mp.crocus_overburden_factor <= 10 "crocus_overburden_factor must be in (0, 10] (got $(mp.crocus_overburden_factor))"
+    if mp.densification_method !== :Crocus
+        changed = filter(f -> getfield(mp, f) != getfield(CROCUS_FIRN_CALIBRATION, f),
+                         keys(CROCUS_FIRN_CALIBRATION))
+        @assert isempty(changed) "$(join(changed, ", ")) are read only by densification_method = :Crocus; got :$(mp.densification_method)"
+    end
+
     # Densification coefficients
     valid_coeffs = (:Ant_ERA5_GS_SW0, :Ant_ERA5v4_Paolo23, :Ant_ERA5_BF_SW1,
         :Ant_RACMO_GS_SW0, :Ant_Ligtenberg, :Gre_ERA5_GS_SW0,
