@@ -269,7 +269,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
         #
         # `:Crocus` hands firn to an accumulation-driven law, because eq. 7 is fitted to a
         # 1-2 m alpine snowpack and `exp(bη·ρ)` saturates in firn — see
-        # `CROCUS_HYBRID_DENSITY` and `mp.crocus_handoff_*`. `:CrocusPure` applies eq. 5 at
+        # `CROCUS_FIRN_CALIBRATION`, `CROCUS_HYBRID_DENSITY` and `mp.crocus_handoff_*`. `:CrocusPure` applies eq. 5 at
         # every density.
         (length(grain_dendricity) == m && length(grain_sphericity) == m) ||
             throw(ArgumentError(":$(method) densification gates eq. 9 on grain shape and needs " *
@@ -441,9 +441,9 @@ end
     A_pow_g_0::Float64, A_pow_g_1::Float64, ρ_stage::Float64=DENSITY_STAGE_TRANSITION)
     grain_growth = GRAIN_GROWTH_EG / (tam * R_GAS)
     return if ρ <= ρ_stage + D_TOLERANCE
-        0.07 * A_pow_g_0 * exp(-59500.0 / (T * R_GAS) + grain_growth)
+        0.07 * A_pow_g_0 * exp(-GSFC2020_ACTIVATION_ENERGY[1] / (T * R_GAS) + grain_growth)
     else
-        0.03 * A_pow_g_1 * exp(-56870.0 / (T * R_GAS) + grain_growth)
+        0.03 * A_pow_g_1 * exp(-GSFC2020_ACTIVATION_ENERGY[2] / (T * R_GAS) + grain_growth)
     end
 end
 
@@ -706,8 +706,10 @@ The first two err toward stiffening, the third toward softening.
 """
     CROCUS_HYBRID_DENSITY
 
-Default `mp.crocus_handoff_density` [kg m-3]: the density at which `:Crocus` hands a cell to
-its firn law (`mp.crocus_handoff_law`, `:GSFC2020` by default).
+The density [kg m-3] at which `:Crocus` hands a cell to `:GSFC2020` under the `:density` rule
+with the published rates: the Community Firn Model's threshold. GEMB's default handoff is
+`CROCUS_FIRN_CALIBRATION` (`:rate_match` from 300 kg m-3); this value is the published reference
+it is compared with.
 
 Eq. 7 is fitted to a 1-2 m alpine snowpack, and `exp(bη·ρ)` reaches ~1e9 at ρ = 900: on a
 Greenland firn profile the pure law gives 0.7-0.8 of `:Arthern`'s compaction rate in the top
@@ -725,6 +727,25 @@ remains only at the handoff density itself, where the law's rate exceeds Crocus'
 `:CrocusPure` applies eq. 5 at every density.
 """
 const CROCUS_HYBRID_DENSITY = 450.0
+
+"""
+    CROCUS_PUBLISHED_HANDOFF
+
+The `CROCUS_FIRN_CALIBRATION` fields at the published handoff: `:GSFC2020` from
+`CROCUS_HYBRID_DENSITY` under the `:density` rule, with every calibration factor at the value that
+leaves both laws as published. `ModelParameters(; CROCUS_PUBLISHED_HANDOFF...)` runs it.
+"""
+const CROCUS_PUBLISHED_HANDOFF = (;
+    crocus_handoff_density = CROCUS_HYBRID_DENSITY,
+    crocus_handoff_law = :GSFC2020,
+    crocus_handoff_rule = :density,
+    crocus_handoff_k0 = 1.0,
+    crocus_handoff_k1 = 1.0,
+    crocus_handoff_activation_energy_shift = 0.0,
+    crocus_handoff_accumulation_exponent_scale = 1.0,
+    crocus_handoff_stage_density = DENSITY_STAGE_TRANSITION,
+    crocus_overburden_factor = 1.0,
+)
 
 """
     _crocus_viscosity(ρ, T, W_liq, D, grain_radius, f2_applies=true) -> η [kg s-1 m-1]

@@ -34,21 +34,15 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.crocus_handoff_law in (:GSFC2020, :Arthern) "crocus_handoff_law must be GSFC2020 or Arthern (got :$(mp.crocus_handoff_law))"
     @assert mp.crocus_handoff_rule in (:density, :rate_match) "crocus_handoff_rule must be density or rate_match (got :$(mp.crocus_handoff_rule))"
     @assert 200 <= mp.crocus_handoff_density <= DENSITY_PORE_CLOSEOFF "crocus_handoff_density must be in [200, $(DENSITY_PORE_CLOSEOFF)] kg m-3 (got $(mp.crocus_handoff_density))"
-    if mp.densification_method !== :Crocus
-        @assert (mp.crocus_handoff_density == CROCUS_HYBRID_DENSITY &&
-                 mp.crocus_handoff_law === :GSFC2020 && mp.crocus_handoff_rule === :density) "crocus_handoff_density, crocus_handoff_law and crocus_handoff_rule are read only by densification_method = :Crocus; got :$(mp.densification_method)"
-    end
     @assert 0 < mp.crocus_handoff_k0 <= 10 && 0 < mp.crocus_handoff_k1 <= 10 "crocus_handoff_k0 and crocus_handoff_k1 must be in (0, 10] (got $(mp.crocus_handoff_k0), $(mp.crocus_handoff_k1))"
     @assert abs(mp.crocus_handoff_activation_energy_shift) <= 60000 "crocus_handoff_activation_energy_shift must be in [-60000, 60000] J mol-1 (got $(mp.crocus_handoff_activation_energy_shift))"
     @assert 0 < mp.crocus_handoff_accumulation_exponent_scale <= 3 "crocus_handoff_accumulation_exponent_scale must be in (0, 3] (got $(mp.crocus_handoff_accumulation_exponent_scale))"
     @assert 400 <= mp.crocus_handoff_stage_density < DENSITY_PORE_CLOSEOFF "crocus_handoff_stage_density must be in [400, $(DENSITY_PORE_CLOSEOFF)) kg m-3 (got $(mp.crocus_handoff_stage_density))"
     @assert 0 < mp.crocus_overburden_factor <= 10 "crocus_overburden_factor must be in (0, 10] (got $(mp.crocus_overburden_factor))"
     if mp.densification_method !== :Crocus
-        @assert (mp.crocus_handoff_k0 == 1 && mp.crocus_handoff_k1 == 1 &&
-                 mp.crocus_handoff_activation_energy_shift == 0 &&
-                 mp.crocus_handoff_accumulation_exponent_scale == 1 &&
-                 mp.crocus_handoff_stage_density == DENSITY_STAGE_TRANSITION &&
-                 mp.crocus_overburden_factor == 1) "crocus_handoff_k0, crocus_handoff_k1, crocus_handoff_activation_energy_shift, crocus_handoff_accumulation_exponent_scale, crocus_handoff_stage_density and crocus_overburden_factor are read only by densification_method = :Crocus; got :$(mp.densification_method)"
+        changed = filter(f -> getfield(mp, f) != getfield(CROCUS_FIRN_CALIBRATION, f),
+                         keys(CROCUS_FIRN_CALIBRATION))
+        @assert isempty(changed) "$(join(changed, ", ")) are read only by densification_method = :Crocus; got :$(mp.densification_method)"
     end
 
     # Densification coefficients

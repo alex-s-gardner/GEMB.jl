@@ -453,10 +453,13 @@ using Dates
         @test v[deepest, end] > v[1, end]
         @test d[deepest, end] >= d[1, end]
 
-        # `:Crocus` hands cells at or above CROCUS_HYBRID_DENSITY to `:GSFC2020`, which
-        # forms no viscosity, so exactly those cells must be NaN. This is the property that
-        # makes NaN meaningful rather than a missing-value artifact.
-        (_, out_c) = _run(densification_method=:Crocus, output_viscosity=true)
+        # Under the `:density` rule `:Crocus` hands every cell at or above its handoff density to
+        # `:GSFC2020`, which forms no viscosity, so exactly those cells must be NaN. This is the
+        # property that makes NaN meaningful rather than a missing-value artifact. (Under the
+        # default `:rate_match` rule Crocus may still govern above the floor, and those cells keep
+        # their viscosity.)
+        (_, out_c) = _run(; densification_method=:Crocus, output_viscosity=true,
+                          GEMB.CROCUS_PUBLISHED_HANDOFF...)
         vc = parent(out_c[:viscosity])
         dc = parent(out_c[:density])
         for i in eachindex(vc)

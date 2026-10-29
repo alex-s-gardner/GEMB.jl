@@ -64,24 +64,32 @@ Two departures from the published law:
 - `f2` is floored at 1. Eq. 9 is bounded above but not below, so it would *soften* grains
   finer than 0.2 mm. The gate admits no grain that fine, so the floor binds only for a direct
   call of the viscosity with the factor forced on.
-- `:Crocus` hands firn to an accumulation-driven law: by default, cells at or above
-  450 kg m⁻³ to `:GSFC2020`. Eq. 7 is fitted to a 1–2 m alpine snowpack and `exp(b_η·ρ)`
+- `:Crocus` hands firn to an accumulation-driven law: by default `:GSFC2020`, under the
+  `:rate_match` rule from 300 kg m⁻³, with the calibration factors below at the values of
+  `CROCUS_FIRN_CALIBRATION`. Eq. 7 is fitted to a 1–2 m alpine snowpack and `exp(b_η·ρ)`
   saturates in firn: unblended, the law gives 0.7–0.8× `:Arthern`'s compaction rate in the
-  top few metres but only 0.02–0.09× below 20 m. 450 kg m⁻³ is the threshold the Community
-  Firn Model uses for the same purpose. The handover is a branch rather than a weighted
+  top few metres but only 0.02–0.09× below 20 m. The Community Firn Model hands off at
+  450 kg m⁻³ under the `:density` rule (`CROCUS_HYBRID_DENSITY`). The handover is a branch rather than a weighted
   blend, since neither paper prescribes a blending function. `crocus_handoff_density` and
   `crocus_handoff_law` (`:GSFC2020` or `:Arthern`) set where and to what. With
   `crocus_handoff_rule = :rate_match` a cell above the handoff density takes whichever law
   compacts it faster, so the switch falls where the two rates cross and carries no step in
   the rate there. `:CrocusPure` applies eq. 5 at every density.
 - Six calibration factors adjust the hybrid without changing either law's form, each leaving
-  it as published at its default: `crocus_handoff_k0`/`_k1` scale the handoff law's two
+  it as published at its `CROCUS_PUBLISHED_HANDOFF` value: `crocus_handoff_k0`/`_k1` scale the handoff law's two
   stages, `crocus_handoff_stage_density` moves its stage transition,
   `crocus_handoff_activation_energy_shift` and `crocus_handoff_accumulation_exponent_scale`
   change its temperature and accumulation sensitivity about a reference climate (258.15 K,
   600 kg m⁻² yr⁻¹) at which they leave the rate unchanged, and `crocus_overburden_factor`
-  scales the Crocus viscous strain rate above 350 kg m⁻³, ramped in from 300 so seasonal
-  snow is untouched.
+  scales the Crocus viscous strain rate above 350 kg m⁻³, ramped in from 300.
+- The default handoff and factors (`CROCUS_FIRN_CALIBRATION`) are the configuration that
+  fitted 246 firn cores best (133 sites: 98 on the Greenland and Antarctic ice sheets from
+  SUMup 2025, 35 on glaciers and ice caps), with each core's snowfall matched to its measured
+  accumulation, and that left seasonal snow (SNOTEL, station settling, WGMS winter pits)
+  unchanged within each test's resolution. The handoff law's creep activation energy is
+  48.1 kJ mol⁻¹, above the lowest measured value for firn creep. The rates are a
+  best-performing set, not physically identified values: with every rate free, the fit pulls
+  the activation energy toward that lower bound.
 
 The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
 Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.

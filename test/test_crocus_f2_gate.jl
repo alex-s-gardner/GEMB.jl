@@ -108,7 +108,9 @@ end
     T = fill(263.15, n)
     r = fill(0.3, n)
     cfs = _f2_cfs(86400.0)
-    mp_c = GEMB.ModelParameters(density_ice=910.0, densification_method=:Crocus)
+    # The published handoff, so every cell here is below the handover and Crocus settling is unscaled.
+    mp_c = GEMB.ModelParameters(density_ice=910.0, densification_method=:Crocus;
+        GEMB.CROCUS_PUBLISHED_HANDOFF...)
     mp_p = GEMB.ModelParameters(density_ice=910.0, densification_method=:CrocusPure)
 
     # Below the 450 handover `:Crocus` is the pure law, gate included.
