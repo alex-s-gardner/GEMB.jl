@@ -579,10 +579,16 @@ end
 
     # The handoff settings reach the march: every variant is a graded column that reaches ice,
     # and moving the handoff or the law changes it. Each variant changes one setting of the default
-    # calibration (`CROCUS_FIRN_CALIBRATION`).
-    for kw in ((crocus_handoff_density=550.0,), (crocus_handoff_law=:Arthern,),
+    # calibration (`CROCUS_FIRN_CALIBRATION`), relative to it so the variant stays a change whatever
+    # the default is. Under `:rate_match` the handoff density is only a floor, which moves the march
+    # where it lies above the density at which the two rates cross, so the floor variant is at the
+    # top of its range.
+    cal = GEMB.CROCUS_FIRN_CALIBRATION
+    for kw in ((crocus_handoff_density=GEMB.DENSITY_PORE_CLOSEOFF,),
+               (crocus_handoff_law=cal.crocus_handoff_law === :Arthern ? :GSFC2020 : :Arthern,),
                (crocus_handoff_density=400.0, crocus_handoff_rule=:density),
-               (crocus_overburden_factor=1.4,), (crocus_handoff_k1=0.7,))
+               (crocus_overburden_factor=1.25 * cal.crocus_overburden_factor,),
+               (crocus_handoff_k1=1.25 * cal.crocus_handoff_k1,))
         d = collect(GEMB.initialize_profile(GEMB.ModelParameters(; kw...), cf)[:density])
         @test all(diff(d) .>= -1e-9)
         @test d[end] > 0.98 * mp.density_ice

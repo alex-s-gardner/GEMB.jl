@@ -932,9 +932,9 @@ end
     for (k, v) in pairs(GEMB.CROCUS_FIRN_CALIBRATION)
         @test getfield(mp0, k) == v
     end
-    @test mp0.crocus_handoff_rule === :rate_match && mp0.crocus_handoff_law === :GSFC2020
+    @test mp0.crocus_handoff_rule === :rate_match && mp0.crocus_handoff_law === :Arthern
     # The handoff law's activation energy stays above the lowest measured value for firn creep.
-    @test minimum(GEMB.GSFC2020_ACTIVATION_ENERGY) + mp0.crocus_handoff_activation_energy_shift >= 45000.0
+    @test GEMB.ARTHERN_ACTIVATION_ENERGY + mp0.crocus_handoff_activation_energy_shift >= 45000.0
     # The published handoff sets the same fields.
     @test keys(GEMB.CROCUS_PUBLISHED_HANDOFF) == keys(GEMB.CROCUS_FIRN_CALIBRATION)
     @test initialize_parameters().crocus_overburden_factor == mp0.crocus_overburden_factor
@@ -1030,7 +1030,8 @@ end
         crocus_handoff_density=900.0)
     @test_throws "read only by densification_method = :Crocus" initialize_parameters(
         densification_method=:GSFC2020, crocus_handoff_density=500.0)
-    @test initialize_parameters(densification_method=:GSFC2020).crocus_handoff_law === :GSFC2020
+    @test initialize_parameters(densification_method=:GSFC2020).crocus_handoff_law ===
+          GEMB.CROCUS_FIRN_CALIBRATION.crocus_handoff_law
 
     # The steady-state fallback follows the handoff law.
     mp_ha = GEMB.ModelParameters(; GEMB.CROCUS_PUBLISHED_HANDOFF..., crocus_handoff_law=:Arthern)

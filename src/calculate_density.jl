@@ -7,7 +7,7 @@ Compute the densification of snow/firn using one of several models:
 - `:Arthern`: semi-empirical model of Arthern et al. (2010)
 - `:ArthernB`: physical model from Appendix B of Arthern et al. (2010)
 - `:Crocus`: viscous settling of Vionnet et al. (2012), handing firn to an
-  accumulation-driven law (`:GSFC2020` by default) as `mp.crocus_handoff_*` set; the only
+  accumulation-driven law (`:Arthern` by default) as `mp.crocus_handoff_*` set; the only
   scheme here in which liquid water weakens the matrix [default]
 - `:CrocusPure`: Vionnet et al. (2012) at every density, without the firn handover
 - `:GSFC2020`: recalibrated Arthern of Medley et al. (2022), GSFC-FDM v1.2.1
@@ -177,7 +177,7 @@ function calculate_density(temperature::Vector{Float64}, dz::Vector{Float64},
             T = temperature[i]
             gr = grain_radius[i] / 1000          # [mm] -> [m]
             obp = load * GRAVITY                 # overburden stress [Pa]
-            H = exp((-60000.0 / (T * R_GAS))) * obp / gr^2
+            H = exp((-ARTHERN_ACTIVATION_ENERGY / (T * R_GAS))) * obp / gr^2
             c = (d0 <= DENSITY_STAGE_TRANSITION + D_TOLERANCE ? 9.2e-9 : 3.7e-9) *
                 kc_per_year * H
             _densify_cell!(density, dz, dz_out, i, c, dt, density_ice)
@@ -418,7 +418,7 @@ end
 @inline function _arthern_scaled_c(ρ::Float64, T::Float64, tam::Float64,
     precip_force::Float64, k0::Float64, k1::Float64,
     ρ_stage::Float64=DENSITY_STAGE_TRANSITION)
-    H = exp((-60000.0 / (T * R_GAS)) + (GRAIN_GROWTH_EG / (tam * R_GAS))) * precip_force
+    H = exp((-ARTHERN_ACTIVATION_ENERGY / (T * R_GAS)) + (GRAIN_GROWTH_EG / (tam * R_GAS))) * precip_force
     return ρ <= ρ_stage + D_TOLERANCE ? k0 * (0.07 * H) : k1 * (0.03 * H)
 end
 

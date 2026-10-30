@@ -116,7 +116,7 @@ end
     @test ρ0[1] == 150.0
 end
 
-@testset "under :Crocus, cells handed to :GSFC2020 are untouched" begin
+@testset "under :Crocus, cells handed to the firn law are untouched" begin
     mp_on = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=true,
         destructive_metamorphism_density=175.0)
     mp_off = GEMB.ModelParameters(densification_method=:Crocus, destructive_metamorphism=false)
