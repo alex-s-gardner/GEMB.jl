@@ -128,32 +128,36 @@ const SNICAR_LIQUID_FRACTION_MAX = 0.1
 # against this same split.
 const DENSITY_STAGE_TRANSITION = 550.0
 
+# Creep activation energy [J mol-1] of Arthern et al. (2010), in both the semi-empirical law
+# (`:Arthern` and the schemes that scale it) and the Appendix B physical model (`:ArthernB`).
+const ARTHERN_ACTIVATION_ENERGY = 60000.0
+
 # Creep activation energies [J mol-1] of Medley et al. (2022) eq. 18, the `:GSFC2020` refit of
-# Arthern's 60000, below and above `DENSITY_STAGE_TRANSITION`.
+# `ARTHERN_ACTIVATION_ENERGY`, below and above `DENSITY_STAGE_TRANSITION`.
 const GSFC2020_ACTIVATION_ENERGY = (59500.0, 56870.0)
 
 """
     CROCUS_FIRN_CALIBRATION
 
 The default Crocus firn handoff and its calibration factors (`ModelParameters` fields
-`crocus_handoff_*` and `crocus_overburden_factor`): `:Crocus` hands firn to `:GSFC2020` under
+`crocus_handoff_*` and `crocus_overburden_factor`): `:Crocus` hands firn to `:Arthern` under
 `:rate_match` from 300 kg m-3, with the rate factors of the firn-core calibration of the GEMB
-v2.0 paper. The handoff law's lower stage activation energy,
-`GSFC2020_ACTIVATION_ENERGY[2] + crocus_handoff_activation_energy_shift` = 48.1 kJ mol-1, is above
+v2.0 paper. The handoff law's creep activation energy,
+`ARTHERN_ACTIVATION_ENERGY + crocus_handoff_activation_energy_shift` = 50.1 kJ mol-1, is above
 the lowest measured value for firn creep (45 kJ mol-1) and the grain-growth energy
 (`GRAIN_GROWTH_EG`, 42.4 kJ mol-1). `CROCUS_PUBLISHED_HANDOFF` is the same fields at the published
 laws.
 """
 const CROCUS_FIRN_CALIBRATION = (;
     crocus_handoff_density = 300.0,
-    crocus_handoff_law = :GSFC2020,
+    crocus_handoff_law = :Arthern,
     crocus_handoff_rule = :rate_match,
-    crocus_handoff_k0 = 1.57457,
-    crocus_handoff_k1 = 1.35592,
-    crocus_handoff_activation_energy_shift = -8784.97,
-    crocus_handoff_accumulation_exponent_scale = 1.1383,
-    crocus_handoff_stage_density = 575.238,
-    crocus_overburden_factor = 0.922947,
+    crocus_handoff_k0 = 0.616702,
+    crocus_handoff_k1 = 0.665705,
+    crocus_handoff_activation_energy_shift = -9858.14,
+    crocus_handoff_accumulation_exponent_scale = 0.845621,
+    crocus_handoff_stage_density = 545.319,
+    crocus_overburden_factor = 1.27096,
 )
 
 # Reference temperature of the Calonne et al. (2019) conductivity regressions [K]. Their
