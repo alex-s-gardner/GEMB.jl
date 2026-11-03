@@ -1,0 +1,162 @@
+name: Release
+
+# Relocatable bundles of the GEMB C library (`libgemb`), built with `juliac --trim=safe` on each platform's
+# own runner. A bundle holds the library, `gemb.h`, the `libjulia` and standard libraries it loads, and a
+# `VERSION` file, so a host model can link against it on a machine without Julia.
+#
+# A release is a version of `Project.toml` that has no `v<version>` tag yet:
+#   - a push to `main` that brings such a version: build, check, create the tag `v<version>` at that commit,
+#     and attach the bundles and `manifest.json` to its GitHub Release;
+#   - a pushed `v*` tag that matches `Project.toml`: the same, at the tag;
+#   - any other push to `main`, or Run workflow (manual): build and check, and keep the bundles as workflow
+#     artifacts, named by `git describe`;
+#   - a pull request that changes how a release is built: build and check, publish nothing.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/Release.yml
+      - capi/build.jl
+      - capi/pack.sh
+      - capi/Project.toml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          project=v$(sed -n 's/^version = "\(.*\)"/\1/p' Project.toml)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            # A tag names a release only if it is the version the code says it is.
+            [ "$GITHUB_REF_NAME" = "$project" ] ||
+              { echo "::error::tag $GITHUB_REF_NAME but Project.toml version is $project"; exit 1; }
+            echo "version=$project" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && ! git rev-parse -q --verify "refs/tags/$project" > /dev/null; then
+            echo "version=$project" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            v=$(git describe --dirty --tags --long --match 'v*' 2>/dev/null || echo "$project-0-g$(git rev-parse --short HEAD)")
+            echo "version=$v" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  bundle:
+    name: bundle ${{ matrix.platform }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: linux-x86_64, runner: ubuntu-24.04}
+          - {platform: linux-aarch64, runner: ubuntu-24.04-arm}
+          - {platform: macos-arm64, runner: macos-15}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          # JuliaC needs Julia 1.12 or later; capi resolves its environment on the runner.
+          version: '1.12.5'
+      - uses: julia-actions/cache@v2
+        with:
+          cache-name: release-${{ matrix.platform }}
+      - name: Install JuliaC
+        # `.juliac/` is not tracked; JuliaC drives the build and is kept out of the environment it compiles.
+        run: julia --project=.juliac -e 'using Pkg; Pkg.add(name="JuliaC", version="0.3.9")'
+      - name: Instantiate the capi environment
+        run: julia --project=capi -e 'using Pkg; Pkg.instantiate()'
+      - name: Build
+        env:
+          JULIAC_PROJECT: .juliac
+        run: |
+          bundle=$RUNNER_TEMP/libgemb-$VERSION-${{ matrix.platform }}
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          julia --startup-file=no capi/build.jl --trim=safe --out "$bundle/lib/libgemb" --bundle "$bundle" ||
+            { cat "$bundle/lib/libgemb.log"; exit 1; }
+          # `juliac` reports verifier errors and still writes a library for some of them.
+          if grep -q 'Verifier error' "$bundle/lib/libgemb.log"; then
+            echo "::error::the trimmed build has verifier errors"; cat "$bundle/lib/libgemb.log"; exit 1
+          fi
+      - name: Check the bundled library against Julia
+        # The C driver links the bundle's own library, so this checks what ships.
+        run: julia --startup-file=no capi/run_tests.jl --lib "$BUNDLE/lib/libgemb"
+      - name: Finish the bundle
+        run: |
+          mkdir -p "$BUNDLE/include"
+          cp capi/gemb.h "$BUNDLE/include/"
+          cp LICENSE "$BUNDLE/"
+          cp capi/README.md "$BUNDLE/README.md"
+          mv "$BUNDLE/lib/libgemb.log" "$BUNDLE/build.log"
+          printf '%s\n' "GEMB.jl $VERSION ($GITHUB_SHA), ${{ matrix.platform }}, Julia 1.12.5, JuliaC 0.3.9 --trim=safe" \
+            > "$BUNDLE/VERSION"
+      - name: Pack
+        run: capi/pack.sh "$BUNDLE" "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: ${{ env.BUNDLE }}/lib/libgemb.log
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: ${{ runner.temp }}/dist/
+          retention-days: 30
+
+  release:
+    name: GitHub Release
+    if: needs.version.outputs.release == 'true'
+    needs: [version, bundle]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write manifest.json
+        run: |
+          cd dist
+          platforms='{}'
+          for f in *.tar.gz; do
+            p=${f#libgemb-"$VERSION"-}; p=${p%.tar.gz}
+            platforms=$(jq --arg p "$p" --arg f "$f" --argjson s "$(wc -c < "$f")" --arg h "$(cut -d' ' -f1 "$f.sha256")" \
+              '. + {($p): {file: $f, size_bytes: $s, sha256: $h}}' <<< "$platforms")
+          done
+          jq -n --arg v "$VERSION" --arg c "$GITHUB_SHA" --arg r "$GITHUB_REPOSITORY" --arg t "$(date -u +%Y-%m-%dT%H:%MZ)" \
+            --argjson p "$platforms" \
+            '{name: "libgemb", version: $v, commit: $c, repository: $r, built_utc: $t,
+              julia: "1.12.5", juliac: "0.3.9, --trim=safe",
+              archive: "tar.gz; extract, then link lib/libgemb and include/gemb.h; README.md in the bundle describes the API",
+              platforms: $p}' > manifest.json
+          cat manifest.json
+      - name: Tag and attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # `gh release create --target` creates the tag at the built commit when it does not exist. A tag made
+        # with this token starts no further workflow run, so the release is built once.
+        run: |
+          gh release view "$VERSION" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create "$VERSION" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "GEMB.jl $VERSION" --generate-notes
+          gh release upload "$VERSION" -R "$GITHUB_REPOSITORY" dist/* --clobber
