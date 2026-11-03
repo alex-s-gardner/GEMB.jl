@@ -21,6 +21,7 @@ on:
       - .github/workflows/Release.yml
       - capi/build.jl
       - capi/pack.sh
+      - capi/RELEASE.md
       - capi/Project.toml
 
 concurrency:
@@ -62,10 +63,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `cpu_target` is the multiversioning of Julia's own release binaries for the platform: the library
+        # runs on every CPU of the platform and takes the code path of the one it runs on. Without it juliac
+        # compiles for the build runner's CPU alone, and the library refuses to load on any other.
         include:
-          - {platform: linux-x86_64, runner: ubuntu-24.04}
-          - {platform: linux-aarch64, runner: ubuntu-24.04-arm}
-          - {platform: macos-arm64, runner: macos-15}
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            cpu_target: 'generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)'
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            cpu_target: 'generic;cortex-a57;thunderx2t99;carmel,clone_all;apple-m1,base(3);neoverse-512tvb,-rand,-fpac,base(3)'
+          - platform: macos-arm64
+            runner: macos-15
+            cpu_target: 'generic;apple-m1,clone_all'
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -85,6 +95,7 @@ jobs:
       - name: Build
         env:
           JULIAC_PROJECT: .juliac
+          JULIA_CPU_TARGET: ${{ matrix.cpu_target }}
         run: |
           bundle=$RUNNER_TEMP/libgemb-$VERSION-${{ matrix.platform }}
           echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
@@ -97,12 +108,20 @@ jobs:
       - name: Check the bundled library against Julia
         # The C driver links the bundle's own library, so this checks what ships.
         run: julia --startup-file=no capi/run_tests.jl --lib "$BUNDLE/lib/libgemb"
+      - name: Check the bundle in a bare Debian
+        # The library needs nothing of the host but the C library and the loader; a C compiler links the driver.
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$BUNDLE:/b:ro" -v "$PWD/capi:/capi:ro" debian:bookworm-slim bash -ec '
+            apt-get update -qq > /dev/null && apt-get install -y -qq gcc libc6-dev > /dev/null
+            cc -O2 -o /tmp/model /capi/test/test_capi.c -I/capi -L/b/lib -lgemb -Wl,-rpath,/b/lib
+            /tmp/model | tail -1'
       - name: Finish the bundle
         run: |
           mkdir -p "$BUNDLE/include"
           cp capi/gemb.h "$BUNDLE/include/"
           cp LICENSE "$BUNDLE/"
-          cp capi/README.md "$BUNDLE/README.md"
+          cp capi/RELEASE.md "$BUNDLE/README.md"
           mv "$BUNDLE/lib/libgemb.log" "$BUNDLE/build.log"
           printf '%s\n' "GEMB.jl $VERSION ($GITHUB_SHA), ${{ matrix.platform }}, Julia 1.12.5, JuliaC 0.3.9 --trim=safe" \
             > "$BUNDLE/VERSION"

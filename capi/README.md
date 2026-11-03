@@ -155,10 +155,12 @@ compare and each branch is concretely typed. New `Symbol` option values need no 
 `--trim=safe` produces a library of about 2 MB; `--trim=no` produces about 310 MB. Both link
 against `libjulia`. For a relocatable distribution, `julia capi/build.jl --trim=safe --out
 <dir>/lib/libgemb --bundle <dir>` copies `libjulia`, the stdlibs and the artifacts into `<dir>` and
-sets relative rpaths; the bundle is about 60 MB unpacked and runs without Julia installed.
+sets relative rpaths; the bundle is about 60 MB unpacked and runs without Julia installed. Set
+`JULIA_CPU_TARGET` to compile for more than the build machine's CPU: a library built without it
+refuses to load on any CPU its code was not compiled for.
 
 Each release of GEMB.jl carries such a bundle for `linux-x86_64`, `linux-aarch64` and `macos-arm64`
 on its [GitHub Release](https://github.com/alex-s-gardner/GEMB.jl/releases), with `include/gemb.h`,
-a `VERSION` file and a `manifest.json` of SHA-256 sums. `.github/workflows/Release.yml` builds them:
+a `VERSION` file, `RELEASE.md` as its README and a `manifest.json` of SHA-256 sums. `.github/workflows/Release.yml` builds them:
 a push to `main` whose `Project.toml` version has no `v<version>` tag yet builds the bundles, checks
 each one against Julia with `capi/run_tests.jl`, creates the tag and attaches them.
