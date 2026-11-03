@@ -22,9 +22,6 @@ on:
       - capi/build.jl
       - capi/pack.sh
       - capi/Project.toml
-      - capi/Manifest.toml
-      - .juliac/Project.toml
-      - .juliac/Manifest.toml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -75,26 +72,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
         with:
-          # The version `capi/Manifest.toml` and `.juliac/Manifest.toml` were resolved with.
+          # JuliaC needs Julia 1.12 or later; capi resolves its environment on the runner.
           version: '1.12.5'
       - uses: julia-actions/cache@v2
         with:
           cache-name: release-${{ matrix.platform }}
-      - name: Instantiate
-        run: |
-          julia --project=.juliac -e 'using Pkg; Pkg.instantiate()'
-          julia --project=capi -e 'using Pkg; Pkg.instantiate()'
+      - name: Install JuliaC
+        # `.juliac/` is not tracked; JuliaC drives the build and is kept out of the environment it compiles.
+        run: julia --project=.juliac -e 'using Pkg; Pkg.add(name="JuliaC", version="0.3.9")'
+      - name: Instantiate the capi environment
+        run: julia --project=capi -e 'using Pkg; Pkg.instantiate()'
       - name: Build
         env:
           JULIAC_PROJECT: .juliac
         run: |
           bundle=$RUNNER_TEMP/libgemb-$VERSION-${{ matrix.platform }}
-          julia --startup-file=no capi/build.jl --trim=safe --out "$bundle/lib/libgemb" --bundle "$bundle"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          julia --startup-file=no capi/build.jl --trim=safe --out "$bundle/lib/libgemb" --bundle "$bundle" ||
+            { cat "$bundle/lib/libgemb.log"; exit 1; }
           # `juliac` reports verifier errors and still writes a library for some of them.
           if grep -q 'Verifier error' "$bundle/lib/libgemb.log"; then
             echo "::error::the trimmed build has verifier errors"; cat "$bundle/lib/libgemb.log"; exit 1
           fi
-          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Check the bundled library against Julia
         # The C driver links the bundle's own library, so this checks what ships.
         run: julia --startup-file=no capi/run_tests.jl --lib "$BUNDLE/lib/libgemb"
@@ -109,6 +108,13 @@ jobs:
             > "$BUNDLE/VERSION"
       - name: Pack
         run: capi/pack.sh "$BUNDLE" "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: ${{ env.BUNDLE }}/lib/libgemb.log
+          if-no-files-found: ignore
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
