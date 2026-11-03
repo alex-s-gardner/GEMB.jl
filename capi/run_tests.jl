@@ -6,17 +6,28 @@
 #   julia capi/build.jl --trim=safe
 #
 # Usage:
-#   julia capi/run_tests.jl [--lib <path>]
+#   julia capi/run_tests.jl [--lib <path>] [--rtol <x>]
+#
+# `--rtol` accepts a value that differs from the Julia reference by at most `x` relative to it, in
+# place of bit identity. A library compiled for several CPUs (`JULIA_CPU_TARGET`) can run a
+# different code path from the Julia session that writes the reference, which reorders
+# floating-point operations; names, indices and NaNs must still agree exactly.
 
 const CAPI_DIR = @__DIR__
 
 lib = joinpath(CAPI_DIR, "build", "libgemb_safe")
+rtol = 0.0
 let i = 1
     while i <= length(ARGS)
         if ARGS[i] == "--lib"
             i += 1
             i <= length(ARGS) || error("--lib requires an argument")
             global lib = ARGS[i]
+        elseif ARGS[i] == "--rtol"
+            i += 1
+            i <= length(ARGS) || error("--rtol requires an argument")
+            global rtol = parse(Float64, ARGS[i])
+            rtol >= 0 || error("--rtol must be non-negative, got $rtol")
         else
             error("unrecognized argument `$(ARGS[i])`")
         end
@@ -60,13 +71,32 @@ end
 expected_lines = readlines(reference)
 actual_lines = readlines(actual)
 
+# A line is `<name> <index> <value>`. Within `rtol` it agrees when the name and index match and the
+# values are equal, both NaN, or within `rtol` of the reference.
+function within_rtol(e, a, rtol)
+    fe, fa = split(e), split(a)
+    length(fe) == length(fa) == 3 && fe[1:2] == fa[1:2] || return false
+    ve, va = parse(Float64, fe[3]), parse(Float64, fa[3])
+    (isnan(ve) && isnan(va)) || ve == va || abs(va - ve) <= rtol * abs(ve)
+end
+
+relative_difference(e, a) = (ve = parse(Float64, split(e)[3]); va = parse(Float64, split(a)[3]);
+                             ve == va ? 0.0 : abs(va - ve) / abs(ve))
+
 if expected_lines == actual_lines
     println("\nC API output is bit-identical to the Julia reference ",
             "($(length(expected_lines)) values)")
+elseif rtol > 0 && length(expected_lines) == length(actual_lines) &&
+       all(within_rtol(e, a, rtol) for (e, a) in zip(expected_lines, actual_lines))
+    differing = [(e, a) for (e, a) in zip(expected_lines, actual_lines) if e != a]
+    worst = maximum(relative_difference(e, a) for (e, a) in differing)
+    println("\nC API output agrees with the Julia reference within rtol = $rtol: ",
+            "$(length(differing)) of $(length(expected_lines)) values differ, by at most $worst relative")
 else
-    println("\nC API output differs from the Julia reference:")
+    println("\nC API output differs from the Julia reference",
+            rtol > 0 ? " by more than rtol = $rtol:" : ":")
     for (i, (e, a)) in enumerate(zip(expected_lines, actual_lines))
-        e == a || println("  line $i\n    julia: $e\n    c:     $a")
+        (e == a || (rtol > 0 && within_rtol(e, a, rtol))) || println("  line $i\n    julia: $e\n    c:     $a")
     end
     length(expected_lines) == length(actual_lines) ||
         println("  line counts differ: $(length(expected_lines)) vs $(length(actual_lines))")

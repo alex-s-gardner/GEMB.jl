@@ -9,6 +9,46 @@ The library covers **one column, one timestep**. The host owns the time loop, th
 all I/O. Model setup (spinup, the climate-derived initial profile) and the `DimStack` output
 remain Julia-side: use GEMB as a library for those, then hand the host a column to step.
 
+## Using a release
+
+Each release of GEMB.jl carries a prebuilt bundle on its
+[GitHub Release](https://github.com/alex-s-gardner/GEMB.jl/releases) for `linux-x86_64`,
+`linux-aarch64` and `macos-arm64`. A bundle runs on any CPU of its platform, on glibc 2.17 or later
+(Linux) or macOS 15 or later, and needs no Julia installation. It is compiled for several CPUs and
+takes the code path of the nearest one, so its results agree with GEMB.jl on the same machine to
+about 1e-13 relative, and exactly where the two take the same code path. The release check accepts
+1e-10.
+
+Download a bundle and check it against its checksum:
+
+```bash
+v=v1.9.10; p=linux-x86_64
+gh release download "$v" -R alex-s-gardner/GEMB.jl -p "libgemb-$v-$p.tar.gz*"
+sha256sum -c "libgemb-$v-$p.tar.gz.sha256"      # macOS: shasum -a 256 -c
+tar -xzf "libgemb-$v-$p.tar.gz"
+```
+
+`manifest.json` on the release lists every bundle with its size and SHA-256. The bundle unpacks to
+`libgemb-<version>-<platform>/`:
+
+| Path | Contents |
+| --- | --- |
+| `include/gemb.h` | The interface |
+| `lib/libgemb.{so,dylib}` | The library |
+| `lib/libjulia*`, `lib/julia/`, `share/julia/` | The runtime it loads; keep them beside it |
+| `VERSION` | GEMB.jl version and commit, platform, and the Julia and JuliaC that built it |
+
+Link the host against it:
+
+```bash
+B=$PWD/libgemb-v1.9.10-linux-x86_64
+cc -o model model.c -I"$B/include" -L"$B/lib" -lgemb -Wl,-rpath,"$B/lib"
+```
+
+The bundle can be moved as a whole. A host linked without an rpath finds the library through
+`LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS) instead. [Calling it](#Calling-it) below
+applies unchanged.
+
 ## Building
 
 Requires Julia 1.12 or later, a C compiler, and
@@ -22,7 +62,9 @@ JULIAC_PROJECT=.juliac julia capi/build.jl --trim=safe
 ```
 
 This writes `capi/build/libgemb_safe.{so,dylib}` — about 2 MB — along with the trim verifier log
-and a JSON dump of the exported ABI. `--trim=no` skips the reachability analysis and produces a
+and a JSON dump of the exported ABI. The library is compiled for the build machine's CPU unless
+`JULIA_CPU_TARGET` names others; `.github/workflows/Release.yml` sets the target lists the release
+bundles use, and `--bundle <dir>` makes the result relocatable. `--trim=no` skips the reachability analysis and produces a
 much larger library (about 310 MB) that does not depend on the analysis succeeding.
 
 Verify the result:
