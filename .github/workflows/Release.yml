@@ -21,6 +21,7 @@ on:
       - .github/workflows/Release.yml
       - capi/build.jl
       - capi/pack.sh
+      - capi/run_tests.jl
       - capi/RELEASE.md
       - capi/Project.toml
 
@@ -106,8 +107,11 @@ jobs:
             echo "::error::the trimmed build has verifier errors"; cat "$bundle/lib/libgemb.log"; exit 1
           fi
       - name: Check the bundled library against Julia
-        # The C driver links the bundle's own library, so this checks what ships.
-        run: julia --startup-file=no capi/run_tests.jl --lib "$BUNDLE/lib/libgemb"
+        # The C driver links the bundle's own library, so this checks what ships. The library can run a
+        # different CPU code path from the Julia session that writes the reference, which changes values
+        # in the last digits (up to 1e-13 relative), so agreement is to 1e-10 relative; `juliac.yml`
+        # checks bit identity on a library built for the native CPU.
+        run: julia --startup-file=no capi/run_tests.jl --lib "$BUNDLE/lib/libgemb" --rtol 1e-10
       - name: Check the bundle in a bare Debian
         # The library needs nothing of the host but the C library and the loader; a C compiler links the driver.
         if: runner.os == 'Linux'

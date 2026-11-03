@@ -13,7 +13,9 @@ runs on a machine without Julia.
 | `build.log` | The trim verifier's report |
 
 Requirements: glibc 2.17 or later on Linux, macOS 15 or later on Apple silicon. The library runs on
-any CPU of its platform.
+any CPU of its platform, taking the code path compiled for the nearest CPU. Its results agree with
+GEMB.jl run on the same machine to about 1e-13 relative, and exactly where the two take the same
+code path.
 
 ## Linking
 

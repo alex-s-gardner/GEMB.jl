@@ -14,7 +14,10 @@ remain Julia-side: use GEMB as a library for those, then hand the host a column 
 Each release of GEMB.jl carries a prebuilt bundle on its
 [GitHub Release](https://github.com/alex-s-gardner/GEMB.jl/releases) for `linux-x86_64`,
 `linux-aarch64` and `macos-arm64`. A bundle runs on any CPU of its platform, on glibc 2.17 or later
-(Linux) or macOS 15 or later, and needs no Julia installation.
+(Linux) or macOS 15 or later, and needs no Julia installation. It is compiled for several CPUs and
+takes the code path of the nearest one, so its results agree with GEMB.jl on the same machine to
+about 1e-13 relative, and exactly where the two take the same code path. The release check accepts
+1e-10.
 
 Download a bundle and check it against its checksum:
 
