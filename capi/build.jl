@@ -3,10 +3,12 @@
 # Build the GEMB C API shared library with JuliaC.
 #
 # Usage:
-#   julia capi/build.jl [--trim=safe|unsafe-warn|no] [--out <path>]
+#   julia capi/build.jl [--trim=safe|unsafe-warn|no] [--out <path>] [--bundle <dir>]
 #
 # Writes the library next to the requested output path and the full compiler transcript to
-# `<output>.log`. The log is the point of the exercise as much as the library is: under
+# `<output>.log`. With `--bundle`, JuliaC also copies `libjulia`, the standard libraries and the
+# artifacts the library loads into `<dir>` and sets relative rpaths, so the directory runs on a
+# machine without Julia. The log is the point of the exercise as much as the library is: under
 # `--trim` the verifier reports every call it could not resolve, and that report is what says
 # whether the compiled surface is still within scope.
 
@@ -22,6 +24,7 @@ const JULIAC_PROJECT = get(ENV, "JULIAC_PROJECT",
 
 trim = "safe"
 out = nothing
+bundle = nothing
 let i = 1
     while i <= length(ARGS)
         arg = ARGS[i]
@@ -31,6 +34,10 @@ let i = 1
             i += 1
             i <= length(ARGS) || error("--out requires an argument")
             global out = ARGS[i]
+        elseif arg == "--bundle"
+            i += 1
+            i <= length(ARGS) || error("--bundle requires an argument")
+            global bundle = ARGS[i]
         else
             error("unrecognized argument `$arg`")
         end
@@ -53,6 +60,7 @@ cmd = `$(Base.julia_cmd()) --startup-file=no --project=$JULIAC_PROJECT -m JuliaC
        --trim=$trim
        --experimental
        --verbose
+       $(bundle === nothing ? String[] : ["--bundle", bundle])
        $ENTRY`
 
 logfile = out * ".log"
