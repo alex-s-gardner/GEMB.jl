@@ -694,6 +694,11 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # 10 m is the paper's choice; it is a tuning parameter, inversely proportional to the
     # reworked mass. Read only under `:Keenan2021`. See `apply_redeposition!`.
     drift_fetch_length::Float64 = DRIFT_FETCH_LENGTH_DEFAULT
+    # Whether the `:Keenan2021` eroded mass is scaled by the temperature dependence of
+    # wind densification measured by Walter et al. (2024, eq. 6): 1 in cold air, 0.83 at −5 °C,
+    # 0.37 at −1 °C, 0.13 at 0 °C, from cohesion of snow near the melting point. Read only under
+    # `:Keenan2021`. See `redeposition_temperature_factor`.
+    redeposition_temperature_taper::Bool = false
     # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
     # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
     # path this removes mass from the surface cell and consumes latent heat, so it appears in

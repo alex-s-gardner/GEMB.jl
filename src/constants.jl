@@ -231,6 +231,13 @@ const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 100.0  # ρ_dm [kg m-3]: CLM4 v
 # horizontal scale over which the saltation transport is eroded from the surface. Keenan et
 # al. choose 10 m as the scale of sastrugi and barchan dunes and call it a tuning parameter.
 const DRIFT_FETCH_LENGTH_DEFAULT = 10.0
+# Walter et al. (2024) eq. 6, p. 3646: the wind-tunnel densification rate of drifting snow,
+# φ(Ta) = φ₀ + A·exp(−B/(k_B·Ta)), with φ₀ = 3.5 h-1 its value below −5 °C. Used divided by φ₀,
+# as the fraction of the cold-air rate.
+const REDEPOSIT_TAPER_RATE_COLD = 3.5          # φ₀ [h-1]
+const REDEPOSIT_TAPER_A = -3.12e38             # A₂ [h-1]
+const REDEPOSIT_TAPER_B = 2.06                 # B₂ [eV]
+const BOLTZMANN_EV = 8.617333262e-5            # k_B [eV K-1]
 
 # Standard 10 m reference height of wind speed [m]: the height eq. 4 of van Kampenhout et al.
 # (2017) and eqs. 3-4 of Keenan et al. (2021) define their wind at.

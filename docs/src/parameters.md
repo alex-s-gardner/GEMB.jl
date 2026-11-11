@@ -85,6 +85,7 @@ metamorphism. The calibration is described under Fresh snow on the Physics Notes
 | `horizontal_strain_rate` | **0.0** | yr⁻¹ | Ice-dynamic layer thinning; 0 disables the term |
 | `blowing_snow_sublimation` | **`false`** | – | Whether `blowing_snow_method = :Crocus` also sublimates the suspended fraction (Gordon et al., 2006). Off is Crocus's own default (`OSNOWDRIFT_SUBLIM`), and it is the only part of the computed scheme that removes mass |
 | `drift_fetch_length` | **10.0** | m | Fetch length `L` of the `:Keenan2021` saltation flux (Keenan et al., 2021, eq. 3); the reworked mass is inversely proportional to it. Bounded to (0, 1000] |
+| `redeposition_temperature_taper` | **false** | – | Scale the `:Keenan2021` eroded mass by the Walter et al. (2024, eq. 6) temperature dependence of wind densification: 1 in cold air, 0.83 at −5 °C, 0.13 at 0 °C (`redeposition_temperature_factor`) |
 | `drift_rate` | **0.0** | kg m⁻² yr⁻¹ | Prescribed net drift divergence, positive for erosion; 0 disables the term. A constant-rate shorthand for the `snow_drift` forcing layer, which takes precedence when the forcing carries one. Bounded to ±2000 |
 | `surface_slope` | **0.0** | m m⁻¹ | Hydraulic gradient; read only under `:ZuoOerlemans`/`:Darcy` |
 | `output_viscosity` | **`false`** | – | Adds a `viscosity` output layer; populated only under `:Crocus`/`:CrocusPure` |

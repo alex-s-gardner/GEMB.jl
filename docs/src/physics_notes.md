@@ -473,7 +473,10 @@ threshold of the surface cell, a saltation mass flux
 `Φ = 0.0014·ρ_a·u*·(u* − u*_t)·(u* + 7.6·u*_t + 205)/L` is eroded from the top of the column
 (`L = drift_fetch_length`, 10 m; `u* = κ·U₁₀/ln(10/0.002)`) and redeposited at
 `ρ_rd = 361·log₁₀(U₁₀) + 33`, never lowering a cell's density; erosion stops at the first wet
-or non-drifting cell. The reworked mass stays in its own cell, so mass, temperature, water and
+or non-drifting cell. With `redeposition_temperature_taper`, the eroded mass is scaled by the
+Walter et al. (2024, eq. 6) wind-tunnel temperature dependence of wind densification, which
+falls from 1 in cold air to 0.83 at −5 °C and 0.13 at 0 °C as grain cohesion suppresses
+saltation. The reworked mass stays in its own cell, so mass, temperature, water and
 age are unchanged and no cell is created. Dendritic cells take Wever et al.'s (2023, Table 1)
 high-wind microstructure in proportion to the reworked mass. It replaces the `:Crocus`
 compaction (both represent the packing of wind-transported snow) and cannot be combined with

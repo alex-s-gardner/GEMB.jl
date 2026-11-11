@@ -661,6 +661,34 @@ function saltation_mass_flux(density_air::Real, u_star::Real, u_star_threshold::
 end
 
 """
+    redeposition_temperature_factor(T_air) -> f ∈ [0, 1]
+
+Fraction of the cold-air rate of wind densification at air temperature `T_air` [K], from the
+wind-tunnel fit of Walter et al. (2024), eq. 6, p. 3646:
+
+    f = 1 + (A₂/φ₀)·exp(−B₂/(k_B·T_air)),   φ₀ = 3.5 h-1, A₂ = −3.12e38 h-1, B₂ = 2.06 eV
+
+It is 0.97 at −10 °C, 0.83 at −5 °C, 0.37 at −1 °C and 0.13 at 0 °C. The drop follows the
+cohesion of snow grains near the melting point, which suppresses saltation (Walter et al.,
+p. 3645: transport "entirely stopped at around −0.5 to 0 °C" as the air warmed from −5 to
++2 °C). Above 0 °C the fit turns negative, so `f` is clamped to `[0, 1]`.
+
+Throws an `ArgumentError` unless `T_air` is finite and positive.
+
+# References
+- Walter, B., Weigel, H., Wahl, S., and Löwe, H. (2024). Wind tunnel experiments to quantify
+  the effect of aeolian snow transport on the surface snow microstructure. *The Cryosphere*
+  18, 3633-3652. https://doi.org/10.5194/tc-18-3633-2024
+"""
+function redeposition_temperature_factor(T_air::Real)
+    (isfinite(T_air) && T_air > 0) ||
+        throw(ArgumentError("air temperature must be finite and positive [K], got $T_air"))
+    f = 1 + REDEPOSIT_TAPER_A / REDEPOSIT_TAPER_RATE_COLD *
+            exp(-REDEPOSIT_TAPER_B / (BOLTZMANN_EV * T_air))
+    return clamp(f, 0.0, 1.0)
+end
+
+"""
     redeposition_threshold_wind_speed(mobility) -> U₅,t [m s-1]
 
 The 5 m gust speed at which a layer of the given Crocus mobility index starts to drift,
@@ -697,6 +725,8 @@ Per step:
 4. The eroded mass `M = Φ·dt`, with `Φ` the saltation flux of eq. 3
    ([`saltation_mass_flux`](@ref)) at the air density of the forcing and fetch length
    `mp.drift_fetch_length`.
+   With `mp.redeposition_temperature_taper`, `M` is multiplied by
+   [`redeposition_temperature_factor`](@ref) of the air temperature.
 5. `M` is taken from the top of the column down. Erosion stops at the first cell that is wet
    or whose own threshold is at or above `U₅`, or when `M` is used up. Of a cell of mass `m`,
    the reworked mass `m_r = min(M, m)` is redeposited in the same cell at
@@ -760,6 +790,8 @@ function apply_redeposition!(cols::NamedTuple, cfs::ClimateForcingStep, mp::Mode
     density_air = air_density(cfs.pressure_air, cfs.temperature_air)
     eroded = saltation_mass_flux(density_air, u_star, u_star_threshold,
         mp.drift_fetch_length) * cfs.dt
+    mp.redeposition_temperature_taper &&
+        (eroded *= redeposition_temperature_factor(cfs.temperature_air))
     density_redeposit = redeposition_density(wind_10m)
 
     for i in eachindex(dz)

@@ -234,3 +234,40 @@ end
         GEMB.ModelParameters(blowing_snow_method=:Keenan2021, drift_fetch_length=3.0))
     @test sum(c_L3.dz) < sum(c_b.dz)
 end
+
+@testset "Walter 2024 eq. 6: redeposition temperature factor" begin
+    _f_big(T) = 1 + big"-3.12e38" / big"3.5" * exp(-big"2.06" / (big"8.617333262e-5" * big(T)))
+    setprecision(BigFloat, 256) do
+        for T in (233.15, 263.15, 268.15, 272.15, 273.15)
+            @test GEMB.redeposition_temperature_factor(T) ≈ Float64(_f_big(T)) rtol = 1e-12
+        end
+    end
+    @test GEMB.redeposition_temperature_factor(243.15) ≈ 1.0 atol = 1e-3
+    @test GEMB.redeposition_temperature_factor(268.15) ≈ 0.829 atol = 1e-3
+    @test GEMB.redeposition_temperature_factor(273.15) ≈ 0.125 atol = 1e-3
+    @test GEMB.redeposition_temperature_factor(280.0) == 0.0
+    f = [GEMB.redeposition_temperature_factor(T) for T in 230.0:0.5:280.0]
+    @test all(diff(f) .<= 0)
+    @test_throws "air temperature must be finite and positive" GEMB.redeposition_temperature_factor(0.0)
+end
+
+@testset "Keenan 2021 with the temperature taper" begin
+    mp_t = GEMB.ModelParameters(blowing_snow_method=:Keenan2021, grain_growth_method=:hybrid,
+        redeposition_temperature_taper=true)
+    # Cold air: the taper factor is 1 to within 1e-6, so the columns agree.
+    a, b = _rd_cols(), _rd_cols()
+    GEMB.apply_redeposition!(a, _rd_step(temperature_air=233.15), _MP_RD)
+    GEMB.apply_redeposition!(b, _rd_step(temperature_air=233.15), mp_t)
+    @test b.density ≈ a.density rtol = 1e-6
+    # Near 0 °C the tapered run reworks less mass, so its surface cell stays lighter, and
+    # column mass is unchanged in both.
+    a, b, c0 = _rd_cols(), _rd_cols(), _rd_cols()
+    GEMB.apply_redeposition!(a, _rd_step(temperature_air=272.65), _MP_RD)
+    GEMB.apply_redeposition!(b, _rd_step(temperature_air=272.65), mp_t)
+    @test c0.density[1] < b.density[1] < a.density[1]
+    m(c) = sum(c.density .* c.dz)
+    @test m(a) ≈ m(c0) rtol = 1e-13
+    @test m(b) ≈ m(c0) rtol = 1e-13
+    # Off by default.
+    @test GEMB.ModelParameters().redeposition_temperature_taper == false
+end
