@@ -165,6 +165,7 @@ const FLAG_FIELDS = (
     :output_viscosity,
     :blowing_snow_sublimation,
     :destructive_metamorphism,
+    :redeposition_temperature_taper,
 )
 
 const N_FLAGS = length(FLAG_FIELDS)
@@ -268,6 +269,7 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),
         destructive_metamorphism=f(4),
+        redeposition_temperature_taper=f(5),
         dt_divisors=GEMB.fast_divisors(round(Int, dt * 10000)) ./ 10000,
     )
 end

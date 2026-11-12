@@ -33,7 +33,7 @@ extern "C" {
 
 #define GEMB_N_OPTIONS  17
 #define GEMB_N_NUMERIC  34
-#define GEMB_N_FLAGS     4
+#define GEMB_N_FLAGS     5
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
 
@@ -206,6 +206,9 @@ extern "C" {
 /* gemb_defaults sets this flag (the default densification is Crocus); a host that selects another
  * densification method must clear it, or validation rejects the parameters. */
 #define GEMB_FLAG_DESTRUCTIVE_METAMORPHISM         3
+/* Scales the GEMB_BLOWING_SNOW_KEENAN2021 eroded mass by the Walter et al. (2024) temperature
+ * dependence of wind densification. gemb_defaults sets it. */
+#define GEMB_FLAG_REDEPOSITION_TEMPERATURE_TAPER   4
 
 /* --- forcing[] indices. --------------------------------------------------------------- */
 
