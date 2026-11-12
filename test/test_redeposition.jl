@@ -32,7 +32,10 @@ _rd_cols(; dz=[0.05, 0.05, 0.1, 0.2], density=[150.0, 180.0, 250.0, 500.0],
     copy(density), copy(water), copy(grain_radius), copy(dendricity), copy(sphericity),
     zeros(length(dz)))
 
-const _MP_RD = GEMB.ModelParameters(blowing_snow_method=:Keenan2021, grain_growth_method=:hybrid)
+# The untapered scheme at Keenan et al.'s 10 m fetch, the setting every expected value below is
+# written for; the GEMB defaults (`CROCUS_FIRN_WIND_PACKING`) are tested at the end.
+const _MP_RD = GEMB.ModelParameters(blowing_snow_method=:Keenan2021, grain_growth_method=:hybrid,
+    redeposition_temperature_taper=false, drift_fetch_length=10.0)
 
 @testset "Keenan 2021 eq. 4: redeposited density" begin
     setprecision(BigFloat, 256) do
@@ -253,7 +256,7 @@ end
 
 @testset "Keenan 2021 with the temperature taper" begin
     mp_t = GEMB.ModelParameters(blowing_snow_method=:Keenan2021, grain_growth_method=:hybrid,
-        redeposition_temperature_taper=true)
+        redeposition_temperature_taper=true, drift_fetch_length=10.0)
     # Cold air: the taper factor is 1 to within 1e-6, so the columns agree.
     a, b = _rd_cols(), _rd_cols()
     GEMB.apply_redeposition!(a, _rd_step(temperature_air=233.15), _MP_RD)
@@ -268,6 +271,12 @@ end
     m(c) = sum(c.density .* c.dz)
     @test m(a) ≈ m(c0) rtol = 1e-13
     @test m(b) ≈ m(c0) rtol = 1e-13
-    # Off by default.
-    @test GEMB.ModelParameters().redeposition_temperature_taper == false
+    # The defaults: the tapered scheme at the calibrated fetch.
+    mp_d = GEMB.ModelParameters()
+    for (k, v) in pairs(GEMB.CROCUS_FIRN_WIND_PACKING)
+        @test getfield(mp_d, k) == v
+    end
+    @test GEMB.CROCUS_FIRN_WIND_PACKING ==
+          (; blowing_snow_method = :Keenan2021, drift_fetch_length = 250.0,
+             redeposition_temperature_taper = true)
 end

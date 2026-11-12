@@ -45,9 +45,10 @@ implementation to check against; the SURFEX source (`src/SURFEX/snowcro.F90:4685
 constants in `src/SURFEX/modd_snow_par.F90:290-326`) is what the port was verified line by
 line against.
 
-None of this runs at the defaults (`blowing_snow_method = :none`, `drift_rate = 0.0`,
-`blowing_snow_sublimation = false`), which leaves output bit-identical to a run without the
-term.
+The default is `CROCUS_FIRN_WIND_PACKING`, the `:Keenan2021` redeposition with its
+temperature taper; `drift_rate = 0.0` and `blowing_snow_sublimation = false`, so no
+blowing-snow path removes mass by default. `blowing_snow_method = :none` turns wind packing
+off and leaves output bit-identical to a run without the term.
 
 # References
 - Guyomarc'h, G. & Mérindol, L. (1998). Validation of an application for forecasting blowing
@@ -681,8 +682,7 @@ Throws an `ArgumentError` unless `T_air` is finite and positive.
   18, 3633-3652. https://doi.org/10.5194/tc-18-3633-2024
 """
 function redeposition_temperature_factor(T_air::Real)
-    (isfinite(T_air) && T_air > 0) ||
-        throw(ArgumentError("air temperature must be finite and positive [K], got $T_air"))
+    _air_temperature_check(T_air)
     f = 1 + REDEPOSIT_TAPER_A / REDEPOSIT_TAPER_RATE_COLD *
             exp(-REDEPOSIT_TAPER_B / (BOLTZMANN_EV * T_air))
     return clamp(f, 0.0, 1.0)
@@ -790,8 +790,9 @@ function apply_redeposition!(cols::NamedTuple, cfs::ClimateForcingStep, mp::Mode
     density_air = air_density(cfs.pressure_air, cfs.temperature_air)
     eroded = saltation_mass_flux(density_air, u_star, u_star_threshold,
         mp.drift_fetch_length) * cfs.dt
-    mp.redeposition_temperature_taper &&
-        (eroded *= redeposition_temperature_factor(cfs.temperature_air))
+    taper = mp.redeposition_temperature_taper ?
+            redeposition_temperature_factor(cfs.temperature_air) : 1.0
+    eroded *= taper
     density_redeposit = redeposition_density(wind_10m)
 
     for i in eachindex(dz)

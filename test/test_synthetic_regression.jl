@@ -73,9 +73,9 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    @test mean_albedo ≈ 0.851263 atol = ALBEDO_ATOL
-    @test total_melt ≈ 348.555912 atol = mass_tol(348.555912)
-    @test total_refreeze ≈ 347.259360 atol = mass_tol(347.259360)
+    @test mean_albedo ≈ 0.853743 atol = ALBEDO_ATOL
+    @test total_melt ≈ 316.784221 atol = mass_tol(316.784221)
+    @test total_refreeze ≈ 316.034800 atol = mass_tol(316.034800)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -90,12 +90,12 @@ end
     @test total(:runoff) > 0.5 * total(:precipitation)
     @test total(:refreeze) > 0.2 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.856312 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 5538.731369 atol = mass_tol(5538.731369)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.856584 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 5537.223637 atol = mass_tol(5537.223637)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2699.522068 atol = mass_tol(2699.522068)
-    @test total(:runoff) ≈ 8122.407532 atol = mass_tol(8122.407532)
-    @test total(:evaporation_condensation) ≈ 158.119231 atol = mass_tol(158.119231)
+    @test total(:refreeze) ≈ 2737.327733 atol = mass_tol(2737.327733)
+    @test total(:runoff) ≈ 8073.546544 atol = mass_tol(8073.546544)
+    @test total(:evaporation_condensation) ≈ 158.871706 atol = mass_tol(158.871706)
 end
 
 @testset "Synthetic regression: thin snow over dark ice at low sun" begin

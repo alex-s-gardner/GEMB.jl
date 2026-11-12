@@ -235,7 +235,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # driftable in the column; before `calculate_melt`, so a wind slab formed now can block this
     # timestep's percolation; before the grid controllers (step 9), so a cell driven out of its
     # thickness band is fixed up immediately. The two schemes are independent and may both be on.
-    # A no-op at the `blowing_snow_method = :none`, `drift_rate = 0.0` defaults.
+    # A no-op under `blowing_snow_method = :none` and `drift_rate = 0.0`.
     cols_drift = column_state(temperature, dz, density, water, grain_radius,
         grain_dendricity, grain_sphericity, age)
 

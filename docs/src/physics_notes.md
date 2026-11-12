@@ -82,21 +82,24 @@ Two departures from the published law:
   change its temperature and accumulation sensitivity about a reference climate (258.15 K,
   600 kg m⁻² yr⁻¹) at which they leave the rate unchanged, and `crocus_overburden_factor`
   scales the Crocus viscous strain rate above 350 kg m⁻³, ramped in from 300.
-- The default handoff and factors (`CROCUS_FIRN_CALIBRATION`) are the best-fitting
-  rate-matched `:Arthern` configuration that passes the GEMB v2.0 paper's firn decision rule,
+- The default handoff and factors (`CROCUS_FIRN_CALIBRATION`), with the default wind packing
+  (`blowing_snow_method = :Keenan2021`, `redeposition_temperature_taper`,
+  `drift_fetch_length = 250`), are the rate-matched `:Arthern` configuration that passes the
+  GEMB v2.0 paper's firn decision rule with the lowest bulk-density error at the time of
+  measurement,
   on 244 firn cores at 133 sites (98 on the Greenland and Antarctic ice sheets from SUMup
   2025, 35 on glaciers and ice caps), each core's snowfall matched to its measured
   accumulation and its column at least 100 m deep. The rule asks for a lower objective than
   the published handoff in at least 95 % of site resamples, no region degraded past its
   bound, an activation energy of at least 45 kJ mol⁻¹, a median firn-air-content bias to 10
   and 20 m within ±0.2 m on the glaciers and on the ice sheets (the quantity altimetry
-  converts a height change through), and seasonal snow no resolvably worse (SNOTEL, station
-  settling, WGMS winter pits). Its objective is 2.33 against the published handoff's 5.42,
-  and its median 20 m firn-air-content bias is −0.00 m on the glaciers and +0.02 m on the
-  ice sheets. Calibrated with the same six factors, `:GSFC2020` scores the same within the
-  site bootstrap. The handoff law's creep activation energy is 50.1 kJ mol⁻¹, above the
-  lowest measured value for firn creep. The rates are a best-performing set, not physically
-  identified values.
+  converts a height change through), and seasonal snow density no resolvably worse (SNOTEL,
+  WGMS winter pits). Its objective is 2.51 against the published handoff's 5.36, and its
+  mean absolute 0–1 m density error on the ice sheets is 38 kg m⁻³, against 91 without wind
+  packing at the same rates; no depth bin is resolvably worse. Its median 20 m
+  firn-air-content bias is −0.11 m on the glaciers and −0.20 m on the ice sheets. The handoff
+  law's creep activation energy is 50.1 kJ mol⁻¹, above the lowest measured value for firn
+  creep. The rates are a best-performing set, not physically identified values.
 
 The paper's `c_η = 250` and its `f2`, with Crocus's gate, are used, where the Community Firn
 Model hardcodes `f2 = 4` and adopts van Kampenhout et al. (2017)'s retuned `c_η = 358`.

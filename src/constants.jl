@@ -142,7 +142,8 @@ const GSFC2020_ACTIVATION_ENERGY = (59500.0, 56870.0)
 The default Crocus firn handoff and its calibration factors (`ModelParameters` fields
 `crocus_handoff_*` and `crocus_overburden_factor`): `:Crocus` hands firn to `:Arthern` under
 `:rate_match` from 300 kg m-3, with the rate factors of the firn-core calibration of the GEMB
-v2.0 paper. The handoff law's creep activation energy,
+v2.0 paper. The calibration was made with `CROCUS_FIRN_WIND_PACKING`, so the factors assume
+it. The handoff law's creep activation energy,
 `ARTHERN_ACTIVATION_ENERGY + crocus_handoff_activation_energy_shift` = 50.1 kJ mol-1, is above
 the lowest measured value for firn creep (45 kJ mol-1) and the grain-growth energy
 (`GRAIN_GROWTH_EG`, 42.4 kJ mol-1). `CROCUS_PUBLISHED_HANDOFF` is the same fields at the published
@@ -157,7 +158,24 @@ const CROCUS_FIRN_CALIBRATION = (;
     crocus_handoff_activation_energy_shift = -9858.14,
     crocus_handoff_accumulation_exponent_scale = 0.845621,
     crocus_handoff_stage_density = 545.319,
-    crocus_overburden_factor = 1.27096,
+    crocus_overburden_factor = 1.0,
+)
+
+"""
+    CROCUS_FIRN_WIND_PACKING
+
+The default wind packing (`ModelParameters` fields `blowing_snow_method`, `drift_fetch_length`
+and `redeposition_temperature_taper`), the setting `CROCUS_FIRN_CALIBRATION` was calibrated
+with: the Keenan et al. (2021) erosion–redeposition (eqs. 3–4) with the Walter et al. (2024)
+temperature taper (`redeposition_temperature_factor`), at a fetch length `L` of 250 m.
+Keenan et al. choose `L` = 10 m, the scale of sastrugi and barchan dunes, and call it a tuning
+parameter; 250 m is the firn-core calibration of the GEMB v2.0 paper with the taper on.
+`blowing_snow_method = :none` turns wind packing off.
+"""
+const CROCUS_FIRN_WIND_PACKING = (;
+    blowing_snow_method = :Keenan2021,
+    drift_fetch_length = 250.0,
+    redeposition_temperature_taper = true,
 )
 
 # Reference temperature of the Calonne et al. (2019) conductivity regressions [K]. Their
@@ -227,10 +245,6 @@ const DESTRUCTIVE_METAMORPHISM_C5 = 0.046      # [m3 kg-1], Schneider p. 3 (46e-
 const DESTRUCTIVE_METAMORPHISM_WET_FACTOR = 2.0  # c2 with liquid water present, vK17 p. 2587
 const DESTRUCTIVE_METAMORPHISM_DENSITY_DEFAULT = 100.0  # ρ_dm [kg m-3]: CLM4 value (CLM5/vK17 p. 2587: 175)
 
-# Fetch length L [m] of the Keenan et al. (2021) saltation flux, eq. 3, p. 1067: the
-# horizontal scale over which the saltation transport is eroded from the surface. Keenan et
-# al. choose 10 m as the scale of sastrugi and barchan dunes and call it a tuning parameter.
-const DRIFT_FETCH_LENGTH_DEFAULT = 10.0
 # Walter et al. (2024) eq. 6, p. 3646: the wind-tunnel densification rate of drifting snow,
 # φ(Ta) = φ₀ + A·exp(−B/(k_B·Ta)), with φ₀ = 3.5 h-1 its value below −5 °C. Used divided by φ₀,
 # as the fraction of the cold-air rate.

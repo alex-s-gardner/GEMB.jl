@@ -687,18 +687,18 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # Keenan et al. (2021) eqs. 3-4: above the erosion threshold, a saltation mass flux is
     # eroded from the top of the column and redeposited in place at a wind-dependent density
     # `361·log10(U₁₀) + 33`. It replaces the `:Crocus` compaction rather than adding to it, and
-    # is also mass-conserving. See `apply_redeposition!`.
-    blowing_snow_method::Symbol = :none
+    # is also mass-conserving. See `apply_redeposition!`. The default is
+    # `CROCUS_FIRN_WIND_PACKING`.
+    blowing_snow_method::Symbol = CROCUS_FIRN_WIND_PACKING.blowing_snow_method
     # Fetch length L [m] of the `blowing_snow_method = :Keenan2021` saltation flux (Keenan et
     # al., 2021, eq. 3): the eroded mass per step is the saltation transport divided by L.
-    # 10 m is the paper's choice; it is a tuning parameter, inversely proportional to the
-    # reworked mass. Read only under `:Keenan2021`. See `apply_redeposition!`.
-    drift_fetch_length::Float64 = DRIFT_FETCH_LENGTH_DEFAULT
-    # Whether the `:Keenan2021` eroded mass is scaled by the temperature dependence of
-    # wind densification measured by Walter et al. (2024, eq. 6): 1 in cold air, 0.83 at −5 °C,
-    # 0.37 at −1 °C, 0.13 at 0 °C, from cohesion of snow near the melting point. Read only under
-    # `:Keenan2021`. See `redeposition_temperature_factor`.
-    redeposition_temperature_taper::Bool = false
+    # Inversely proportional to the reworked mass; see `CROCUS_FIRN_WIND_PACKING`. Read only
+    # under `:Keenan2021`. See `apply_redeposition!`.
+    drift_fetch_length::Float64 = CROCUS_FIRN_WIND_PACKING.drift_fetch_length
+    # Whether the `:Keenan2021` eroded mass is scaled by the Walter et al. (2024) temperature
+    # dependence of wind densification (`redeposition_temperature_factor`). Read only under
+    # `:Keenan2021`.
+    redeposition_temperature_taper::Bool = CROCUS_FIRN_WIND_PACKING.redeposition_temperature_taper
     # Whether the blowing-snow scheme also sublimates suspended snow after Gordon et al.
     # (2006), as Crocus implements it (Lafaysse et al., 2026 eqs. 67-68). Unlike the compaction
     # path this removes mass from the surface cell and consumes latent heat, so it appears in

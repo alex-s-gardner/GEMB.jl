@@ -513,23 +513,24 @@ end
     span = Ti(1:(8*Dates.value(Date(2000, 1, 1) - Date(1994, 1, 1))))
     cf = initialize_forcing(ds)[span]
 
-    mp0 = initialize_parameters(output_frequency=:monthly)
+    # The reference has no wind packing: every blowing-snow path off.
+    mp0 = initialize_parameters(output_frequency=:monthly, blowing_snow_method=:none)
     profile = initialize_profile(mp0, cf)
     z_target = sum(profile[:dz])
     n_cells = length(profile[:dz])
 
-    # Off by default: the output layer is present and identically zero. `verbose=true`
+    # Wind packing off: the output layer is present and identically zero. `verbose=true`
     # exercises the per-step and whole-run mass budgets, both of which now carry the term.
     out0 = gemb(profile, cf, mp0; verbose=true)
     @test haskey(out0, :blowing_snow)
     @test all(iszero, out0[:blowing_snow])
 
-    # The guarantee the three defaults rest on. Setting them explicitly to their defaults must
-    # reproduce the default run bit-for-bit — any leak surfaces here rather than as an
-    # unexplained move in `test_synthetic_regression.jl`.
+    # With every path off, the fields only the schemes read must not leak into the run: a
+    # different fetch and taper setting reproduce the reference bit-for-bit.
     out_explicit = gemb(profile, cf,
         initialize_parameters(output_frequency=:monthly, blowing_snow_method=:none,
-            blowing_snow_sublimation=false, drift_rate=0.0))
+            blowing_snow_sublimation=false, drift_rate=0.0, drift_fetch_length=10.0,
+            redeposition_temperature_taper=false))
     for k in (:temperature, :density, :dz, :melt, :runoff, :refreeze, :blowing_snow)
         @test parent(out_explicit[k]) == parent(out0[k])
     end
