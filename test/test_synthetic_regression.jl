@@ -8,22 +8,22 @@
 # Three sites:
 #
 # - `test_1` from GEMB_ClimateForcing.jl (3-hourly, 1994-2025, 75-cycle spin-up on its
-#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 10.9 kg m-2 yr-1)
+#   climatology): a cold, dry accumulation site, T̄ = 249.4 K, where melt (≈ 9.6 kg m-2 yr-1)
 #   is the small residual of the surface energy balance and all of it refreezes. Its runoff is
 #   exactly zero and its rain is 0.05% of precipitation, so it sees the surface energy balance
 #   and the radiation inputs but not the liquid-water paths. A change to `test_1` in
 #   GEMB_ClimateForcing.jl moves these values without anything in GEMB.jl changing.
 # - The maritime site of `synthetic_maritime_forcing.jl` (hourly, 4 years, no spin-up):
-#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1386 of melt, 673 of refreeze and
-#   2033 of runoff, under a varying solar zenith angle and cloud optical thickness. It sees the
+#   seasonal snow over ice with 1300 kg m-2 yr-1 of rain, 1748 of melt, 586 of refreeze and
+#   2496 of runoff, under a varying solar zenith angle and cloud optical thickness. It sees the
 #   rain, pore-water, refreeze, runoff and vapor-phase paths and the albedo's zenith and cloud
 #   terms. The forcing is closed-form and lives in this repository.
 # - The thin-snow site of `synthetic_thin_snow_forcing.jl` (hourly, 90 spring days at 72° N, no
 #   spin-up, `albedo_ice = 0.30`): repeated light snowfall on bare dark ice that coarsens and
 #   melts off within days, with the sun at least 50° from the zenith and a cloud optical
 #   thickness of at least 3. Thin coarse snow over ice puts the albedo on the `A < 1` branch of
-#   Gardner & Sharp (2010) eq. 13, which the other two sites barely reach. 1058 kg m-2 of melt
-#   and 1111 of runoff from 253 of precipitation.
+#   Gardner & Sharp (2010) eq. 13, which the other two sites barely reach. 3041 kg m-2 of melt
+#   and 3242 of runoff from 253 of precipitation.
 #
 # The tolerances come from measured variability, on arm64 macOS with Julia 1.12.7:
 #
@@ -73,9 +73,9 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    @test mean_albedo ≈ 0.853743 atol = ALBEDO_ATOL
-    @test total_melt ≈ 316.784221 atol = mass_tol(316.784221)
-    @test total_refreeze ≈ 316.034800 atol = mass_tol(316.034800)
+    @test mean_albedo ≈ 0.855912 atol = ALBEDO_ATOL
+    @test total_melt ≈ 279.255042 atol = mass_tol(279.255042)
+    @test total_refreeze ≈ 279.292726 atol = mass_tol(279.292726)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -88,14 +88,14 @@ end
     # The premise of this site: rain and runoff are each a large part of the budget.
     @test total(:rain) > 0.4 * total(:precipitation)
     @test total(:runoff) > 0.5 * total(:precipitation)
-    @test total(:refreeze) > 0.2 * total(:precipitation)
+    @test total(:refreeze) > 0.15 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.856584 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 5537.223637 atol = mass_tol(5537.223637)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.852716 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 6992.276647 atol = mass_tol(6992.276647)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2737.327733 atol = mass_tol(2737.327733)
-    @test total(:runoff) ≈ 8073.546544 atol = mass_tol(8073.546544)
-    @test total(:evaporation_condensation) ≈ 158.871706 atol = mass_tol(158.871706)
+    @test total(:refreeze) ≈ 2342.568416 atol = mass_tol(2342.568416)
+    @test total(:runoff) ≈ 9983.72672 atol = mass_tol(9983.72672)
+    @test total(:evaporation_condensation) ≈ 275.501406 atol = mass_tol(275.501406)
 end
 
 @testset "Synthetic regression: thin snow over dark ice at low sun" begin
@@ -110,10 +110,10 @@ end
     # The premise of this site: the snow melts off and the ice beneath melts too.
     @test total(:melt) > total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.736489 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 1058.360946 atol = mass_tol(1058.360946)
-    @test total(:refreeze) ≈ 100.362076 atol = mass_tol(100.362076)
-    @test total(:runoff) ≈ 1111.273253 atol = mass_tol(1111.273253)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.543748 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 3040.825007 atol = mass_tol(3040.825007)
+    @test total(:refreeze) ≈ 17.043811 atol = mass_tol(17.043811)
+    @test total(:runoff) ≈ 3241.586952 atol = mass_tol(3241.586952)
 end
 
 @testset "Synthetic regression: tolerance policy" begin

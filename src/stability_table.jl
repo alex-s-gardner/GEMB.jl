@@ -34,17 +34,19 @@ function _stability_solve(q::Float64, sgn::Float64, s0::Float64, logM::Float64,
 end
 
 """
-    _stability_table(z_w, z_T, z0, zT) -> StabilityTable
+    _stability_table(z_w, z_T, z0, zT, ri_max=Inf) -> StabilityTable
 
 Build the [`StabilityTable`](@ref) for wind height `z_w`, temperature and humidity height
-`z_T`, momentum roughness `z0` and scalar roughness `zT` [m]. Nodes are uniform in
+`z_T`, momentum roughness `z0` and scalar roughness `zT` [m], with stable limit `ri_max` on the
+bulk Richardson number (see [`_stable_richardson_max`](@ref)). Nodes are uniform in
 `q = ln|Ri|` from `ln(STABILITY_TABLE_RI_MIN)`, spaced at most `STABILITY_TABLE_DQ`: up to
 `ln(STABILITY_TABLE_RI_MAX)` for stable `Ri`, and up to the `Ri` at which `ζ` reaches
 `ZETA_UNSTABLE_MIN` for unstable `Ri`. At each node `ζ` is the converged solution of
 `z_w/L = Ri·F_m²/F_h` (the same Beljaars-Holtslag / Paulson-Högström functions as
 [`obukhov_stability`](@ref)), and `ds/dq` and `dG/dq` are exact.
 """
-function _stability_table(z_w::Float64, z_T::Float64, z0::Float64, zT::Float64)
+function _stability_table(z_w::Float64, z_T::Float64, z0::Float64, zT::Float64,
+    ri_max::Float64=Inf)
     logM = log(z_w / z0)
     logHT = log(z_T / zT)
     r0, rT, rTs = z0 / z_w, z_T / z_w, zT / z_w
@@ -70,25 +72,56 @@ function _stability_table(z_w::Float64, z_T::Float64, z0::Float64, zT::Float64)
     stable = nodes(1.0, log(STABILITY_TABLE_RI_MAX))
     q_clamp, = _stability_point(ZETA_UNSTABLE_MIN, logM, logHT, r0, rT, rTs)
     unstable = nodes(-1.0, q_clamp)
+    # G at the stable limit, from the converged solution there.
+    G_max = isfinite(ri_max) ? _stability_point(exp(_stability_solve(log(ri_max), 1.0,
+        log(ri_max) + s_neutral, logM, logHT, r0, rT, rTs)), logM, logHT, r0, rT, rTs)[3] : NaN
     return StabilityTable(z_w, z_T, z0, zT, logM, logHT, log(logM * logHT), q_min,
-        stable..., unstable...)
+        stable..., unstable..., ri_max, G_max)
 end
 
 """
-    _stability_table!(workspace, z_w, z_T, z0, zT) -> StabilityTable
+    _stable_richardson_max(mp, z_w, z_T) -> Float64
+
+Stable limit on GEMB's bulk Richardson number `Ri = g·z_w·Δθ/(θ̄·U²)` for wind height `z_w` and
+temperature height `z_T` [m]: `mp.stable_richardson_max·z_T/z_w`.
+
+`mp.stable_richardson_max` is stated in the convention of Crocus (Lafaysse et al., 2026, eqs. 86
+and F16), whose bulk Richardson number `g·z_u²·Δθ/(z_a·θ̄·U²)` is GEMB's times `z_w/z_T`, so the
+limit holds at the same stratification for any pair of heights. Above it the transfer
+coefficients are held at their value at the limit, so the turbulent fluxes stay proportional to
+the temperature and humidity differences in very stable air (Martin and Lejeune, 1998).
+
+# References
+- Martin, E. and Lejeune, Y. (1998). Turbulent fluxes above the snow surface. *Ann. Glaciol.*
+  26, 179-183.
+- Lafaysse, M., et al. (2026). Version 3.0.2 of the Crocus snowpack model. *Geosci. Model
+  Dev.* 19, 6273-6334.
+"""
+@inline _stable_richardson_max(mp, z_w::Float64, z_T::Float64) =
+    mp.stable_richardson_max * z_T / z_w
+
+"""
+    _stability_table!(workspace, z_w, z_T, z0, zT, ri_max=Inf) -> StabilityTable
+    _stability_table!(workspace, mp, cfs, z0, zT) -> StabilityTable
 
 The cached [`StabilityTable`](@ref) for these heights and roughness lengths, built and stored in
 `workspace` on first use. A workspace belongs to one run, so the cache needs no locking.
 """
 function _stability_table!(ws::ThermalWorkspace, z_w::Float64, z_T::Float64, z0::Float64,
-    zT::Float64)
+    zT::Float64, ri_max::Float64=Inf)
     for tab in ws.stability_tables
-        tab.z_w == z_w && tab.z_T == z_T && tab.z0 == z0 && tab.zT == zT && return tab
+        tab.z_w == z_w && tab.z_T == z_T && tab.z0 == z0 && tab.zT == zT &&
+            tab.ri_max == ri_max && return tab
     end
-    tab = _stability_table(z_w, z_T, z0, zT)
+    tab = _stability_table(z_w, z_T, z0, zT, ri_max)
     push!(ws.stability_tables, tab)
     return tab
 end
+
+_stability_table!(ws::ThermalWorkspace, mp, cfs::ClimateForcingStep, z0::Float64,
+    zT::Float64) = _stability_table!(ws, cfs.wind_observation_height,
+    cfs.temperature_observation_height, z0, zT,
+    _stable_richardson_max(mp, cfs.wind_observation_height, cfs.temperature_observation_height))
 
 # Cubic Hermite interpolation of node values `y` with node derivatives `d` (per unit q) on a
 # grid of spacing `h` from `q_min`; returns the value and its derivative with respect to q.
@@ -111,6 +144,7 @@ end
 
 `G = ln(F_m·F_h)` and `dG/dRi` for bulk Richardson number `Ri`, from the table:
 
+- `Ri > tab.ri_max`: the value at `tab.ri_max`, constant in `Ri`;
 - `|Ri| < STABILITY_TABLE_RI_MIN`: linear in `Ri` between the neutral value and the first node;
 - `Ri > STABILITY_TABLE_RI_MAX`: the converged solution, computed for this `Ri`;
 - `Ri` at or beyond the unstable end, where `ζ` reaches `ZETA_UNSTABLE_MIN`: the value there,
@@ -119,6 +153,7 @@ end
 """
 @inline function _stability_lookup(tab::StabilityTable, Ri::Float64)
     isfinite(Ri) || error("_stability_lookup: bulk Richardson number is $(Ri)")
+    Ri > tab.ri_max && return tab.G_max, 0.0
     a = abs(Ri)
     if a < STABILITY_TABLE_RI_MIN
         G1 = Ri >= 0.0 ? tab.stable_G[1] : tab.unstable_G[1]
@@ -152,10 +187,12 @@ end
     _stability_zeta(tab, Ri) -> ζ
 
 Stability parameter `ζ = z_w/L` interpolated from the table, with the same regimes as
-[`_stability_lookup`](@ref): `ζ` linear in `Ri` below `STABILITY_TABLE_RI_MIN`, exact above
-`STABILITY_TABLE_RI_MAX`, and `ZETA_UNSTABLE_MIN` beyond the unstable end.
+[`_stability_lookup`](@ref): its value at `tab.ri_max` above that limit, `ζ` linear in `Ri`
+below `STABILITY_TABLE_RI_MIN`, exact above `STABILITY_TABLE_RI_MAX`, and `ZETA_UNSTABLE_MIN`
+beyond the unstable end.
 """
 function _stability_zeta(tab::StabilityTable, Ri::Float64)
+    Ri = min(Ri, tab.ri_max)
     Ri == 0.0 && return 0.0
     a = abs(Ri)
     q = log(a)

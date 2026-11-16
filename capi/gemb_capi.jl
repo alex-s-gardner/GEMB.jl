@@ -155,6 +155,8 @@ const NUMERIC_FIELDS = (
     :crocus_handoff_accumulation_exponent_scale,
     :crocus_handoff_stage_density,
     :crocus_overburden_factor,
+    :turbulent_wind_speed_min,
+    :stable_richardson_max,
 )
 
 const N_NUMERIC = length(NUMERIC_FIELDS)
@@ -265,6 +267,8 @@ function _build_parameters(dt::Float64, options::Vector{Cint}, numeric::Vector{F
         crocus_handoff_accumulation_exponent_scale=numeric[32],
         crocus_handoff_stage_density=numeric[33],
         crocus_overburden_factor=numeric[34],
+        turbulent_wind_speed_min=numeric[35],
+        stable_richardson_max=numeric[36],
         shortwave_subsurface_absorption=f(1),
         output_viscosity=f(2),
         blowing_snow_sublimation=f(3),

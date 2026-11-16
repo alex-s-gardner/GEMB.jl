@@ -394,13 +394,13 @@ function _seb_annual_melt(T_air::AbstractVector{<:Real}, wind::AbstractVector{<:
         sw_net = sw[i] * (1.0 - albedo)
 
         # Surface cannot exceed the melt point: a positive residual there drives melt.
-        Q = _seb_residual(CtoK, sw_net, lw[i], ε, density_air, z0, zT, zQ, cfs)
+        Q = _seb_residual(CtoK, sw_net, lw[i], ε, density_air, z0, zT, zQ, cfs, mp)
         if Q > 0.0
             T_surface_total += CtoK
             melt_total += Q * dt / LF
         else
             T_surface_total += _seb_skin_temperature(sw_net, lw[i], ε, density_air, z0, zT,
-                zQ, cfs)
+                zQ, cfs, mp)
         end
     end
 
@@ -408,24 +408,28 @@ function _seb_annual_melt(T_air::AbstractVector{<:Real}, wind::AbstractVector{<:
 end
 
 """
-    _seb_residual(T_surface, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs) -> Q [W m-2]
+    _seb_residual(T_surface, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs, mp) -> Q [W m-2]
 
 Net energy flux into the surface at skin temperature `T_surface`:
 
     Q = SW_net + ε·LW↓ − εσT⁴ + QH + QE
 
-Turbulent terms come from [`turbulent_heat_flux`](@ref). Positive `Q` warms (or
-melts) the surface.
+Turbulent terms come from [`turbulent_heat_flux`](@ref), with the wind floor and stable limit
+of `mp`.
+Positive `Q` warms (or melts) the surface.
 """
 @inline function _seb_residual(T_surface::Float64, sw_net::Float64, lw_in::Float64,
     ε::Float64, density_air::Float64, z0::Float64, zT::Float64, zQ::Float64,
-    cfs::ClimateForcingStep)
-    shf, lhf, _ = turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs)
+    cfs::ClimateForcingStep, mp::ModelParameters)
+    shf, lhf, _ = turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs;
+        min_wind_speed=mp.turbulent_wind_speed_min,
+        ri_max=_stable_richardson_max(mp, cfs.wind_observation_height,
+            cfs.temperature_observation_height))
     return sw_net + ε * lw_in - ε * SB * T_surface^4 + shf + lhf
 end
 
 """
-    _seb_skin_temperature(sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs) -> T [K]
+    _seb_skin_temperature(sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs, mp) -> T [K]
 
 Skin temperature closing the surface energy balance at or below the melting point, by
 secant iteration on [`_seb_residual`](@ref) bracketed around the air temperature, with every
@@ -438,14 +442,14 @@ few iterations suffice for an initial guess.
 """
 @inline function _seb_skin_temperature(sw_net::Float64, lw_in::Float64, ε::Float64,
     density_air::Float64, z0::Float64, zT::Float64, zQ::Float64,
-    cfs::ClimateForcingStep; max_iter::Int=8, tol::Float64=1e-3)
+    cfs::ClimateForcingStep, mp::ModelParameters; max_iter::Int=8, tol::Float64=1e-3)
 
     T_a = cfs.temperature_air
     T_max = min(T_a + 60.0, CtoK)
     T1 = min(T_a + 5.0, CtoK)
     T0 = T1 - 10.0
-    f0 = _seb_residual(T0, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)
-    f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)
+    f0 = _seb_residual(T0, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs, mp)
+    f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs, mp)
 
     for _ in 1:max_iter
         denom = f1 - f0
@@ -455,7 +459,7 @@ few iterations suffice for an initial guess.
         T2 = clamp(T2, min(T_a - 60.0, T_max), T_max)
         T0, f0 = T1, f1
         T1 = T2
-        f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs)
+        f1 = _seb_residual(T1, sw_net, lw_in, ε, density_air, z0, zT, zQ, cfs, mp)
         abs(T1 - T0) < tol && break
     end
 

@@ -268,8 +268,8 @@ const Z0_ICE = 0.0032        # 3.2 mm, ice [m]
 # `obukhov_stability`. Not from any of the papers cited there: it guards a numerical limit of
 # the bulk formulation rather than adjusting the physics.
 #
-# `ζ` is diagnosed from the bulk Richardson number, which carries `wind_speed^-2`. At the
-# `min_wind_speed = 0.01 m s-1` floor over a melting surface under very cold air the
+# `ζ` is diagnosed from the bulk Richardson number, which carries `wind_speed^-2`. At a
+# `turbulent_wind_speed_min = 0.01 m s-1` floor over a melting surface under very cold air the
 # Richardson number reaches ~ -10^5 and the solved `ζ` is of the same order. That is not a
 # stability regime — it is the wind floor showing through — and Monin-Obukhov theory has no
 # observational support anywhere near it (Högström's fits span `|ζ| <~ 2`). Bounding `ζ`
