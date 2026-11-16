@@ -148,6 +148,14 @@ ice mass `M`, density `density`, thickness `dz` (held fixed) and pore water `wat
     return freeze1, freeze2, water_delta, flux_out, M, density
 end
 
+# Throws at the first non-finite cell thickness or pore water `calculate_melt` produced, naming the cell.
+function _check_melt_finite(dz::Vector{Float64}, water::Vector{Float64})
+    i = findfirst(i -> !(isfinite(dz[i]) && isfinite(water[i])), eachindex(dz, water))
+    i === nothing && return nothing
+    error("calculate_melt left cell $i of $(length(dz)) with dz = $(dz[i]) m and water = " *
+          "$(water[i]) kg m-2; the melt, percolation and refreeze of this timestep are not finite")
+end
+
 """
     calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool)
 
@@ -402,7 +410,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                     temperature[i+1] = add_energy_temperature(mp, temperature[i+1], M[i+1],
                         E_surplus[i])
 
-                    T_excess[i+1] = max(0.0, temperature[i+1] - CtoK) + T_excess[i+1]
+                    # Combined as enthalpy: the heat capacity rises with temperature, so excess
+                    # kelvins do not add.
+                    T_excess[i+1] = excess_temperature_from_specific_enthalpy(mp,
+                        excess_specific_enthalpy(mp, T_excess[i+1]) +
+                        excess_specific_enthalpy(mp, max(0.0, temperature[i+1] - CtoK)))
                     temperature[i+1] = min(CtoK, temperature[i+1])
 
                     T_surplus[i+1] = max(0.0, T_excess[i+1] - T_full_melt)
@@ -415,9 +427,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
                     error("surplus energy reached the base of gemb column (i.e. entire column melted out in a single time step)")
                 end
 
-                # adjust current cell properties: the cell keeps exactly the excess that
-                # melts it out, having handed the rest downward.
-                T_excess[i] = T_full_melt
+                # adjust current cell properties: a cell that had a surplus keeps exactly the
+                # excess that melts it out, having handed the rest downward; one the loop walks
+                # across without a surplus keeps its own excess.
+                T_surplus[i] > 0.0 && (T_excess[i] = T_full_melt)
                 E_surplus[i] = 0.0
                 i += 1
             end
@@ -626,6 +639,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
         # calculate new grid lengths
         dz = M ./ density
+
+        # Fail here, at the source, rather than as a density error steps later.
+        _check_melt_finite(dz, water)
     elseif independent_grain_radius(mp)
         # Only pore water froze this step.
         snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
