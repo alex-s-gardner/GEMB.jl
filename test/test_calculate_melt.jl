@@ -137,6 +137,71 @@ end
     @test m_tot > M1
 end
 
+@testset "Surplus passes over a cold cell without melting it" begin
+    # Fresh snow at 271 K over a thin cell at 418 K. Only cell 2 holds more than its full-melt
+    # excess, so cell 1, which the surplus loop walks across, keeps its own (zero) excess, and
+    # the surplus lands on cells 3 and 4, which already hold an excess of their own.
+    # `verbose = true` runs the melt equations' mass and energy check, which throws on failure.
+    temperature = [271.23839097203694, 418.37967077366807, 293.3198043380318,
+                   274.89857222441145, 273.19381419458955, 273.1361031000441]
+    dz = [0.005440072416119263, 0.009606509542973096, 0.06149516586812494,
+          0.0375347726320767, 0.06542562026080892, 0.06036727587166924]
+    density = [98.48635712877358, 95.64368969040572, 93.6185910947478,
+               98.57294828592545, 177.79608996454402, 239.00328947317826]
+    water = [0.0, 0.31428639899530714, 1.7477046664867277, 0.0, 0.8984918555637151, 0.0]
+    grain_radius = [0.05, 0.10422156546604319, 0.11114776642722206,
+                    0.0886783151828986, 0.40119513842507987, 0.5369717252050367]
+    grain_dendricity = [1.0, 0.0, 0.0, 0.9109418344782323, 0.0, 0.0]
+    grain_sphericity = [0.5, 1.0, 1.0, 0.4381290627268046, 1.0, 1.0]
+    age = [0.0, 0.056759800010232266, 0.3786950257719472, 0.48952335915191814,
+           1.272231197960558, 3.526323538603529]
+    mp = GEMB.ModelParameters()
+    M_in = sum(dz .* density) + sum(water)
+
+    (t_out, dz_out, d_out, w_out, _, _, _, _, m_tot, _, r_tot, f_tot) =
+        GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), copy(water),
+            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), mp, true)
+
+    @test all(isfinite, w_out)
+    # Cell 2 melts out; cell 1 does not, so the column loses exactly one cell.
+    @test length(dz_out) == 5
+    @test sum(dz_out .* d_out) + sum(w_out) + r_tot ≈ M_in rtol = 1e-12
+    @test m_tot >= dz[2] * density[2]
+end
+
+@testset "Surplus received by a cell above the melting point conserves energy" begin
+    # Cell 1 holds a surplus; cell 2 is 20 K above the melting point but short of its full-melt
+    # excess. `verbose = true` runs the melt equations' energy check, which throws on failure.
+    temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
+    mp = GEMB.ModelParameters()
+    temperature[1] = GEMB.CtoK + 200.0
+    temperature[2] = GEMB.CtoK + 20.0
+    (_, _, _, _, _, _, _, _, m_tot, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
+        water, grain_radius, grain_dendricity, grain_sphericity, age, mp, true)
+    @test m_tot > dz[1] * density[1]
+end
+
+@testset "A non-finite melt result throws, naming the cell" begin
+    @test_throws "calculate_melt left cell 2 of 3 with dz = NaN m" GEMB._check_melt_finite(
+        [0.1, NaN, 0.1], [0.0, 0.0, 0.0])
+    @test_throws "and water = Inf kg m-2" GEMB._check_melt_finite([0.1, 0.1], [0.0, Inf])
+    @test GEMB._check_melt_finite([0.1, 0.2], [0.0, 0.3]) === nothing
+end
+
+@testset "A cold cell between two surplus cells keeps its own excess" begin
+    # The surplus loop walks across cell 2 to carry cell 1's surplus down and to reach cell 3's
+    # own. `verbose = true` runs the melt equations' mass and energy check.
+    temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
+    mp = GEMB.ModelParameters()
+    temperature[1] = GEMB.CtoK + 200.0
+    temperature[3] = GEMB.CtoK + 200.0
+    temperature[2] = 260.0
+    temperature[4] = 230.0
+    (_, dz_out, _, w_out, _, _, _, _, _, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
+        water, grain_radius, grain_dendricity, grain_sphericity, age, mp, true)
+    @test all(isfinite, dz_out) && all(isfinite, w_out)
+end
+
 @testset "Water squeezing" begin
     temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
     mp = _melt_mp()
