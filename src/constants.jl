@@ -498,3 +498,8 @@ relative-with-floor: the floor keeps small columns strict, the relative term sca
 budget being checked.
 """
 @inline energy_tolerance(E_reference::Real) = max(E_TOLERANCE, 1e-12 * abs(E_reference))
+
+# Default convergence of `gemb_spinup`: firn-air-content drift [m of air per year] and the ceiling
+# [simulated years] it shares with `gemb_spinup_ground`. See the `gemb_spinup` docstring.
+const SPINUP_DRIFT_FAC_PER_YEAR = 0.01
+const SPINUP_SIMULATION_YEARS_MAXIMUM = 1000

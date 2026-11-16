@@ -178,7 +178,7 @@ function _remove_snow(profile::DimStack, mp::ModelParameters)
 end
 
 """
-    gemb_spinup_ground(profile, cf, mp; simulation_years_maximum=100,
+    gemb_spinup_ground(profile, cf, mp; simulation_years_maximum=$SPINUP_SIMULATION_YEARS_MAXIMUM,
                        convergence_delta_ground_temperature=0.05, require_convergence=false,
                        remove_snow=true, verbose=false, thermal_workspace=ThermalWorkspace(),
                        column_workspace=ColumnWorkspace()) -> profile
@@ -199,7 +199,7 @@ The returned profile's metadata records `spinup_cycles`, `spinup_converged`,
 and `spinup_years_simulated`.
 """
 function gemb_spinup_ground(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
-    simulation_years_maximum::Real=100, convergence_delta_ground_temperature::Real=0.05,
+    simulation_years_maximum::Real=SPINUP_SIMULATION_YEARS_MAXIMUM, convergence_delta_ground_temperature::Real=0.05,
     require_convergence::Bool=false, remove_snow::Bool=true, verbose::Bool=false,
     thermal_workspace::ThermalWorkspace=ThermalWorkspace(),
     column_workspace::ColumnWorkspace=ColumnWorkspace())
