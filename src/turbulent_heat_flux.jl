@@ -1,5 +1,6 @@
 """
-    turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs::ClimateForcingStep; min_wind_speed=0.01)
+    turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs::ClimateForcingStep;
+        min_wind_speed=0.01, ri_max=Inf)
 
 Compute sensible and latent heat fluxes using Monin-Obukhov similarity theory.
 
@@ -9,13 +10,16 @@ observed at `cfs.wind_observation_height` and temperature and humidity at
 
 `min_wind_speed` floors `cfs.wind_speed` (which would otherwise drive the bulk
 Richardson number to infinity at zero wind); clamping here avoids rebuilding the
-`ClimateForcingStep` in the caller.
+`ClimateForcingStep` in the caller. `ri_max` is the stable limit on the bulk Richardson number
+(see [`_stable_richardson_max`](@ref)). The defaults are the unlimited Monin-Obukhov
+solution; the model's own values are `mp.turbulent_wind_speed_min` and
+`_stable_richardson_max(mp, z_w, z_T)`.
 
 Returns (heat_flux_sensible, heat_flux_latent, latent_heat) [W m-2, W m-2, J kg-1].
 """
 function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep;
-    min_wind_speed::Float64=0.01)
+    min_wind_speed::Float64=0.01, ri_max::Float64=Inf)
 
     wind_speed = max(cfs.wind_speed, min_wind_speed)
 
@@ -31,11 +35,11 @@ function turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     ri_scale = GRAVITY * cfs.wind_observation_height / wind_speed^2
 
     return _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs,
-        C, logM, logHT, logHQ, ri_scale)
+        C, logM, logHT, logHQ, ri_scale, ri_max)
 end
 
 """
-    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, C, logM, logHT, logHQ, ri_scale)
+    _turbulent_heat_flux(T_surface, density_air, z0, zT, zQ, cfs, C, logM, logHT, logHQ, ri_scale, ri_max=Inf)
 
 Core of [`turbulent_heat_flux`](@ref) with the sub-timestep-invariant quantities
 (the neutral factor `C = κ²U` at the floored wind speed, the neutral roughness logs
@@ -44,7 +48,7 @@ per timestep and reuses them across all thermal sub-steps, where only `T_surface
 
 ## Fluxes
 
-With `ζ = z_w/L` from [`obukhov_stability`](@ref), the integrated transfer functions are
+With `ζ = z_w/L` from [`obukhov_stability`](@ref) at `min(Ri, ri_max)`, the integrated transfer functions are
 
     F_m = ln(z_w/z0) − Ψ_m(ζ) + Ψ_m(ζ·z0/z_w)
     F_h = ln(z_T/zT) − Ψ_h(ζ·z_T/z_w) + Ψ_h(ζ·zT/z_w)
@@ -69,7 +73,7 @@ water at it.
 @inline function _turbulent_heat_flux(T_surface::Float64, density_air::Float64,
     z0::Float64, zT::Float64, zQ::Float64, cfs::ClimateForcingStep,
     C::Float64,
-    logM::Float64, logHT::Float64, logHQ::Float64, ri_scale::Float64)
+    logM::Float64, logHT::Float64, logHQ::Float64, ri_scale::Float64, ri_max::Float64=Inf)
 
     z_w = cfs.wind_observation_height
     z_T = cfs.temperature_observation_height
@@ -78,7 +82,7 @@ water at it.
     # Bulk Richardson number with the wind height as reference: Ri_b = g·Δθ·z_w/(θ̄·U²).
     Ri = ri_scale * (cfs.temperature_air - T_surface) / T_mean
 
-    ζ = obukhov_stability(Ri, z_w, z_T, z0, zT, logM, logHT)
+    ζ = obukhov_stability(min(Ri, ri_max), z_w, z_T, z0, zT, logM, logHT)
 
     psi_h_T = stability_psi_h(ζ * z_T / z_w)
     coefM = logM - stability_psi_m(ζ) + stability_psi_m(ζ * z0 / z_w)

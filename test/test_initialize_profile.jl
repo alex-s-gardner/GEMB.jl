@@ -321,7 +321,7 @@ end
     @test issorted(balances)
 
     # Melt is *not* constant across the sweep: more snowfall means more snow cover,
-    # a higher albedo and so less melt (here 417 -> 151 kg m-2 yr-1). That coupling
+    # a higher albedo and so less melt (here 296 -> 82 kg m-2 yr-1). That coupling
     # is the albedo/melt feedback `initialize_climate_summary` iterates to close, so
     # assert it runs the right way and stays smooth rather than assuming melt is an
     # independent knob.
@@ -371,7 +371,7 @@ end
     # below ice. The accumulating end only moves toward the crossing, so its balance
     # cannot grow.
     bisection_balance(p) = GEMB.initialize_climate_summary(make(p), mp).balance
-    p_lo, p_hi = 1.1, 1.4
+    p_lo, p_hi = 0.8, 1.1
     @test bisection_balance(p_lo) <= 0.0 < bisection_balance(p_hi)
     steps = NamedTuple{(:balance, :gap),Tuple{Float64,Float64}}[]
     for k in 1:14
@@ -388,8 +388,8 @@ end
     @test issorted([s.balance for s in steps]; rev=true)
     @test steps[end].balance < 0.1 * steps[1].balance
     # ...and the surface density closes onto ice as it does, with no floor. Measured:
-    # b = 0.42 -> 0.42 -> 0.42 -> 0.021 -> 0.001 kg m-2 yr-1 gives a gap below ice of
-    # 108 -> 108 -> 108 -> 0.04 -> 0 kg m-3. No refinement widens it, so the
+    # b = 29 -> 2.3 -> 0.67 -> 0.040 -> 0.001 kg m-2 yr-1 gives a gap below ice of
+    # 555 -> 422 -> 232 -> 0.16 -> 0 kg m-3. No refinement widens it, so the
     # ablation column (exactly ice) is the `b -> 0+` limit of the firn column rather
     # than a separate branch — the claim that lets the scheme drop the threshold.
     gaps = [s.gap for s in steps]
@@ -646,7 +646,7 @@ end
     for ε in (0.97, 0.8)
         z0 = GEMB.Z0_SNOW_DRY
         T = GEMB._seb_skin_temperature(0.0, lw, ε, GEMB.air_density(80000.0, T_eq), z0,
-            0.1 * z0, 0.1 * z0, cfs)
+            0.1 * z0, 0.1 * z0, cfs, mp)
         @test T ≈ T_eq atol = 1e-3
     end
 end

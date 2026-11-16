@@ -84,6 +84,10 @@ function validate_parameters(mp::ModelParameters)
     # Surface roughness
     @assert 0 <= mp.surface_roughness_effective_ratio <= 3 "surface_roughness_effective_ratio must be in [0, 3]"
 
+    # Turbulent exchange. A zero wind floor lets the bulk Richardson number diverge at calm.
+    @assert 0 < mp.turbulent_wind_speed_min <= 10 "turbulent_wind_speed_min must be in (0, 10] m s-1 (got $(mp.turbulent_wind_speed_min))"
+    @assert mp.stable_richardson_max > 0 "stable_richardson_max must be positive (got $(mp.stable_richardson_max)); use Inf for no limit"
+
     # Thermal conductivity
     @assert mp.thermal_conductivity_method in (:Sturm, :Calonne, :Calonne2019, :Calonne2019Air, :Marchenko2019) "thermal_conductivity_method must be one of: Sturm, Calonne, Calonne2019, Calonne2019Air, Marchenko2019"
 

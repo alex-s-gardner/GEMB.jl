@@ -477,7 +477,9 @@ end
         z0 = GEMB.surface_roughness(mp, density[1], 0.0)
         ρa = GEMB.air_density(cfs.pressure_air, cfs.temperature_air)
         Q(T) = ε * cfs.longwave_downward - ε * GEMB.SB * T^4 +
-               sum(GEMB.turbulent_heat_flux(T, ρa, z0, 0.1 * z0, 0.1 * z0, cfs)[1:2])
+               sum(GEMB.turbulent_heat_flux(T, ρa, z0, 0.1 * z0, 0.1 * z0, cfs;
+                   min_wind_speed=mp.turbulent_wind_speed_min,
+                   ri_max=GEMB._stable_richardson_max(mp, 10.0, 2.0))[1:2])
         Q_applied = Q(T_s)
         if solver isa GEMB.ExplicitThermal
             Q_applied += (Q(T_s + 1e-3) - Q(T_s - 1e-3)) / 2e-3 * (t_out[1] - t_in[1])
@@ -1168,7 +1170,8 @@ end
 end
 
 # A forcing with no turbulent or radiative exchange at surface temperature `T_s`: air at
-# `T_s`, saturated over ice, calm, no longwave. Used with `emissivity = 0`.
+# `T_s`, saturated over ice, calm, no longwave. Used with `emissivity = 0` and a wind floor
+# small enough that the calm air carries no heat once the surface warms.
 _quiet_cfs(dt, T_s) = GEMB.ClimateForcingStep(dt, T_s, 100000.0, 0.0, 0.0, 0.0, 0.0,
     GEMB.saturation_vapor_pressure_ice(T_s), T_s, 0.0, 0.0, 2.0, 2.0,
     0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -1193,7 +1196,8 @@ _quiet_cfs(dt, T_s) = GEMB.ClimateForcingStep(dt, T_s, 100000.0, 0.0, 0.0, 0.0, 
         # The closed form needs a constant heat capacity.
         mp = GEMB.ModelParameters(emissivity=0.0, emissivity_method=:uniform,
             thermal_conductivity_method=:Sturm, thermal_solver=solver,
-            heat_capacity_method=:constant,
+            heat_capacity_method=:constant, turbulent_wind_speed_min=0.01,
+            stable_richardson_max=Inf,
             dt_divisors=Float64.(GEMB.fast_divisors(36000000)) ./ 10000)
         k = GEMB.thermal_conductivity(fill(T0, n), fill(ρ, n), mp)[1]
         κ = k / (ρ * mp.heat_capacity_ice)
@@ -1260,7 +1264,8 @@ end
         shf_0, lhf_0, _ = GEMB.turbulent_heat_flux(GEMB.CtoK,
             GEMB.air_density(cfs.pressure_air, cfs.temperature_air), z0,
             mp.surface_roughness_effective_ratio * z0, mp.surface_roughness_effective_ratio * z0,
-            cfs)
+            cfs; min_wind_speed=mp.turbulent_wind_speed_min,
+            ri_max=GEMB._stable_richardson_max(mp, 10.0, 2.0))
         @test shf ≈ shf_0 rtol = 1e-12
         @test lhf_0 < 0.0
         @test ec ≈ lhf_0 / GEMB.LV * 3600.0 rtol = 1e-12

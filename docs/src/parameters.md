@@ -63,6 +63,8 @@ metamorphism. The calibration is described under Fresh snow on the Physics Notes
 | `emissivity_grain_radius_large` | **0.97** | – | |
 | `emissivity_grain_radius_threshold` | **10.0** | mm | |
 | `surface_roughness_effective_ratio` | **0.10** | – | |
+| `turbulent_wind_speed_min` | **1.0** | m s⁻¹ | Floor on the wind speed of the turbulent fluxes, as in Crocus (Lafaysse et al., 2026, Sect. 2.4.11). Blowing snow and fresh-snow density use the unfloored wind |
+| `stable_richardson_max` | **0.026** | – | Stable limit on the bulk Richardson number, above which the transfer coefficients are held at their value at the limit (Martin and Lejeune, 1998). In the convention of Crocus (Lafaysse et al., 2026, eqs. 86 and F16), whose Richardson number is GEMB's times `z_w/z_T`: GEMB applies `stable_richardson_max·z_T/z_w`. `Inf` sets no limit |
 | `albedo_snow` / `albedo_ice` / `albedo_fixed` | **0.85** / **0.48** / **0.85** | – | |
 | `albedo_density_threshold` | **`Inf`** | kg m⁻³ | `Inf` disables the density-based snow/ice albedo switch |
 | `cloud_fraction` | **0.1** | – | |

@@ -258,11 +258,8 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
     else
         emissivity, melt_switch = (ns > 0 ? mp.emissivity : mp.ground_emissivity), false
     end
-    U = max(cfs.wind_speed, 0.01)
-    table = _stability_table!(thermal_workspace, cfs.wind_observation_height,
-        cfs.temperature_observation_height, z0, zT)
-    sfc = _ThermalSurface(density_air, emissivity, melt_switch, VON_KARMAN^2 * U,
-        GRAVITY * cfs.wind_observation_height / U^2, table)
+    table = _stability_table!(thermal_workspace, mp, cfs, z0, zT)
+    sfc = _ThermalSurface(density_air, emissivity, melt_switch, mp, cfs, table)
     β = ns > 0 ? 1.0 : mp.ground_evaporation_factor
 
     snow_solve = lumped ? column_state(Float64[], Float64[], Float64[], Float64[], Float64[],

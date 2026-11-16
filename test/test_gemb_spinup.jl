@@ -544,10 +544,10 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
 
         @testset "Drift window scaled by close-off age" begin
             ypc = GEMB._years_per_cycle(forcing)
-            # This column closes off at about 790 yr, so a fraction of 0.006 is a 5-cycle window.
+            # This column closes off at about 275 yr, so a fraction of 0.017 is a 5-cycle window.
             age_yr = close_off_age(parent(profile[:density]), parent(profile[:age])) / 365.25
-            @test 760 < age_yr < 820
-            fraction = 0.006
+            @test 260 < age_yr < 290
+            fraction = 0.017
             window = ceil(Int, fraction * age_yr / ypc)
             @test window == 5
             @test GEMB._closeoff_drift_window(profile, 3, fraction, ypc) == window

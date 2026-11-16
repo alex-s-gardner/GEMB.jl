@@ -375,10 +375,24 @@ the transfer coefficient matches the converged solution to 1e-12 for `−100 < �
 Potential temperature is referenced to the surface pressure, so no pressure factor enters
 the sensible flux or `Ri_b`.
 
+**Wind floor and stable limit.** The turbulent fluxes use the wind speed floored at
+`turbulent_wind_speed_min` (1 m s⁻¹, as in Crocus; Lafaysse et al., 2026, Sect. 2.4.11).
+Above a stable limit on `Ri_b` the transfer coefficients are held at their value at the limit,
+so the fluxes stay proportional to the temperature and humidity differences however stable the
+air (Martin and Lejeune, 1998). `stable_richardson_max` sets the limit in the convention of
+Crocus, whose bulk Richardson number `g·z_u²·Δθ/(z_a·θ̄·U²)` (Lafaysse et al., 2026, eq. F16)
+is GEMB's `Ri_b` times `z_w/z_T`; GEMB applies `stable_richardson_max·z_T/z_w` to its own
+`Ri_b`. The default, 0.026, is Crocus v3.0.2's (eq. 86): 0.0052 in GEMB's `Ri_b` for wind at
+10 m and temperature at 2 m. Without the limit, the Monin–Obukhov transfer coefficient falls
+steeply with `Ri_b` under the Beljaars–Holtslag functions, and a surface under clear, calm
+winter skies cools well below the air: under ERA5-Land forcing the modeled winter surface is
+then several kelvin colder than the observed one at glacier weather stations, and the firn
+below it too cold. `stable_richardson_max = Inf` with `turbulent_wind_speed_min = 0.01` is
+the unlimited solution.
+
 **`ζ` is bounded below by −100 on the unstable branch.** This is a numerical guard on the
-bulk formulation, not a change to the physics. `Ri_b` carries `wind_speed⁻²`, so at the
-`min_wind_speed = 0.01 m s⁻¹` floor over a melting surface under very cold air it reaches
-~−10⁵. That is the wind floor showing through rather than a stability regime, and
+bulk formulation, not a change to the physics. `Ri_b` carries `wind_speed⁻²`, so at a
+wind floor of 0.01 m s⁻¹ over a melting surface under very cold air it reaches ~−10⁵. That is the wind floor showing through rather than a stability regime, and
 Monin–Obukhov theory has no observational support anywhere near it (Högström's fits span
 `|ζ| ≲ 2`). −100 is two orders of magnitude beyond the calibration range, so it never binds in
 physically meaningful conditions. Bounding `ζ` rather than clamping the coefficients keeps the

@@ -85,6 +85,8 @@ and roughness lengths (`z0` for momentum, `zT` for heat and moisture). Built by
 For each sign of the bulk Richardson number `Ri` the table holds, on nodes uniform in
 `q = ln|Ri|`, the converged stability parameter as `s = ln|ζ|` and `G = ln(F_m·F_h)`, each with
 its exact derivative with respect to `q`, for cubic Hermite interpolation.
+
+`ri_max` is the stable limit on `Ri` (see [`_stable_richardson_max`](@ref)); `Inf` sets none.
 """
 struct StabilityTable
     z_w::Float64
@@ -105,6 +107,8 @@ struct StabilityTable
     unstable_ds::Vector{Float64}
     unstable_G::Vector{Float64}
     unstable_dG::Vector{Float64}
+    ri_max::Float64          # stable limit on Ri: above it the transfer functions are held at ri_max
+    G_max::Float64           # G at ri_max
 end
 
 """
@@ -520,6 +524,18 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     emissivity_grain_radius_large::Float64 = 0.97
     emissivity_grain_radius_threshold::Float64 = 10.0
     surface_roughness_effective_ratio::Float64 = 0.10
+
+    # --- Turbulent exchange ---
+    # Floor on the wind speed of the turbulent fluxes [m s-1]; 1 m s-1 is the floor of Crocus
+    # (Lafaysse et al., 2026, Sect. 2.4.11). Blowing snow and fresh-snow density read the
+    # unfloored wind.
+    turbulent_wind_speed_min::Float64 = 1.0
+    # Stable limit on the bulk Richardson number, in the convention of Crocus, whose Richardson
+    # number (Lafaysse et al., 2026, eq. F16) is GEMB's times z_w/z_T: above it the transfer
+    # coefficients are held at their value at the limit. 0.026 is Crocus v3.0.2's value
+    # (Lafaysse et al., 2026, eq. 86); `Inf` leaves the Monin-Obukhov solution unlimited. See
+    # `_stable_richardson_max`.
+    stable_richardson_max::Float64 = 0.026
 
     # --- Thermal Conductivity ---
     # `:Sturm` (Sturm et al., 1997) and `:Calonne` (Calonne et al., 2011) are density-only

@@ -481,3 +481,83 @@ end
         @test f(T_d)[5] ≈ (f(T_d + h)[2] - f(T_d - h)[2]) / 2h rtol = 1e-5
     end
 end
+
+@testset "Stable Richardson limit and wind floor" begin
+    z0 = GEMB.Z0_SNOW_DRY
+    zT = 0.1 * z0
+    mp = GEMB.ModelParameters()
+
+    # The limit is stated in the Crocus convention, whose Richardson number is GEMB's times
+    # z_w/z_T, so GEMB's limit scales with z_T/z_w.
+    @test GEMB._stable_richardson_max(mp, 10.0, 2.0) ≈ 0.026 * 2.0 / 10.0
+    @test GEMB._stable_richardson_max(mp, 2.5, 2.5) ≈ 0.026
+    crocus_ri(Ri, z_w, z_T) = Ri * z_w / z_T
+    for (z_w, z_T) in ((10.0, 2.0), (2.5, 2.5), (2.0, 10.0))
+        @test crocus_ri(GEMB._stable_richardson_max(mp, z_w, z_T), z_w, z_T) ≈
+              mp.stable_richardson_max
+    end
+
+    # Above the limit the table holds the transfer functions at their value there, with zero
+    # slope; at and below it, and on the unstable side, it is the unlimited table.
+    ri_max = 0.0052
+    tab = GEMB._stability_table(10.0, 2.0, z0, zT, ri_max)
+    tab_free = GEMB._stability_table(10.0, 2.0, z0, zT)
+    @test tab_free.ri_max == Inf
+    G_max = GEMB._stability_lookup(tab_free, ri_max)[1]
+    for Ri in (1.001 * ri_max, 0.1, 1.0, 1e3, 1e6)
+        G, dG = GEMB._stability_lookup(tab, Ri)
+        @test G ≈ G_max rtol = 1e-12
+        @test dG == 0.0
+        @test GEMB._stability_zeta(tab, Ri) == GEMB._stability_zeta(tab_free, ri_max)
+    end
+    for Ri in (ri_max, 0.5 * ri_max, 1e-8, 0.0, -1e-3, -1.0, -1e3)
+        @test GEMB._stability_lookup(tab, Ri) == GEMB._stability_lookup(tab_free, Ri)
+    end
+
+    # The workspace caches one table per limit.
+    ws = GEMB.ThermalWorkspace()
+    t1 = GEMB._stability_table!(ws, 10.0, 2.0, z0, zT, ri_max)
+    t2 = GEMB._stability_table!(ws, 10.0, 2.0, z0, zT)
+    @test t1.ri_max == ri_max && t2.ri_max == Inf
+    @test GEMB._stability_table!(ws, 10.0, 2.0, z0, zT, ri_max) === t1
+
+    # The exact path agrees with the table: above the limit the sensible flux is the
+    # transfer coefficient at the limit times the temperature difference.
+    U = 2.0
+    cfs = _thf_cfs(T_air=260.0, wind=U)
+    ri_scale = GEMB.GRAVITY * 10.0 / U^2
+    for T_s in (259.9, 255.0, 240.0)
+        shf, lhf, _ = GEMB.turbulent_heat_flux(T_s, 1.2, z0, zT, zT, cfs; ri_max)
+        shf_t, lhf_t, _ = GEMB._table_turbulent_heat_flux(tab, T_s, 1.2, 0.16 * U, ri_scale,
+            cfs)
+        @test shf ≈ shf_t rtol = 1e-6
+        @test lhf ≈ lhf_t rtol = 1e-6
+    end
+    Ri(T_s) = ri_scale * (260.0 - T_s) / (0.5 * (260.0 + T_s))
+    @test Ri(250.0) > ri_max && Ri(240.0) > ri_max
+    H(T_s) = GEMB.turbulent_heat_flux(T_s, 1.2, z0, zT, zT, cfs; ri_max)[1]
+    @test H(240.0) / (260.0 - 240.0) ≈ H(250.0) / (260.0 - 250.0) rtol = 1e-12
+    # The unlimited coefficient keeps falling with stability, so the limit raises the flux.
+    @test H(240.0) > GEMB.turbulent_heat_flux(240.0, 1.2, z0, zT, zT, cfs)[1]
+
+    # The analytic T_surface derivatives stay exact across the limit.
+    f(T) = GEMB._table_turbulent_heat_flux(tab, T, 1.2, 0.16 * U, ri_scale, cfs)
+    h = 1e-4
+    for T_d in (259.99, 250.0)
+        @test f(T_d)[4] ≈ (f(T_d + h)[1] - f(T_d - h)[1]) / 2h rtol = 1e-5
+        @test f(T_d)[5] ≈ (f(T_d + h)[2] - f(T_d - h)[2]) / 2h rtol = 1e-5
+    end
+
+    # The wind floor: calm air exchanges as at the floor.
+    calm = _thf_cfs(T_air=260.0, wind=0.0)
+    floor = _thf_cfs(T_air=260.0, wind=1.0)
+    @test GEMB.turbulent_heat_flux(255.0, 1.2, z0, zT, zT, calm; min_wind_speed=1.0) ==
+          GEMB.turbulent_heat_flux(255.0, 1.2, z0, zT, zT, floor; min_wind_speed=1.0)
+
+    # Validation.
+    @test_throws "turbulent_wind_speed_min must be in (0, 10]" GEMB.initialize_parameters(
+        turbulent_wind_speed_min=0.0)
+    @test_throws "stable_richardson_max must be positive" GEMB.initialize_parameters(
+        stable_richardson_max=0.0)
+    @test GEMB.initialize_parameters(stable_richardson_max=Inf).stable_richardson_max == Inf
+end

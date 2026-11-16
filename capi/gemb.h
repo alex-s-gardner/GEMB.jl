@@ -32,7 +32,7 @@ extern "C" {
 /* --- Array sizes. ------------------------------------------------------------------------- */
 
 #define GEMB_N_OPTIONS  17
-#define GEMB_N_NUMERIC  34
+#define GEMB_N_NUMERIC  36
 #define GEMB_N_FLAGS     5
 #define GEMB_N_FORCING  22
 #define GEMB_N_FLUX     21
@@ -197,6 +197,10 @@ extern "C" {
 #define GEMB_NUM_CROCUS_HANDOFF_ACCUMULATION_EXPONENT_SCALE   31
 #define GEMB_NUM_CROCUS_HANDOFF_STAGE_DENSITY                 32
 #define GEMB_NUM_CROCUS_OVERBURDEN_FACTOR                     33
+/* Turbulent exchange: the wind-speed floor [m s-1] and the stable limit on the bulk Richardson
+ * number in the convention of Crocus (Lafaysse et al., 2026, eq. F16). Pass INFINITY for no limit. */
+#define GEMB_NUM_TURBULENT_WIND_SPEED_MIN         34
+#define GEMB_NUM_STABLE_RICHARDSON_MAX            35
 
 /* --- flags[] indices. Nonzero is true. ----------------------------------------------- */
 

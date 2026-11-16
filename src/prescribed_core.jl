@@ -140,9 +140,8 @@ convection included, the latent flux scaled by `β`), with the transfer coeffici
 """
 function _prescribed_bare_surface(T_surface::Float64, emissivity::Float64, β::Float64,
     cfs::ClimateForcingStep, mp::ModelParameters, table::StabilityTable)
-    U = max(cfs.wind_speed, 0.01)
     sfc = _ThermalSurface(air_density(cfs.pressure_air, cfs.temperature_air), emissivity, false,
-        VON_KARMAN^2 * U, GRAVITY * cfs.wind_observation_height / U^2, table)
+        mp, cfs, table)
     lw_up, shf, lhf, latent_heat, _, _, _ = _ground_surface_fluxes_and_slopes(T_surface,
         emissivity, sfc, cfs, β)
     EC = lhf / latent_heat * cfs.dt
@@ -161,9 +160,8 @@ melting point, its fluxes those of the snow it was at the start of the step.
 """
 function _trace_snow_surface(cols::NamedTuple, T_surface::Float64, cfs::ClimateForcingStep,
     mp::ModelParameters, table::StabilityTable)
-    U = max(cfs.wind_speed, 0.01)
     sfc = _ThermalSurface(air_density(cfs.pressure_air, cfs.temperature_air), mp.emissivity,
-        false, VON_KARMAN^2 * U, GRAVITY * cfs.wind_observation_height / U^2, table)
+        false, mp, cfs, table)
     liquid = !isempty(cols.water) && cols.water[1] > 0.0
     lw_up, shf, lhf, latent_heat, _, _, _, _ = _surface_fluxes_and_slopes(T_surface,
         mp.emissivity, sfc, cfs, liquid)
@@ -282,8 +280,8 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
     albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius, cfs, mp)
     sw_net = shortwave_net_surface(albedo_broadband, albedo_diffuse, cfs)
     z0 = isempty(dz) ? mp.ground_roughness : surface_roughness(mp, density[1], water[1])
-    table = _stability_table!(thermal_workspace, cfs.wind_observation_height,
-        cfs.temperature_observation_height, z0, z0 * mp.surface_roughness_effective_ratio)
+    table = _stability_table!(thermal_workspace, mp, cfs, z0,
+        z0 * mp.surface_roughness_effective_ratio)
 
     # 4. Thermal step. `E_base` [J m-2] is the energy the reservoir supplies to the column;
     # `sw_base` [W m-2] the shortwave it absorbs.
@@ -292,9 +290,8 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
             albedo_diffuse, cfs, mp)
         shortwave_flux = vcat(sw_snow, sw_net - sum(sw_snow))
         emissivity, melt_switch = _emissivity_initialize(grain_radius[1], mp)
-        U = max(cfs.wind_speed, 0.01)
         sfc = _ThermalSurface(air_density(cfs.pressure_air, cfs.temperature_air), emissivity,
-            melt_switch, VON_KARMAN^2 * U, GRAVITY * cfs.wind_observation_height / U^2, table)
+            melt_switch, mp, cfs, table)
         longwave_upward, heat_flux_sensible, heat_flux_latent, F_basal, EC, EC_liquid,
             refreeze_thermal = _thermal_solve_prescribed!(temperature, dz, density, water,
                 T_base, shortwave_flux, sfc, emissivity, melt_switch, cfs, mp)

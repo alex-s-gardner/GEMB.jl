@@ -92,17 +92,9 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     # The scalar roughness length for heat and moisture is a fraction of z0.
     zT = z0 * mp.surface_roughness_effective_ratio
 
-    # minimum wind speed to avoid division by zero in turbulent flux calculations
-    min_wind_speed = 0.01
-
-    # Sub-timestep-invariant turbulent-flux quantities (only T_surface changes across
-    # sub-steps): the bulk coefficient κ²U, the Richardson-number scale g·z_w/U², and the
-    # stability table for these heights and roughness lengths.
-    thf_wind_speed = max(cfs.wind_speed, min_wind_speed)
-    thf_C = VON_KARMAN^2 * thf_wind_speed
-    thf_ri_scale = GRAVITY * cfs.wind_observation_height / thf_wind_speed^2
-    table = _stability_table!(workspace, cfs.wind_observation_height,
-        cfs.temperature_observation_height, z0, zT)
+    # The stability table for these heights, roughness lengths and stable limit; with the
+    # turbulent factors in `sfc`, invariant across sub-steps, where only T_surface changes.
+    table = _stability_table!(workspace, mp, cfs, z0, zT)
 
     ## THERMAL CONDUCTIVITY (per `mp.thermal_conductivity_method`; see
     ## `thermal_conductivity` for the five fits and their sources)
@@ -111,8 +103,7 @@ function calculate_temperature(temperature::Vector{Float64}, dz::Vector{Float64}
     _resize_workspace!(workspace, length(density))
     K = thermal_conductivity!(workspace.conductivity, temperature, density, mp)
 
-    sfc = _ThermalSurface(density_air, emissivity, emissivity_melt_switch, thf_C, thf_ri_scale,
-        table)
+    sfc = _ThermalSurface(density_air, emissivity, emissivity_melt_switch, mp, cfs, table)
     refrozen = view(workspace.refrozen, 1:m)
     fill!(refrozen, 0.0)
 
@@ -156,6 +147,15 @@ struct _ThermalSurface
     C::Float64
     ri_scale::Float64
     table::StabilityTable
+end
+
+# The turbulent factors at the wind speed floored at `mp.turbulent_wind_speed_min`: the bulk
+# coefficient κ²U and the Richardson-number scale g·z_w/U².
+function _ThermalSurface(density_air::Float64, emissivity::Float64, melt_switch::Bool,
+    mp::ModelParameters, cfs::ClimateForcingStep, table::StabilityTable)
+    U = max(cfs.wind_speed, mp.turbulent_wind_speed_min)
+    return _ThermalSurface(density_air, emissivity, melt_switch, VON_KARMAN^2 * U,
+        GRAVITY * cfs.wind_observation_height / U^2, table)
 end
 
 """
