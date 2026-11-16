@@ -455,3 +455,25 @@ end
     @test GEMB.mix_temperature_liquid(mp_w, 275.0, 2.0, 265.0, 100.0) >
           GEMB.mix_temperature_liquid(mp_i, 275.0, 2.0, 265.0, 100.0)
 end
+
+@testset "heat capacity and enthalpy are held at the melting point above it" begin
+    mp = GEMB.ModelParameters()
+    c0 = GEMB.heat_capacity(mp, GEMB.CtoK)
+    h0 = GEMB.specific_enthalpy(mp, GEMB.CtoK)
+    for T in (GEMB.CtoK + 1e-9, 280.0, 418.0)
+        @test GEMB.heat_capacity(mp, T) == c0
+        @test GEMB.specific_enthalpy(mp, T) ≈ h0 + c0 * (T - GEMB.CtoK) rtol = 1e-14
+        @test GEMB.temperature_from_specific_enthalpy(mp, GEMB.specific_enthalpy(mp, T)) ≈ T rtol = 1e-14
+        @test GEMB.excess_specific_enthalpy(mp, T - GEMB.CtoK) ≈
+              GEMB.specific_enthalpy(mp, T) - h0 rtol = 1e-12 atol = 1e-8
+    end
+    # Continuous at the melting point, from below and above.
+    @test GEMB.specific_enthalpy(mp, prevfloat(GEMB.CtoK)) ≈ h0 rtol = 1e-14
+    @test GEMB.specific_enthalpy(mp, nextfloat(GEMB.CtoK)) ≈ h0 rtol = 1e-14
+    # The chord is the exact secant across the melting point and above it.
+    for (T1, T2) in ((260.0, 290.0), (290.0, 260.0), (274.0, 400.0), (GEMB.CtoK, 300.0))
+        c = GEMB.chord_heat_capacity(mp, T1, T2)
+        @test GEMB.specific_enthalpy(mp, T2) - GEMB.specific_enthalpy(mp, T1) ≈ c * (T2 - T1) rtol = 1e-12
+    end
+    @test GEMB.chord_heat_capacity(mp, 300.0, 300.0) == c0
+end

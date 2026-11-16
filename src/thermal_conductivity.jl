@@ -221,8 +221,11 @@ regression stops being supported by data. Temperature-independent, so the ice br
     return max(k_marchenko, k_calonne)
 end
 
-@inline function _thermal_conductivity_scalar(T::Real, ρ::Real, density_ice::Float64,
+@inline function _thermal_conductivity_scalar(T_in::Real, ρ::Real, density_ice::Float64,
     method::Int)
+    # Held at the melting-point value above `CtoK`, where the Yen (1981) and Reid (1966) fits do
+    # not apply.
+    T = min(Float64(T_in), CtoK)
     # Both 2019 forms are continuous into ice by construction, so neither is short-circuited
     # to the ice branch below.
     method == _K_CALONNE2019 && return _thermal_conductivity_calonne2019(T, ρ; air_factor=false)

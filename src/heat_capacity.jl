@@ -5,6 +5,11 @@
 # differ by a term comparable to the latent heat of fusion (see the `specific_enthalpy`
 # docstring), so mixing the two forms breaks conservation outright.
 
+# `c_p` at and above the melting point under `:CuffeyPaterson`, and the enthalpy there.
+const _HEAT_CAPACITY_CUFFEY_MELT = HEAT_CAPACITY_CUFFEY_A + HEAT_CAPACITY_CUFFEY_B * CtoK
+const _SPECIFIC_ENTHALPY_CUFFEY_MELT = HEAT_CAPACITY_CUFFEY_A * CtoK +
+                                      (HEAT_CAPACITY_CUFFEY_B / 2) * CtoK * CtoK
+
 """
     heat_capacity(mp::ModelParameters, T) -> c_p [J kg-1 K-1]
 
@@ -13,7 +18,8 @@ Specific heat capacity of the ice matrix at temperature `T` [K], per
 
 - `:CuffeyPaterson` (the default) — Cuffey and Paterson (2010) eq. 9.1, p. 400,
   `c_p = 152.5 + 7.122·T`. Gives 2097.9 at the melting point but only 1862 at 240 K and 1648
-  at 210 K.
+  at 210 K. Held at the melting-point value above `CtoK`, where a cell's temperature measures
+  the excess enthalpy the melt equations turn into melt rather than a state of ice.
 - `:constant` — `mp.heat_capacity_ice` (default 2102, the melting-point value) at every
   temperature. Against eq. 9.1 it over-permits refreezing in cold firn by +12.9% at 240 K and
   +27.5% at 210 K.
@@ -32,7 +38,8 @@ For anything that accumulates or balances joules, use [`specific_enthalpy`](@ref
     if mp.heat_capacity_method === :constant
         return mp.heat_capacity_ice
     end
-    return HEAT_CAPACITY_CUFFEY_A + HEAT_CAPACITY_CUFFEY_B * Float64(T)
+    Tf = Float64(T)
+    return Tf >= CtoK ? _HEAT_CAPACITY_CUFFEY_MELT : HEAT_CAPACITY_CUFFEY_A + HEAT_CAPACITY_CUFFEY_B * Tf
 end
 
 """
@@ -42,17 +49,19 @@ Heat capacity that makes the enthalpy difference between two temperatures an exa
 
     specific_enthalpy(mp, T2) - specific_enthalpy(mp, T1) == c_chord * (T2 - T1)
 
-For `c_p = a + bT` the enthalpy is `h = aT + (b/2)T²`, so the secant slope of `h` between `T1`
-and `T2` is `a + b·(T1 + T2)/2` — the heat capacity evaluated at the *midpoint*. This is an
-algebraic identity, not a linearization: `h` is quadratic, so its chord slope is exact for any
-`T1`, `T2`, however far apart. Under `:constant` it is `mp.heat_capacity_ice`, and it reduces to
-[`heat_capacity`](@ref)`(mp, T)` when `T1 == T2`.
+For `c_p = a + bT` the enthalpy is `h = aT + (b/2)T²`, so with both temperatures at or below
+`CtoK` the secant slope of `h` is `a + b·(T1 + T2)/2` — the heat capacity evaluated at the
+*midpoint*. This is an algebraic identity, not a linearization: `h` is quadratic there, so its
+chord slope is exact however far apart `T1` and `T2` are. Above `CtoK` the enthalpy is linear
+([`heat_capacity`](@ref)), so the chord is `c_p(CtoK)` when both lie above it and the
+difference quotient of `h` when they straddle it. Under `:constant` it is
+`mp.heat_capacity_ice`, and it reduces to [`heat_capacity`](@ref)`(mp, T)` when `T1 == T2`.
 
 This is what lets an implicit thermal solver carry enthalpy as the conserved quantity while
 solving a *linear* system in temperature. Writing `M·c_p(T_old)·(T_new − T_old)` instead — the
 obvious lagged form — injects a spurious `(b/2)(T_new − T_old)²` of energy per step, which is the
-error the [`specific_enthalpy`](@ref) warning describes in its per-cell form. Only the midpoint
-evaluation cancels it.
+error the [`specific_enthalpy`](@ref) warning describes in its per-cell form. Only the exact
+secant cancels it.
 
 `c_p > 0` over the physical range, so `c_chord > 0` and the diagonal it scales stays positive.
 
@@ -62,8 +71,11 @@ See [`specific_enthalpy`](@ref) for the enthalpy this is the chord slope of.
     if mp.heat_capacity_method === :constant
         return mp.heat_capacity_ice
     end
-    return HEAT_CAPACITY_CUFFEY_A +
-           HEAT_CAPACITY_CUFFEY_B * (0.5 * (Float64(T1) + Float64(T2)))
+    t1, t2 = Float64(T1), Float64(T2)
+    lo, hi = minmax(t1, t2)
+    hi <= CtoK && return HEAT_CAPACITY_CUFFEY_A + HEAT_CAPACITY_CUFFEY_B * (0.5 * (t1 + t2))
+    lo >= CtoK && return _HEAT_CAPACITY_CUFFEY_MELT
+    return (specific_enthalpy(mp, t2) - specific_enthalpy(mp, t1)) / (t2 - t1)
 end
 
 """
@@ -73,7 +85,7 @@ Specific enthalpy of the ice matrix at temperature `T` [K], measured from a 0 K
 reference: `h(T) = ∫₀ᵀ c_p dT′`.
 
 - `:constant` — `c·T` exactly, so the enthalpy is a plain `M·c·T` product.
-- `:CuffeyPaterson` — `a·T + (b/2)T²`.
+- `:CuffeyPaterson` — `a·T + (b/2)T²` up to `CtoK`, and linear with slope `c_p(CtoK)` above it.
 
 !!! warning
     Never use `T * heat_capacity(mp, T)` in an energy budget. For `c_p = a + bT` that
@@ -92,6 +104,7 @@ See [`temperature_from_specific_enthalpy`](@ref) for the inverse.
         return mp.heat_capacity_ice * Float64(T)
     end
     Tf = Float64(T)
+    Tf > CtoK && return _SPECIFIC_ENTHALPY_CUFFEY_MELT + _HEAT_CAPACITY_CUFFEY_MELT * (Tf - CtoK)
     return HEAT_CAPACITY_CUFFEY_A * Tf + (HEAT_CAPACITY_CUFFEY_B / 2) * Tf * Tf
 end
 
@@ -100,19 +113,22 @@ end
 
 Inverse of [`specific_enthalpy`](@ref). `h` is in J kg-1 from a 0 K reference.
 
-For `:CuffeyPaterson` this inverts the monotone quadratic `h = aT + (b/2)T²` using the
-cancellation-free root
+For `:CuffeyPaterson` and `h` at or below `h(CtoK)` this inverts the monotone quadratic
+`h = aT + (b/2)T²` using the cancellation-free root
 
     T = 2h / (a + √(a² + 2bh))
 
-which is well-conditioned for small `h`, unlike the textbook quadratic formula. `c_p > 0`
-over the physical range, so `h` is strictly increasing and the root is unique.
+which is well-conditioned for small `h`, unlike the textbook quadratic formula. Above `h(CtoK)`
+the enthalpy is linear and so is its inverse. `c_p > 0` over the physical range, so `h` is
+strictly increasing and the inverse is unique.
 """
 @inline function temperature_from_specific_enthalpy(mp::ModelParameters, h::Real)
     if mp.heat_capacity_method === :constant
         return Float64(h) / mp.heat_capacity_ice
     end
     hf = Float64(h)
+    hf > _SPECIFIC_ENTHALPY_CUFFEY_MELT &&
+        return CtoK + (hf - _SPECIFIC_ENTHALPY_CUFFEY_MELT) / _HEAT_CAPACITY_CUFFEY_MELT
     a = HEAT_CAPACITY_CUFFEY_A
     b = HEAT_CAPACITY_CUFFEY_B
     return 2 * hf / (a + sqrt(a * a + 2 * b * hf))
@@ -363,12 +379,9 @@ end
     excess_specific_enthalpy(mp::ModelParameters, T_excess) -> [J kg-1]
 
 Specific enthalpy held above the melting point by ice that was `T_excess` [K] warmer than
-`CtoK`: `h(CtoK + T_excess) − h(CtoK)`. This is the energy available to melt the cell, so
-comparing it directly against `LF` replaces the reference's `LF/c_p` temperature threshold —
-a quantity that only exists because `h` was linear.
-
-Evaluated in the cancellation-free form `a·ΔT + (b/2)·ΔT·(ΔT + 2·CtoK)` rather than as a
-difference of two large enthalpies.
+`CtoK`: `h(CtoK + T_excess) − h(CtoK)`, which is `c_p(CtoK)·T_excess` because the heat
+capacity is held at its melting-point value above `CtoK` ([`heat_capacity`](@ref)). This is
+the energy available to melt the cell.
 """
 @inline function excess_specific_enthalpy(mp::ModelParameters, T_excess::Real)
     dT = Float64(T_excess)
@@ -376,8 +389,7 @@ difference of two large enthalpies.
     if mp.heat_capacity_method === :constant
         return mp.heat_capacity_ice * dT
     end
-    return HEAT_CAPACITY_CUFFEY_A * dT +
-           (HEAT_CAPACITY_CUFFEY_B / 2) * dT * (dT + 2 * CtoK)
+    return _HEAT_CAPACITY_CUFFEY_MELT * dT
 end
 
 """
@@ -428,8 +440,7 @@ end
     excess_temperature_from_specific_enthalpy(mp::ModelParameters, e) -> ΔT [K]
 
 Inverse of [`excess_specific_enthalpy`](@ref): the temperature excess above `CtoK` that
-holds `e` [J kg-1] of excess specific enthalpy. Uses the cancellation-free root of
-`(b/2)ΔT² + (a + b·CtoK)ΔT − e = 0`.
+holds `e` [J kg-1] of excess specific enthalpy, `e/c_p(CtoK)`.
 
 Needed because the melt equations branch on kelvin thresholds (`T_TOLERANCE` is in kelvin)
 while the arithmetic is in joules, so the two representations must be interconvertible.
@@ -440,8 +451,7 @@ while the arithmetic is in joules, so the two representations must be interconve
     if mp.heat_capacity_method === :constant
         return ef / mp.heat_capacity_ice
     end
-    a = HEAT_CAPACITY_CUFFEY_A + HEAT_CAPACITY_CUFFEY_B * CtoK
-    return 2 * ef / (a + sqrt(a * a + 2 * HEAT_CAPACITY_CUFFEY_B * ef))
+    return ef / _HEAT_CAPACITY_CUFFEY_MELT
 end
 
 """
@@ -467,8 +477,8 @@ end
     full_melt_excess_temperature(mp::ModelParameters) -> ΔT [K]
 
 Temperature excess above the melting point at which a cell holds exactly enough enthalpy to
-melt its entire mass — the `LF/c_p` of the reference, generalized. A cell hotter than this
-has surplus energy to pass downward.
+melt its entire mass, `LF/c_p(CtoK)`. A cell hotter than this has surplus energy to pass
+downward.
 
 Kept in kelvin because the melt equations' branch tests use a kelvin tolerance
 (`T_tolerance = 1e-10`); reformulating those tests in joules would silently rescale them by
