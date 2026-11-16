@@ -73,9 +73,9 @@ mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
     # appears here this fails rather than leaving the pins watching the wrong field.
     @test sum(parent(output[:runoff])) == 0.0
 
-    @test mean_albedo ≈ 0.855912 atol = ALBEDO_ATOL
-    @test total_melt ≈ 279.255042 atol = mass_tol(279.255042)
-    @test total_refreeze ≈ 279.292726 atol = mass_tol(279.292726)
+    @test mean_albedo ≈ 0.855901 atol = ALBEDO_ATOL
+    @test total_melt ≈ 278.142188 atol = mass_tol(278.142188)
+    @test total_refreeze ≈ 277.984653 atol = mass_tol(277.984653)
 end
 
 @testset "Synthetic regression: maritime site (rain, refreeze, runoff)" begin
@@ -90,12 +90,12 @@ end
     @test total(:runoff) > 0.5 * total(:precipitation)
     @test total(:refreeze) > 0.15 * total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.852716 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 6992.276647 atol = mass_tol(6992.276647)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.852700 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 6992.892604 atol = mass_tol(6992.892604)
     @test total(:rain) ≈ 5195.191007 atol = mass_tol(5195.191007)
-    @test total(:refreeze) ≈ 2342.568416 atol = mass_tol(2342.568416)
-    @test total(:runoff) ≈ 9983.72672 atol = mass_tol(9983.72672)
-    @test total(:evaporation_condensation) ≈ 275.501406 atol = mass_tol(275.501406)
+    @test total(:refreeze) ≈ 2345.9334 atol = mass_tol(2345.9334)
+    @test total(:runoff) ≈ 9979.041403 atol = mass_tol(9979.041403)
+    @test total(:evaporation_condensation) ≈ 275.278017 atol = mass_tol(275.278017)
 end
 
 @testset "Synthetic regression: thin snow over dark ice at low sun" begin
@@ -110,10 +110,10 @@ end
     # The premise of this site: the snow melts off and the ice beneath melts too.
     @test total(:melt) > total(:precipitation)
 
-    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.543748 atol = ALBEDO_ATOL
-    @test total(:melt) ≈ 3040.825007 atol = mass_tol(3040.825007)
-    @test total(:refreeze) ≈ 17.043811 atol = mass_tol(17.043811)
-    @test total(:runoff) ≈ 3241.586952 atol = mass_tol(3241.586952)
+    @test Statistics.mean(parent(output[:albedo_broadband])) ≈ 0.546238 atol = ALBEDO_ATOL
+    @test total(:melt) ≈ 3026.092563 atol = mass_tol(3026.092563)
+    @test total(:refreeze) ≈ 17.442725 atol = mass_tol(17.442725)
+    @test total(:runoff) ≈ 3226.368321 atol = mass_tol(3226.368321)
 end
 
 @testset "Synthetic regression: tolerance policy" begin

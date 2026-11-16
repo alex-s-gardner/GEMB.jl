@@ -23,8 +23,10 @@ end
 
 # Enthalpy of the ice matrix above `T1` at `T2` [J kg-1] under the default
 # `heat_capacity_method = :CuffeyPaterson`: Cuffey & Paterson (2010) eq. 9.1, c = 152.5 + 7.122·T,
-# integrated, which is (T2 − T1) times c at the midpoint.
-_cp_dh(T1, T2) = (T2 - T1) * (152.5 + 7.122 * (T1 + T2) / 2)
+# integrated, with c held at its melting-point value above `CtoK`.
+_cp_h(T) = T <= GEMB.CtoK ? 152.5 * T + 7.122 / 2 * T^2 :
+           _cp_h(GEMB.CtoK) + (152.5 + 7.122 * GEMB.CtoK) * (T - GEMB.CtoK)
+_cp_dh(T1, T2) = _cp_h(T2) - _cp_h(T1)
 
 @testset "Cold dry snow - no change" begin
     temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age = _make_melt_inputs()
@@ -138,11 +140,11 @@ end
 end
 
 @testset "Surplus passes over a cold cell without melting it" begin
-    # Fresh snow at 271 K over a thin cell at 418 K. Only cell 2 holds more than its full-melt
+    # Fresh snow at 271 K over a thin cell at 450 K. Only cell 2 holds more than its full-melt
     # excess, so cell 1, which the surplus loop walks across, keeps its own (zero) excess, and
     # the surplus lands on cells 3 and 4, which already hold an excess of their own.
     # `verbose = true` runs the melt equations' mass and energy check, which throws on failure.
-    temperature = [271.23839097203694, 418.37967077366807, 293.3198043380318,
+    temperature = [271.23839097203694, 450.0, 293.3198043380318,
                    274.89857222441145, 273.19381419458955, 273.1361031000441]
     dz = [0.005440072416119263, 0.009606509542973096, 0.06149516586812494,
           0.0375347726320767, 0.06542562026080892, 0.06036727587166924]
@@ -706,11 +708,9 @@ end
     # the cell below receives M·(Δh(x_full + δ) − LF).
     mp = _melt_mp()
     Δh(x) = _cp_dh(GEMB.CtoK, GEMB.CtoK + x)
-    # Positive root of (b/2)x² + (a + b·CtoK)x − LF = 0 for eq. 9.1, in BigFloat.
-    a, b = big"152.5", big"7.122"
-    A = a + b * big(GEMB.CtoK)
-    x_full = Float64(2 * big(GEMB.LF) / (A + sqrt(A^2 + 2 * b * big(GEMB.LF))))
-    @test Δh(x_full) ≈ GEMB.LF rtol = 1e-14
+    # Above the melting point the heat capacity is held at c_p(CtoK), so Δh(x) = c_p(CtoK)·x.
+    x_full = GEMB.LF / (152.5 + 7.122 * GEMB.CtoK)
+    @test Δh(x_full) ≈ GEMB.LF rtol = 1e-12
     n = 6
     T = fill(GEMB.CtoK, n)
     dz = fill(0.1, n)

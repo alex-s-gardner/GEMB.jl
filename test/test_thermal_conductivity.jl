@@ -258,3 +258,12 @@ end
     exp_ice = 9.828 * exp(-5.7e-3 * t_val)
     @test k_out[2] ≈ exp_ice atol = 1e-8
 end
+
+@testset "conductivity is held at its melting-point value above it" begin
+    for method in (:Sturm, :Calonne, :Calonne2019, :Marchenko2019, :Calonne2019Air), ρ in (100.0, 450.0, 917.0)
+        mp = GEMB.ModelParameters(thermal_conductivity_method = method)
+        k0 = GEMB.thermal_conductivity(GEMB.CtoK, ρ, mp)
+        @test GEMB.thermal_conductivity(300.0, ρ, mp) == k0
+        @test GEMB.thermal_conductivity(418.0, ρ, mp) == k0
+    end
+end
