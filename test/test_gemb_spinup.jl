@@ -665,15 +665,50 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
         @test_throws ErrorException gemb_spinup(profile, forcing, params;
             simulation_years_maximum=1 * GEMB._years_per_cycle(forcing), convergence_drift_fac=1.0, drift_window=1)
 
-        # The default call requests nothing, so every measure is NaN/nothing and the spinup
-        # runs its full iteration count — unchanged by this feature existing.
-        pn = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * GEMB._years_per_cycle(forcing)))
+        # With no criterion given, the default drift of firn air content applies: 1 cm of air
+        # per year, converted to the per-cycle slope the criterion fits. Two cycles cannot fill
+        # its window, so the spinup runs to the ceiling unconverged.
+        ypc = GEMB._years_per_cycle(forcing)
+        pn = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc))
         @test pn[:spinup_converged] == false
         @test pn[:spinup_cycles] == 2
-        @test isnan(pn[:spinup_final_delta_fac])
-        @test isnan(pn[:spinup_final_drift_fac])
+        @test pn[:spinup_convergence_drift_fac] ≈ GEMB.SPINUP_DRIFT_FAC_PER_YEAR * ypc
+        @test pn[:spinup_convergence_drift_fac_per_year] ≈ GEMB.SPINUP_DRIFT_FAC_PER_YEAR
         @test pn[:spinup_convergence_delta_fac] === nothing
-        @test pn[:spinup_convergence_drift_fac] === nothing
+        @test pn[:spinup_convergence_delta_density] === nothing
+        @test pn[:spinup_drift_window] == GEMB.SPINUP_DRIFT_WINDOW
+        @test isnan(pn[:spinup_final_drift_fac])   # window not yet full
+
+        # `convergence_drift_fac_per_year = nothing` with no other criterion runs to the ceiling
+        # with no test at all, so every measure is NaN/nothing.
+        po = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc,
+            convergence_drift_fac_per_year=nothing))
+        @test po[:spinup_converged] == false
+        @test po[:spinup_cycles] == 2
+        @test isnan(po[:spinup_final_delta_fac])
+        @test isnan(po[:spinup_final_drift_fac])
+        @test po[:spinup_convergence_drift_fac] === nothing
+
+        # Any criterion given replaces the default.
+        pe = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc,
+            convergence_delta_density=1e3))
+        @test pe[:spinup_convergence_drift_fac] === nothing
+        @test pe[:spinup_converged] == true
+        # An explicit per-year tolerance applies alongside other criteria; it and the per-cycle form exclude each other.
+        py = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc,
+            convergence_delta_density=1e3, convergence_drift_fac_per_year=0.5, drift_window=2))
+        @test py[:spinup_convergence_drift_fac] ≈ 0.5 * ypc
+        @test_throws "not both" gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc,
+            convergence_drift_fac=0.5, convergence_drift_fac_per_year=0.5)
+        pc = DimensionalData.metadata(gemb_spinup(profile, forcing, params; simulation_years_maximum=2 * ypc,
+            convergence_drift_fac=0.5, drift_window=2))
+        @test pc[:spinup_convergence_drift_fac] == 0.5
+        @test pc[:spinup_convergence_drift_fac_per_year] ≈ 0.5 / ypc
+
+        # The default ceiling is a span of simulated years.
+        @test pn[:spinup_simulation_years_maximum] == 2 * ypc
+        @test DimensionalData.metadata(gemb_spinup(profile, forcing, params; convergence_delta_density=1e3))[:spinup_simulation_years_maximum] ==
+              GEMB.SPINUP_SIMULATION_YEARS_MAXIMUM
 
         # `_column_fac` is the same integral the `gemb` output reports, so a criterion and a
         # diagnostic cannot disagree about what FAC means.
@@ -796,6 +831,6 @@ isdefined(@__MODULE__, :CFM_SNOW) || include(joinpath(@__DIR__, "cfm_snow_config
         @test_throws "did not converge" gemb_spinup(p_hl, cf, mp; simulation_years_maximum=1.0,
             convergence_delta_density=1e-12, require_convergence=true)
         @test_throws "at least one convergence criterion" gemb_spinup(p_hl, cf, mp;
-            require_convergence=true)
+            require_convergence=true, convergence_drift_fac_per_year=nothing)
     end
 end

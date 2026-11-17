@@ -3,6 +3,7 @@
 # early transient cycles keep polluting the window.
 const SPINUP_DRIFT_WINDOW = 10
 
+
 """
     _SpinupTracker(delta_tolerance, drift_tolerance)
 
@@ -80,9 +81,10 @@ function _is_satisfied(t::_SpinupTracker)
 end
 
 """
-    gemb_spinup(profile, cf, mp; simulation_years_maximum=100,
+    gemb_spinup(profile, cf, mp; simulation_years_maximum=$SPINUP_SIMULATION_YEARS_MAXIMUM,
                 convergence_delta_density=nothing, convergence_drift_density=nothing,
                 convergence_delta_fac=nothing, convergence_drift_fac=nothing,
+                convergence_drift_fac_per_year=missing,
                 drift_window=$SPINUP_DRIFT_WINDOW, drift_window_closeoff_fraction=nothing,
                 require_convergence=false, verbose=false)
 
@@ -115,7 +117,8 @@ climatology it used: `spinup_cycles`, `spinup_converged`,
 `spinup_years_simulated`), the convergence
 parameters (`spinup_max_iterations`, `spinup_convergence_delta_density`,
 `spinup_convergence_drift_density`, `spinup_convergence_delta_fac`,
-`spinup_convergence_drift_fac`, `spinup_drift_window` — the window in force, after any
+`spinup_convergence_drift_fac` [m per cycle] and `spinup_convergence_drift_fac_per_year` [m per
+year], `spinup_drift_window` — the window in force, after any
 `drift_window_closeoff_fraction` scaling — and `spinup_drift_window_closeoff_fraction`),
 `spinup_smb_rate` (mean surface mass balance over the final cycle [m of ice per
 year] from the surface fluxes, positive under accumulation — see
@@ -146,11 +149,17 @@ Units follow the quantity: density criteria are [kg/m³] and [kg/m³ per cycle],
 smaller than a density one — millimetres of air, not thousandths of a kg/m³ (see the depth
 scaling above).
 
-When none is given the spinup always runs to the `simulation_years_maximum` ceiling.
+When no criterion is given, the spinup exits once the drift of firn air content falls below
+$SPINUP_DRIFT_FAC_PER_YEAR m of air per year over the trailing `drift_window` cycles, and stops at
+the `simulation_years_maximum` ceiling ($SPINUP_SIMULATION_YEARS_MAXIMUM simulated years) if it
+has not. This default suits glacier and percolation-zone firn; deep, cold ice-sheet columns relax
+by millimetres per year and need a tighter tolerance and a longer ceiling. Any criterion given
+replaces it. Pass `convergence_drift_fac_per_year = nothing` and no other criterion to run to the
+ceiling without a convergence test.
 
 # Keyword arguments
 - `simulation_years_maximum`: ceiling on the spinup, as a span of **simulated years** (default
-  100). The cycle ceiling follows from the cycle length,
+  $SPINUP_SIMULATION_YEARS_MAXIMUM). The cycle ceiling follows from the cycle length,
 
       max_iterations = max(1, ceil(Int, simulation_years_maximum / years_per_cycle))
 
@@ -167,6 +176,10 @@ When none is given the spinup always runs to the `simulation_years_maximum` ceil
 - `convergence_delta_density`, `convergence_drift_density`: density criteria, see above.
 - `convergence_delta_fac`, `convergence_drift_fac`: whole-column firn-air-content criteria
   ([`firn_air_content`](@ref)), see above.
+- `convergence_drift_fac_per_year`: the firn-air-content drift criterion as a rate [m of air per
+  year], converted to `convergence_drift_fac` [m per cycle] with the cycle length of `cf`. The
+  default, `missing`, is $SPINUP_DRIFT_FAC_PER_YEAR when no other criterion is given and none
+  otherwise; `nothing` is none. Cannot be combined with `convergence_drift_fac`.
 - `drift_window`: trailing cycles the drift slope is fitted over (default
   $SPINUP_DRIFT_WINDOW). Must be ≥ 2. Shared by both drift criteria. The lower bound of the
   window when `drift_window_closeoff_fraction` is set.
@@ -193,11 +206,12 @@ When none is given the spinup always runs to the `simulation_years_maximum` ceil
 
 """
 function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
-                     simulation_years_maximum::Real=100,
+                     simulation_years_maximum::Real=SPINUP_SIMULATION_YEARS_MAXIMUM,
                      convergence_delta_density=nothing,
                      convergence_drift_density=nothing,
                      convergence_delta_fac=nothing,
                      convergence_drift_fac=nothing,
+                     convergence_drift_fac_per_year=missing,
                      drift_window::Int=SPINUP_DRIFT_WINDOW,
                      drift_window_closeoff_fraction::Union{Nothing,Real}=nothing,
                      require_convergence::Bool=false,
@@ -211,11 +225,27 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     if mp.lower_boundary === :ground
         (convergence_delta_density === nothing && convergence_drift_density === nothing &&
          convergence_delta_fac === nothing && convergence_drift_fac === nothing &&
+         (ismissing(convergence_drift_fac_per_year) || convergence_drift_fac_per_year === nothing) &&
          drift_window_closeoff_fraction === nothing) ||
             throw(ArgumentError("lower_boundary = :ground converges on the deep-soil " *
                 "temperature; call gemb_spinup_ground for its criteria"))
         return gemb_spinup_ground(profile, cf, mp; simulation_years_maximum,
             require_convergence, verbose, thermal_workspace, column_workspace)
+    end
+
+    years_per_cycle = _years_per_cycle(cf)
+    years_per_cycle > 0 ||
+        error("forcing has non-positive cycle length ($years_per_cycle yr); cannot size the spinup")
+    if ismissing(convergence_drift_fac_per_year)
+        given = convergence_delta_density !== nothing || convergence_drift_density !== nothing ||
+                convergence_delta_fac !== nothing || convergence_drift_fac !== nothing
+        convergence_drift_fac_per_year = given ? nothing : SPINUP_DRIFT_FAC_PER_YEAR
+    end
+    if convergence_drift_fac_per_year !== nothing
+        convergence_drift_fac === nothing || throw(ArgumentError(
+            "give convergence_drift_fac [m per cycle] or convergence_drift_fac_per_year " *
+            "[m per year], not both"))
+        convergence_drift_fac = convergence_drift_fac_per_year * years_per_cycle
     end
 
     require_convergence && convergence_delta_density === nothing &&
@@ -231,11 +261,8 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
     # The ceiling is a span of simulated time, so it means the same amount of spinup whatever the
     # cycle length; a cycle count would not. `ceil` because the budget is a floor on simulated
     # years: a partial cycle cannot be run, so covering the request takes the next whole one.
-    years_per_cycle = _years_per_cycle(cf)
     simulation_years_maximum > 0 ||
         error("simulation_years_maximum must be positive, got $simulation_years_maximum")
-    years_per_cycle > 0 ||
-        error("forcing has non-positive cycle length ($years_per_cycle yr); cannot size the spinup")
     max_iterations = max(1, ceil(Int, simulation_years_maximum / years_per_cycle))
 
     window = drift_window
@@ -332,6 +359,8 @@ function gemb_spinup(profile::DimStack, cf::ClimateForcing, mp::ModelParameters;
         convergence_drift_density=convergence_drift_density,
         convergence_delta_fac=convergence_delta_fac,
         convergence_drift_fac=convergence_drift_fac,
+        convergence_drift_fac_per_year=(convergence_drift_fac === nothing ? nothing :
+            convergence_drift_fac / years_per_cycle),
         drift_window=window,
         drift_window_closeoff_fraction=drift_window_closeoff_fraction,
         smb_rate=smb_rate)
@@ -434,7 +463,8 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         drift_window, drift_window_closeoff_fraction=nothing, smb_rate=NaN,
         simulation_years_maximum=NaN, years_per_cycle=NaN,
         final_delta_fac=NaN, final_drift_fac=NaN,
-        convergence_delta_fac=nothing, convergence_drift_fac=nothing)
+        convergence_delta_fac=nothing, convergence_drift_fac=nothing,
+        convergence_drift_fac_per_year=nothing)
     cf_meta = DD.metadata(cf)
     _cf(key) = haskey(cf_meta, key) ? cf_meta[key] : nothing
     prov = (
@@ -457,6 +487,7 @@ function _attach_spinup_provenance(profile::DimStack, cf::ClimateForcing;
         spinup_convergence_drift_density = convergence_drift_density,
         spinup_convergence_delta_fac = convergence_delta_fac,
         spinup_convergence_drift_fac = convergence_drift_fac,
+        spinup_convergence_drift_fac_per_year = convergence_drift_fac_per_year,
         spinup_drift_window = drift_window,
         spinup_drift_window_closeoff_fraction = drift_window_closeoff_fraction,
         # Equilibrated mean surface mass balance [m of ice per year], positive under accumulation.

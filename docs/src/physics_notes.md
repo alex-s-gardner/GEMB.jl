@@ -591,6 +591,12 @@ snow physics where a measured near-surface soil temperature is the boundary cond
 
 ## Initialization and spinup
 
+**Default convergence.** With no criterion given, `gemb_spinup` exits once the least-squares
+drift of whole-column firn air content over the trailing 10 cycles falls below 1 cm of air per
+year, within at most 1000 simulated years; `gemb_spinup_ground` shares the ceiling. Any
+criterion given replaces the default; `convergence_drift_fac_per_year = nothing` runs to the
+ceiling with no test.
+
 **Deep temperature.** The initialized deep temperature is the mean *surface* temperature,
 accumulated from the skin temperatures `_seb_annual_melt` already solves for, not the mean air
 temperature. The column is coupled to the atmosphere only through the surface energy balance,
