@@ -803,7 +803,7 @@ Time-series surface meteorological forcing for GEMB, implemented as an
 date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
 — all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-# Layers (15 time-series `DimArray`s sharing a common `Ti` dimension)
+# Layers (16 time-series `DimArray`s sharing a common `Ti` dimension)
 Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
 `wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
 Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
@@ -815,6 +815,9 @@ when the forcing carries no drift product, and superseded by `mp.drift_rate` in 
 `temperature_ground` [K], the temperature of the fixed-temperature reservoir below the snow
 under `lower_boundary = :prescribed` (see [`gemb_core_prescribed`](@ref)); `Fill`-backed `NaN`
 when not supplied, and read under no other lower boundary.
+`snowfall_fraction` [-], the fraction of each step's precipitation that falls as snow, in
+`[0, 1]`; `Fill`-backed `NaN` when not supplied, which partitions precipitation on
+`mp.rain_temperature_threshold` instead (see [`snowfall_mass`](@ref)).
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -855,16 +858,17 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 15 forcing layers. The first 13 are in positional-constructor order; `snow_drift` and
-# `temperature_ground` are keyword-only and trailing, so every existing 19-argument positional
-# call site stays valid; forcing built without them carries a `Fill`-backed zero drift layer and
-# a `Fill`-backed `NaN` ground-temperature layer.
+# The 16 forcing layers. The first 13 are in positional-constructor order; `snow_drift`,
+# `temperature_ground` and `snowfall_fraction` are keyword-only and trailing, so every existing
+# 19-argument positional call site stays valid; forcing built without them carries a
+# `Fill`-backed zero drift layer and `Fill`-backed `NaN` ground-temperature and snowfall-fraction
+# layers.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
-    :snow_drift, :temperature_ground,
+    :snow_drift, :temperature_ground, :snowfall_fraction,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -900,6 +904,9 @@ inert. Supply it to drive [`apply_prescribed_drift!`](@ref) from a drift product
 The 15th layer, `temperature_ground` [K], is keyword-only and defaults to `Fill`-backed `NaN`.
 It is the base temperature of `lower_boundary = :prescribed` and is read under no other lower
 boundary.
+
+The 16th layer, `snowfall_fraction` [-], is keyword-only and defaults to `Fill`-backed `NaN`,
+the partition on `mp.rain_temperature_threshold`.
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
@@ -937,7 +944,7 @@ function ClimateForcing(
     solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
-    snow_drift=nothing, temperature_ground=nothing,
+    snow_drift=nothing, temperature_ground=nothing, snowfall_fraction=nothing,
     accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
@@ -954,12 +961,16 @@ function ClimateForcing(
         tdim = dims(temperature_air, Ti)
         temperature_ground = DimArray(Fill(NaN, length(tdim)), (tdim,))
     end
+    if snowfall_fraction === nothing
+        tdim = dims(temperature_air, Ti)
+        snowfall_fraction = DimArray(Fill(NaN, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        snow_drift, temperature_ground,
+        snow_drift, temperature_ground, snowfall_fraction,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -1037,7 +1048,27 @@ struct ClimateForcingStep
     # forms valid. Defaults to 0.0 in both tail constructors, which is inert in
     # `apply_prescribed_drift!`.
     snow_drift::Float64
+    # Fraction of the step's precipitation that falls as snow, or NaN to partition on
+    # `mp.rain_temperature_threshold` (see `snowfall_mass`). NaN in every shorter form.
+    snowfall_fraction::Float64
 end
+
+# 22-argument positional form: everything but the snowfall fraction, which partitions on the
+# threshold.
+ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    accumulation_mean, temperature_air_effective, snow_drift) =
+    ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        accumulation_mean, temperature_air_effective, snow_drift, NaN)
 
 # 19-argument positional form: the two refinements default to the scalars they refine, so a
 # step built this way reads identically on either setting of the two gates, and `snow_drift`
@@ -1097,7 +1128,7 @@ function ClimateForcingStep(;
     shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0,
     accumulation_mean::Real=precipitation_mean,
     temperature_air_effective::Real=temperature_air_mean,
-    snow_drift::Real=0.0)
+    snow_drift::Real=0.0, snowfall_fraction::Real=NaN)
 
     return ClimateForcingStep(
         dt, temperature_air, pressure_air, precipitation, wind_speed,
@@ -1106,6 +1137,6 @@ function ClimateForcingStep(;
         temperature_observation_height, wind_observation_height,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        accumulation_mean, temperature_air_effective, snow_drift,
+        accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction,
     )
 end

@@ -208,6 +208,29 @@ function vankampenhout_density_wind(wind_speed_10m::Real)
 end
 
 """
+    snowfall_mass(cfs, mp) -> Float64
+
+The part [kg m-2] of the step's precipitation that falls as snow; the rest is rain. With a
+finite `cfs.snowfall_fraction` it is that fraction of `cfs.precipitation` (clamped to `[0, 1]`).
+Otherwise precipitation is all snow at or below `mp.rain_temperature_threshold` and all rain above
+it.
+"""
+@inline function snowfall_mass(cfs::ClimateForcingStep, mp::ModelParameters)
+    f = cfs.snowfall_fraction
+    isfinite(f) && return cfs.precipitation * clamp(f, 0.0, 1.0)
+    return cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE) ? cfs.precipitation : 0.0
+end
+
+# Temperatures [K] the snow and rain of a step arrive at. A snowfall fraction lets snow fall in air
+# above the melting point and rain in air below it, so then snow arrives at no more than 0 °C and
+# rain at no less. Under the threshold partition snow only falls at or below the threshold and rain
+# only above it, and both are the air temperature.
+@inline snowfall_temperature(cfs::ClimateForcingStep) =
+    isfinite(cfs.snowfall_fraction) ? min(cfs.temperature_air, CtoK) : cfs.temperature_air
+@inline rainfall_temperature(cfs::ClimateForcingStep) =
+    isfinite(cfs.snowfall_fraction) ? max(cfs.temperature_air, CtoK) : cfs.temperature_air
+
+"""
     fresh_snow_properties(cfs, mp, z0) -> (density, grain_radius, grain_dendricity, grain_sphericity)
 
 Density [kg m-3] and grain state of the snow falling in step `cfs`, onto a surface of roughness
@@ -232,7 +255,7 @@ function fresh_snow_properties(cfs::ClimateForcingStep, mp::ModelParameters, z0:
     # otherwise hand a non-positive density to the `dz = mass/density` below. (`:Pahaut`
     # carries its own published floor.)
     density_new_snow = clamp(fresh_snow_density(mp, cfs.temperature_air_mean,
-            cfs.precipitation_mean, cfs.wind_speed_mean, cfs.temperature_air,
+            cfs.precipitation_mean, cfs.wind_speed_mean, snowfall_temperature(cfs),
             cfs.wind_speed; wind_observation_height=cfs.wind_observation_height,
             z0=z0),
         1.0, mp.density_ice)
@@ -253,7 +276,9 @@ end
 
 Add precipitation and deposition to the model column.
 
-Precipitation is classified as snow or rain based on `mp.rain_temperature_threshold`.
+Precipitation is split into snow and rain by [`snowfall_mass`](@ref): by the forcing's
+`snowfall_fraction` when it carries one, otherwise on `mp.rain_temperature_threshold`. A step can
+hold both; the snow is added first and the rain falls onto it.
 
 Snowfall follows the layering of Crocus (Vionnet et al., 2012, p. 778; Lafaysse et al., 2026,
 eq. 11, p. 6278): it joins the top cell only when that cell is similar snow, and otherwise
@@ -324,63 +349,68 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     # before any branch mutates `dz[1]` or `density[1]`.
     S_surface = M_surface + water[1]
 
-    if cfs.precipitation > 0
-        # if snow
-        if cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE)
-            z_snow = cfs.precipitation / density_new_snow          # depth of snow
-            dfall = gdn_new_snow
-            sfall = gsp_new_snow
-            refall = re_new_snow
+    snow = snowfall_mass(cfs, mp)
+    if snow > 0
+        z_snow = snow / density_new_snow          # depth of snow
+        dfall = gdn_new_snow
+        sfall = gsp_new_snow
+        refall = re_new_snow
 
-            # Fresh snow forms its own top cell when it is deeper than `column_dzmin`, or when
-            # it holds at least `snow_layer_min_mass` and is distinct from the top cell
-            # (always so over firn or ice); see the docstring. D(n, 1) takes the top cell as
-            # the upper layer and the new snow as the lower.
-            D = snow_layer_distance(grain_dendricity[1], grain_sphericity[1], grain_radius[1],
-                water[1] > WATER_TOLERANCE, age[1], density[1],
-                dfall, sfall, refall, false, 0.0, density_new_snow)
-            if (z_snow > mp.column_dzmin + D_TOLERANCE) ||
-               ((cfs.precipitation >= snow_layer_min_mass(cfs.dt)) &&
-                snow_layers_distinct(z_snow, D, mp))
-                cols = column_state(temperature, dz, density, water, grain_radius,
-                    grain_dendricity, grain_sphericity, age)
-                open_slot!(cols, 1)
-                temperature[1] = cfs.temperature_air
-                dz[1] = z_snow
-                density[1] = density_new_snow
-                water[1] = 0.0
-                grain_radius[1] = refall
-                grain_dendricity[1] = dfall
-                grain_sphericity[1] = sfall
-                # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
-                # its age.
-                age[1] = 0.0
-            else
-                # Merged into the top cell (adjust temperature: precipitation is at the air
-                # temperature).
-                temperature[1] = mix_temperature(mp, cfs.temperature_air, cfs.precipitation,
-                    temperature[1], M_surface)
-                age[1] = dilute_age(age[1], S_surface, cfs.precipitation)
-                dz[1] = dz[1] + cfs.precipitation / density_new_snow
-                density[1] = (M_surface + cfs.precipitation) / dz[1]
-                grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(
-                    grain_dendricity[1], grain_sphericity[1], grain_radius[1], M_surface,
-                    dfall, sfall, refall, cfs.precipitation, independent_grain_radius(mp))
-            end
-
+        # Fresh snow forms its own top cell when it is deeper than `column_dzmin`, or when
+        # it holds at least `snow_layer_min_mass` and is distinct from the top cell
+        # (always so over firn or ice); see the docstring. D(n, 1) takes the top cell as
+        # the upper layer and the new snow as the lower.
+        D = snow_layer_distance(grain_dendricity[1], grain_sphericity[1], grain_radius[1],
+            water[1] > WATER_TOLERANCE, age[1], density[1],
+            dfall, sfall, refall, false, 0.0, density_new_snow)
+        if (z_snow > mp.column_dzmin + D_TOLERANCE) ||
+           ((snow >= snow_layer_min_mass(cfs.dt)) &&
+            snow_layers_distinct(z_snow, D, mp))
+            cols = column_state(temperature, dz, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, age)
+            open_slot!(cols, 1)
+            temperature[1] = snowfall_temperature(cfs)
+            dz[1] = z_snow
+            density[1] = density_new_snow
+            water[1] = 0.0
+            grain_radius[1] = refall
+            grain_dendricity[1] = dfall
+            grain_sphericity[1] = sfall
+            # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
+            # its age.
+            age[1] = 0.0
         else
-            # Rain joins the pore water at the melt-point enthalpy; its sensible heat above
-            # the melting point warms the matrix, so the total enthalpy added is exactly
-            # P·h_w(T_air). Density and thickness are untouched.
-            rain = cfs.precipitation
-            water[1] += rain
-            Q_sensible = rain * (specific_enthalpy_water(mp, cfs.temperature_air) -
-                                 specific_enthalpy_water(mp))
-            temperature[1] = add_energy_temperature(mp, temperature[1], M_surface, Q_sensible)
-
-            # New age-zero mass in the cell on the same footing as snowfall.
-            age[1] = dilute_age(age[1], S_surface, rain)
+            # Merged into the top cell (adjust temperature: precipitation is at the air
+            # temperature).
+            temperature[1] = mix_temperature(mp, snowfall_temperature(cfs), snow,
+                temperature[1], M_surface)
+            age[1] = dilute_age(age[1], S_surface, snow)
+            dz[1] = dz[1] + snow / density_new_snow
+            density[1] = (M_surface + snow) / dz[1]
+            grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(
+                grain_dendricity[1], grain_sphericity[1], grain_radius[1], M_surface,
+                dfall, sfall, refall, snow, independent_grain_radius(mp))
         end
+    end
+
+    if cfs.precipitation - snow > 0
+        # Rain joins the pore water at the melt-point enthalpy; its sensible heat above
+        # the melting point warms the matrix, so the total enthalpy added is exactly
+        # P·h_w(T_air). Density and thickness are untouched. In a mixed step it falls on
+        # the surface cell as the snow above left it.
+        rain = cfs.precipitation - snow
+        M_surface = dz[1] * density[1]
+        S_surface = M_surface + water[1]
+        water[1] += rain
+        Q_sensible = rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) -
+                             specific_enthalpy_water(mp))
+        temperature[1] = add_energy_temperature(mp, temperature[1], M_surface, Q_sensible)
+
+        # New age-zero mass in the cell on the same footing as snowfall.
+        age[1] = dilute_age(age[1], S_surface, rain)
+    end
+
+    if cfs.precipitation > 0
 
         if verbose
             # Check for conservation of mass
@@ -390,8 +420,8 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
             E_total_final = column_enthalpy(mp, M, temperature, water)
 
-            E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
-            E_rain = rain * specific_enthalpy_water(mp, cfs.temperature_air)
+            E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs))
+            E_rain = rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
 
             E_delta = E_total_final - E_total_initial - E_snow - E_rain
 

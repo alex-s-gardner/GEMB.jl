@@ -73,7 +73,7 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
     f = (cf.temperature_air, cf.pressure_air, cf.precipitation, cf.wind_speed,
         cf.shortwave_downward, cf.longwave_downward, cf.vapor_pressure, cf.black_carbon_snow,
         cf.black_carbon_ice, cf.cloud_optical_thickness, cf.solar_zenith_angle,
-        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift)
+        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction)
     sums = Dict(k => 0.0 for k in (:melt, :runoff, :refreeze, :evaporation_condensation,
         :shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent, :heat_flux_basal,
         :albedo_broadband, :blowing_snow, :temperature_air, :precipitation, :rain,
@@ -91,7 +91,7 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
             f[7][i], cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
             cf.temperature_observation_height, cf.wind_observation_height, f[8][i], f[9][i],
             f[10][i], f[11][i], f[12][i], f[13][i], cf.accumulation_mean,
-            cf.temperature_air_effective, f[14][i])
+            cf.temperature_air_effective, f[14][i], f[15][i])
         snow, temperature_ground, water_ground, flux = gemb_core_ground(snow, temperature_ground,
             water_ground, g, cfs, model_parameters, verbose; thermal_workspace, column_workspace)
 

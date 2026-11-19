@@ -189,6 +189,50 @@ end
     end
 end
 
+@testset "Precipitation split by snowfall_fraction" begin
+    # A finite `snowfall_fraction` splits each step into snow and rain. Snow is added first and the
+    # rain falls onto it; snow in air above 0 °C arrives at 0 °C and rain in air below 0 °C at 0 °C.
+    # verbose = true closes the mass and enthalpy budgets and throws otherwise.
+    n = 5
+    column() = (fill(260.0, n), fill(0.1, n), fill(400.0, n), zeros(n), fill(0.5, n), fill(0.5, n),
+                fill(0.5, n), zeros(n))
+    mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05, density_ice=917.0,
+        rain_temperature_threshold=273.15)
+    step(T, f; P=10.0) = GEMB.ClimateForcingStep(; dt=86400.0, temperature_air=T, pressure_air=80000.0,
+        precipitation=P, wind_speed=0.0, shortwave_downward=100.0, longwave_downward=250.0,
+        vapor_pressure=300.0, temperature_air_mean=260.0, wind_speed_mean=5.0, precipitation_mean=200.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0, snowfall_fraction=f)
+
+    @test GEMB.snowfall_mass(step(275.15, 0.3), mp) ≈ 3.0
+    @test GEMB.snowfall_mass(step(275.15, 1.7), mp) == 10.0       # clamped to [0, 1]
+    @test GEMB.snowfall_mass(step(275.15, NaN), mp) == 0.0        # threshold: rain above 0 °C
+    @test GEMB.snowfall_mass(step(270.15, NaN), mp) == 10.0
+
+    # A mixed step at +2 °C: 9 kg of snow (0.06 m, above column_dzmin) forms a new cell at 0 °C and
+    # 1 kg of rain at +2 °C joins it, its sensible heat raising the cell above the melting point
+    # (melt removes the excess later in the step).
+    (t, dz, d, w, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(275.15, 0.9), mp, true)
+    @test rain ≈ 1.0
+    @test w[1] ≈ 1.0
+    @test length(dz) == n + 1 && d[1] == 150.0
+    @test dz[1] ≈ 9.0 / 150.0
+    c_rain = mp.rain_heat_capacity === :water ? GEMB.HEAT_CAPACITY_WATER : 152.5 + 7.122 * GEMB.CtoK
+    @test t[1] > GEMB.CtoK
+    @test 9.0 * GEMB.specific_enthalpy(mp, t[1]) ≈ 9.0 * GEMB.specific_enthalpy(mp, GEMB.CtoK) +
+          1.0 * c_rain * 2.0 rtol = 1e-6
+
+    # All rain in air at −3 °C arrives at 0 °C, so it brings no sensible heat.
+    (t, _, _, w, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(270.15, 0.0), mp, true)
+    @test rain == 10.0 && w[1] == 10.0 && t[1] == 260.0
+
+    # Fractions 1 and 0 at temperatures the threshold agrees with reproduce it bit for bit.
+    for (T, f) in ((265.0, 1.0), (276.0, 0.0))
+        a = GEMB.calculate_accumulation(column()..., step(T, f), mp, true)
+        b = GEMB.calculate_accumulation(column()..., step(T, NaN), mp, true)
+        @test all(a[k] == b[k] for k in eachindex(a))
+    end
+end
+
 @testset "Rain does not compact snow" begin
     # 5 kg of rain at 275.15 K on a 0.05 m, 350 kg m-3 cell at 0 °C, through accumulation
     # and melt. The cell keeps its density; its water gains the rain plus the ice its

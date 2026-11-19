@@ -44,6 +44,10 @@ Create a `ClimateForcing` struct from time-series vectors.
   forcing layer rather than a tunable: the IMAU-FDM path reads it from a drift product
   (RACMO's `SnowDrif`). `nothing` (the default) leaves the layer at zero, which is inert;
   `mp.drift_rate` is then the constant-rate fallback. Read by `apply_prescribed_drift!`.
+- `snowfall_fraction`: Optional per-timestep fraction [-] of `precipitation` that falls as snow, in
+  `[0, 1]`, for example from a humidity-dependent phase model. `nothing` (the default)
+  partitions precipitation on `rain_temperature_threshold`. Also used to derive
+  `accumulation_mean`.
 - `temperature_ground`: Optional per-timestep temperature [K] of the fixed-temperature
   reservoir at the base of the snow under `lower_boundary = :prescribed`, typically a measured
   near-surface soil temperature. `nothing` (the default) leaves the layer at `NaN`; it is read
@@ -74,6 +78,7 @@ function initialize_forcing(
     cloud_fraction::Real=0.1,
     snow_drift::Union{Nothing,AbstractVector{<:Real}}=nothing,
     temperature_ground::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    snowfall_fraction::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
@@ -115,6 +120,11 @@ function initialize_forcing(
         @assert all(T -> isnan(T) || 200 <= T <= 330, temperature_ground) "temperature_ground values unrealistic. Ensure units are kelvin."
     end
 
+    if snowfall_fraction !== nothing
+        @assert length(snowfall_fraction) == n "All input variables must have the same size."
+        @assert all(f -> 0 <= f <= 1, snowfall_fraction) "snowfall_fraction values must be in [0, 1]."
+    end
+
     # Set defaults for metadata with warnings
     if isnan(temperature_air_mean)
         @warn "Undeclared temperature_air_mean. Assuming mean(temperature_air) represents the climatological mean temperature."
@@ -145,9 +155,9 @@ function initialize_forcing(
         snow_total = 0.0
         @inbounds for i in eachindex(precipitation)
             precip_total += precipitation[i]
-            if temperature_air[i] <= rain_temperature_threshold
-                snow_total += precipitation[i]
-            end
+            snow_total += snowfall_fraction === nothing ?
+                (temperature_air[i] <= rain_temperature_threshold ? precipitation[i] : 0.0) :
+                precipitation[i] * snowfall_fraction[i]
         end
         snow_fraction = precip_total > 0 ? snow_total / precip_total : 1.0
         accumulation_mean = precipitation_mean * snow_fraction
@@ -217,6 +227,8 @@ function initialize_forcing(
                    DimArray(Float64.(snow_drift), (tdim,)),
         temperature_ground=temperature_ground === nothing ? nothing :
                            DimArray(Float64.(temperature_ground), (tdim,)),
+        snowfall_fraction=snowfall_fraction === nothing ? nothing :
+                          DimArray(Float64.(snowfall_fraction), (tdim,)),
         accumulation_mean=Float64(accumulation_mean),
         temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
@@ -375,6 +387,7 @@ function initialize_forcing(stack::DimStack)
     snow_drift = haskey(stack, :snow_drift) ? parent(stack[:snow_drift]) : nothing
     temperature_ground = haskey(stack, :temperature_ground) ?
                          parent(stack[:temperature_ground]) : nothing
+    snowfall_fraction = haskey(stack, :snowfall_fraction) ? parent(stack[:snowfall_fraction]) : nothing
 
     # Extract required metadata
     meta = metadata(stack)
@@ -453,6 +466,7 @@ function initialize_forcing(stack::DimStack)
         cloud_fraction = cloud_fraction,
         snow_drift = snow_drift,
         temperature_ground = temperature_ground,
+        snowfall_fraction = snowfall_fraction,
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,
