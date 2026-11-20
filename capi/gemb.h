@@ -34,7 +34,7 @@ extern "C" {
 #define GEMB_N_OPTIONS  17
 #define GEMB_N_NUMERIC  36
 #define GEMB_N_FLAGS     5
-#define GEMB_N_FORCING  22
+#define GEMB_N_FORCING  23
 #define GEMB_N_FLUX     21
 
 /* --- options[] indices, and the codes each accepts. Codes are 1-based. ------------------- */
@@ -238,6 +238,8 @@ extern "C" {
 #define GEMB_FRC_ACCUMULATION_MEAN              19  /* [kg m-2 yr-1] snowfall only */
 #define GEMB_FRC_TEMPERATURE_AIR_EFFECTIVE      20  /* [K]        Arrhenius-weighted */
 #define GEMB_FRC_SNOW_DRIFT                     21  /* [kg m-2 yr-1] + is erosion */
+#define GEMB_FRC_SNOWFALL_FRACTION              22  /* [-]  snow part of precipitation, in [0, 1];
+                                                       NaN splits at the rain temperature threshold */
 
 /* --- flux[] indices, written by gemb_step. -------------------------------------------- */
 
