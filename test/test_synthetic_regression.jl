@@ -52,8 +52,12 @@ const ALBEDO_ATOL = 1e-5
 mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
 
 @testset "Synthetic regression: test_1 (cold accumulation site)" begin
+    # The references are for the rain-temperature-threshold partition, so any snowfall-fraction
+    # layer the simulated forcing carries is dropped.
     ds = simulate_climate_forcing("test_1", 3)
-    cf = initialize_forcing(ds)
+    cf = initialize_forcing(haskey(ds, :snowfall_fraction) ?
+                            GEMB.DimensionalData.DimStack(Base.structdiff(NamedTuple(ds), (; snowfall_fraction = nothing));
+                                                          metadata = GEMB.DimensionalData.metadata(ds)) : ds)
     mp = ModelParameters(output_frequency=:daily)
 
     # Both escape-hatch flags give the pure-ice initialization and the deep column the

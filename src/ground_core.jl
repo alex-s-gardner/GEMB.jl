@@ -83,17 +83,20 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
     # 6. Snowfall and rain
     E_ground_added = 0.0
     if isempty(dz)
-        if cfs.precipitation > 0
-            if cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE)
-                ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
-                push!(temperature, cfs.temperature_air); push!(dz, cfs.precipitation / ρ_new)
-                push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
-                push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
-            else
-                rain = cfs.precipitation
-                runoff += rain
-                E_ground_added = rain * (specific_enthalpy_water(mp, cfs.temperature_air) - h_water)
-            end
+        snow = snowfall_mass(cfs, mp)
+        if cfs.precipitation > 0 && snow == 0
+            # All rain on snow-free ground: it runs off at the melting point.
+            rain = cfs.precipitation
+            runoff += rain
+            E_ground_added = rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) - h_water)
+        elseif cfs.precipitation > 0
+            # Snow on snow-free ground starts a cell, and any rain of the same step falls on it.
+            ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
+            push!(temperature, snowfall_temperature(cfs)); push!(dz, snow / ρ_new)
+            push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
+            push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
+            rain = cfs.precipitation - snow
+            rain > 0 && add_rain_to_surface!(temperature, dz, density, water, age, rain, cfs, mp)
         end
     else
         temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
@@ -326,10 +329,8 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
         H_g = sum(ground_enthalpy(mp, g.C_solid[j], g.water_total[j], temperature_ground[j],
                   water_ground[j]) for j in 1:ng)
         E_final = column_enthalpy(mp, dz .* density, temperature, water) + H_g
-        E_snowfall = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
-        E_rain = rain * specific_enthalpy_water(mp, cfs.temperature_air)
         E_supplied = (sw_net + cfs.longwave_downward - longwave_upward + heat_flux_sensible +
-                      heat_flux_latent + heat_flux_basal) * cfs.dt + E_snowfall + E_rain +
+                      heat_flux_latent + heat_flux_basal) * cfs.dt + precipitation_enthalpy(mp, cfs, rain) +
                      E_vapor + E_blowing_snow - runoff * h_water
         E_delta = (E_final - E_initial) - E_supplied
         abs(E_delta) > energy_tolerance(E_initial) && error("gemb_core_ground: energy not " *

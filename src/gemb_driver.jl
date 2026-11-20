@@ -122,6 +122,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.wind_observation_height;
         snow_drift=snow_drift_forcing,
         temperature_ground=climate_forcing.temperature_ground,
+        snowfall_fraction=climate_forcing.snowfall_fraction,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -302,6 +303,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.shortwave_downward_diffuse,
         climate_forcing.cloud_fraction,
         climate_forcing.snow_drift,
+        climate_forcing.snowfall_fraction,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
@@ -428,6 +430,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     f_black_carbon_ice::AbstractVector, f_cloud_optical_thickness::AbstractVector,
     f_solar_zenith_angle::AbstractVector, f_shortwave_downward_diffuse::AbstractVector,
     f_cloud_fraction::AbstractVector, f_snow_drift::AbstractVector,
+    f_snowfall_fraction::AbstractVector,
     temperature_air_mean::Float64, wind_speed_mean::Float64,
     precipitation_mean::Float64, temperature_observation_height::Float64,
     wind_observation_height::Float64,
@@ -550,7 +553,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             f_cloud_fraction[i],
             accumulation_mean,
             temperature_air_effective,
-            f_snow_drift[i])
+            f_snow_drift[i],
+            f_snowfall_fraction[i])
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.

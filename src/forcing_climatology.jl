@@ -302,6 +302,7 @@ function forcing_climatology(cf::ClimateForcing; window=nothing,
         cf.wind_observation_height;
         snow_drift=_avg(cf.snow_drift),
         temperature_ground=_avg(cf.temperature_ground),
+        snowfall_fraction=_avg(cf.snowfall_fraction),
         accumulation_mean=cf.accumulation_mean,
         temperature_air_effective=cf.temperature_air_effective,
         dataset=cf.dataset,
@@ -633,6 +634,7 @@ function _years_slice(cf::ClimateForcing, cy, years)
         cf.temperature_observation_height, cf.wind_observation_height;
         snow_drift=_slice(cf.snow_drift),
         temperature_ground=_slice(cf.temperature_ground),
+        snowfall_fraction=_slice(cf.snowfall_fraction),
         accumulation_mean=cf.accumulation_mean,
         temperature_air_effective=cf.temperature_air_effective,
         dataset=cf.dataset, latitude=cf.latitude, longitude=cf.longitude,

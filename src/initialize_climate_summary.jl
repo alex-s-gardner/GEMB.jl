@@ -84,9 +84,9 @@ quantities; see the albedo note below).
 
 Three quantities are computed simultaneously in the pass:
 
-**Snowfall vs. rainfall.** Precipitation is partitioned on
-`mp.rain_temperature_threshold`, the same test [`calculate_accumulation`](@ref)
-applies per timestep. This matters: the forcing's `precipitation_mean` is *total*
+**Snowfall vs. rainfall.** Precipitation is partitioned as
+[`calculate_accumulation`](@ref) partitions it per timestep: by the forcing's
+`snowfall_fraction` where it is finite, otherwise on `mp.rain_temperature_threshold`. This matters: the forcing's `precipitation_mean` is *total*
 precipitation, so using it directly counts rain as accumulating mass.
 
 **Melt, from a surface energy balance.** At each step the skin temperature that
@@ -122,6 +122,7 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
 
     T_air = Float64.(parent(cf.temperature_air))
     precip = Float64.(parent(cf.precipitation))
+    f_snow = parent(cf.snowfall_fraction)
     wind = Float64.(parent(cf.wind_speed))
     pressure = Float64.(parent(cf.pressure_air))
     sw = Float64.(parent(cf.shortwave_downward))
@@ -149,11 +150,9 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     Σsin = 0.0
     ω = 2π / SECONDS_PER_YEAR
     @inbounds for i in 1:n
-        if T_air[i] <= mp.rain_temperature_threshold
-            snow_total += precip[i]
-        else
-            rain_total += precip[i]
-        end
+        s = snowfall_mass(precip[i], T_air[i], f_snow[i], mp.rain_temperature_threshold)
+        snow_total += s
+        rain_total += precip[i] - s
         θ = ω * (i - 1) * dt
         Tp = T_air[i] - T_mean
         Σcos += Tp * cos(θ)

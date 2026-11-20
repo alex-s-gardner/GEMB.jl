@@ -13,6 +13,7 @@
  *   cc -o test_capi capi/test/test_capi.c -Icapi -Lcapi/build -lgemb_safe
  */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,6 +100,8 @@ int main(void) {
     /* The two refinements default to the scalars they refine, as the Julia tail constructor does. */
     forcing[GEMB_FRC_ACCUMULATION_MEAN] = 300.0;
     forcing[GEMB_FRC_TEMPERATURE_AIR_EFFECTIVE] = 258.0;
+    /* NaN: split precipitation at the rain temperature threshold, as the Julia reference does. */
+    forcing[GEMB_FRC_SNOWFALL_FRACTION] = NAN;
 
     double flux[GEMB_N_FLUX];
     double flux_total[GEMB_N_FLUX] = {0.0};
