@@ -155,9 +155,9 @@ function initialize_forcing(
         snow_total = 0.0
         @inbounds for i in eachindex(precipitation)
             precip_total += precipitation[i]
-            snow_total += snowfall_fraction === nothing ?
-                (temperature_air[i] <= rain_temperature_threshold ? precipitation[i] : 0.0) :
-                precipitation[i] * snowfall_fraction[i]
+            snow_total += snowfall_mass(precipitation[i], temperature_air[i],
+                                        snowfall_fraction === nothing ? NaN : snowfall_fraction[i],
+                                        rain_temperature_threshold)
         end
         snow_fraction = precip_total > 0 ? snow_total / precip_total : 1.0
         accumulation_mean = precipitation_mean * snow_fraction

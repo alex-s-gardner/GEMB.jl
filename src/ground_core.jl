@@ -82,28 +82,23 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
 
     # 6. Snowfall and rain
     E_ground_added = 0.0
-    if isempty(dz) && cfs.precipitation > 0 && snowfall_mass(cfs, mp) == 0
-        # All rain on snow-free ground: it runs off at the melting point.
-        rain = cfs.precipitation
-        runoff += rain
-        E_ground_added = rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) - h_water)
-    elseif isempty(dz) && cfs.precipitation > 0
-        # Snow on snow-free ground starts a cell, and any rain of the same step falls on it.
+    if isempty(dz)
         snow = snowfall_mass(cfs, mp)
-        ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
-        push!(temperature, snowfall_temperature(cfs)); push!(dz, snow / ρ_new)
-        push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
-        push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
-        # The step's rain joins the new cell's pore water, as `calculate_accumulation` adds it.
-        rain = cfs.precipitation - snow
-        if rain > 0
-            M_snow = dz[1] * density[1]
-            water[1] += rain
-            temperature[1] = add_energy_temperature(mp, temperature[1], M_snow,
-                rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) - h_water))
-            age[1] = dilute_age(age[1], M_snow, rain)
+        if cfs.precipitation > 0 && snow == 0
+            # All rain on snow-free ground: it runs off at the melting point.
+            rain = cfs.precipitation
+            runoff += rain
+            E_ground_added = rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) - h_water)
+        elseif cfs.precipitation > 0
+            # Snow on snow-free ground starts a cell, and any rain of the same step falls on it.
+            ρ_new, r_new, d_new, s_new = fresh_snow_properties(cfs, mp, mp.ground_roughness)
+            push!(temperature, snowfall_temperature(cfs)); push!(dz, snow / ρ_new)
+            push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
+            push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
+            rain = cfs.precipitation - snow
+            rain > 0 && add_rain_to_surface!(temperature, dz, density, water, age, rain, cfs, mp)
         end
-    elseif !isempty(dz)
+    else
         temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
             age, rain = calculate_accumulation(temperature, dz, density, water, grain_radius,
                 grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
@@ -334,10 +329,8 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
         H_g = sum(ground_enthalpy(mp, g.C_solid[j], g.water_total[j], temperature_ground[j],
                   water_ground[j]) for j in 1:ng)
         E_final = column_enthalpy(mp, dz .* density, temperature, water) + H_g
-        E_snowfall = (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs))
-        E_rain = rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
         E_supplied = (sw_net + cfs.longwave_downward - longwave_upward + heat_flux_sensible +
-                      heat_flux_latent + heat_flux_basal) * cfs.dt + E_snowfall + E_rain +
+                      heat_flux_latent + heat_flux_basal) * cfs.dt + precipitation_enthalpy(mp, cfs, rain) +
                      E_vapor + E_blowing_snow - runoff * h_water
         E_delta = (E_final - E_initial) - E_supplied
         abs(E_delta) > energy_tolerance(E_initial) && error("gemb_core_ground: energy not " *

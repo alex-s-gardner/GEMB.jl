@@ -209,17 +209,22 @@ end
 
 """
     snowfall_mass(cfs, mp) -> Float64
+    snowfall_mass(precipitation, temperature_air, snowfall_fraction, rain_temperature_threshold) -> Float64
 
-The part [kg m-2] of the step's precipitation that falls as snow; the rest is rain. With a
-finite `cfs.snowfall_fraction` it is that fraction of `cfs.precipitation` (clamped to `[0, 1]`).
-Otherwise precipitation is all snow at or below `mp.rain_temperature_threshold` and all rain above
-it.
+The part [kg m-2] of a step's precipitation that falls as snow; the rest is rain. With a finite
+snowfall fraction it is that fraction of the precipitation (clamped to `[0, 1]`). Otherwise
+precipitation is all snow at or below the rain temperature threshold and all rain above it. The
+scalar form is the one rule the stepped physics, the climate summary and the forcing's
+`accumulation_mean` all partition by.
 """
-@inline function snowfall_mass(cfs::ClimateForcingStep, mp::ModelParameters)
-    f = cfs.snowfall_fraction
-    isfinite(f) && return cfs.precipitation * clamp(f, 0.0, 1.0)
-    return cfs.temperature_air <= (mp.rain_temperature_threshold + T_TOLERANCE) ? cfs.precipitation : 0.0
+@inline function snowfall_mass(precipitation::Real, temperature_air::Real, snowfall_fraction::Real,
+                               rain_temperature_threshold::Real)
+    isfinite(snowfall_fraction) && return precipitation * clamp(snowfall_fraction, 0.0, 1.0)
+    return temperature_air <= (rain_temperature_threshold + T_TOLERANCE) ? precipitation : 0.0
 end
+@inline snowfall_mass(cfs::ClimateForcingStep, mp::ModelParameters) =
+    snowfall_mass(cfs.precipitation, cfs.temperature_air, cfs.snowfall_fraction,
+                  mp.rain_temperature_threshold)
 
 # Temperatures [K] the snow and rain of a step arrive at. A snowfall fraction lets snow fall in air
 # above the melting point and rain in air below it, so then snow arrives at no more than 0 °C and
@@ -229,6 +234,25 @@ end
     isfinite(cfs.snowfall_fraction) ? min(cfs.temperature_air, CtoK) : cfs.temperature_air
 @inline rainfall_temperature(cfs::ClimateForcingStep) =
     isfinite(cfs.snowfall_fraction) ? max(cfs.temperature_air, CtoK) : cfs.temperature_air
+
+# Enthalpy [J m-2] the step's snowfall and rain bring, at the temperatures they arrive at. The term
+# every energy-conservation check books for precipitation.
+@inline precipitation_enthalpy(mp::ModelParameters, cfs::ClimateForcingStep, rain::Real) =
+    (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs)) +
+    rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
+
+# Adds `rain` [kg m-2] to the surface cell's pore water. It joins at the melt-point enthalpy; its
+# sensible heat above the melting point warms the matrix, so the cell gains exactly
+# rain·h_w(T_rain), and the rain is new age-zero mass on the same footing as snowfall.
+@inline function add_rain_to_surface!(temperature, dz, density, water, age, rain, cfs, mp)
+    M_surface = dz[1] * density[1]
+    S_surface = M_surface + water[1]
+    water[1] += rain
+    temperature[1] = add_energy_temperature(mp, temperature[1], M_surface,
+        rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) - specific_enthalpy_water(mp)))
+    age[1] = dilute_age(age[1], S_surface, rain)
+    return nothing
+end
 
 """
     fresh_snow_properties(cfs, mp, z0) -> (density, grain_radius, grain_dendricity, grain_sphericity)
@@ -394,20 +418,10 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     if cfs.precipitation - snow > 0
-        # Rain joins the pore water at the melt-point enthalpy; its sensible heat above
-        # the melting point warms the matrix, so the total enthalpy added is exactly
-        # P·h_w(T_air). Density and thickness are untouched. In a mixed step it falls on
-        # the surface cell as the snow above left it.
+        # Density and thickness are untouched. In a mixed step the rain falls on the surface cell
+        # as the snow above left it.
         rain = cfs.precipitation - snow
-        M_surface = dz[1] * density[1]
-        S_surface = M_surface + water[1]
-        water[1] += rain
-        Q_sensible = rain * (specific_enthalpy_water(mp, rainfall_temperature(cfs)) -
-                             specific_enthalpy_water(mp))
-        temperature[1] = add_energy_temperature(mp, temperature[1], M_surface, Q_sensible)
-
-        # New age-zero mass in the cell on the same footing as snowfall.
-        age[1] = dilute_age(age[1], S_surface, rain)
+        add_rain_to_surface!(temperature, dz, density, water, age, rain, cfs, mp)
     end
 
     if cfs.precipitation > 0
@@ -420,10 +434,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
 
             E_total_final = column_enthalpy(mp, M, temperature, water)
 
-            E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs))
-            E_rain = rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
-
-            E_delta = E_total_final - E_total_initial - E_snow - E_rain
+            E_delta = E_total_final - E_total_initial - precipitation_enthalpy(mp, cfs, rain)
 
             E_tol = energy_tolerance(E_total_initial)
 

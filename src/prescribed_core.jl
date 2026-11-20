@@ -335,11 +335,9 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
         abs(M_delta) > M_TOLERANCE && error("gemb_core_prescribed: mass not conserved: " *
                                             "M_delta = $(M_delta)")
         E_final = column_enthalpy(mp, dz .* density, temperature, water)
-        E_snowfall = (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs))
-        E_rain = rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
         E_supplied = (sw_net - sw_base + cfs.longwave_downward - longwave_upward +
                       heat_flux_sensible + heat_flux_latent + heat_flux_basal) * cfs.dt +
-                     E_snowfall + E_rain + E_vapor + E_blowing_snow - runoff * h_water
+                     precipitation_enthalpy(mp, cfs, rain) + E_vapor + E_blowing_snow - runoff * h_water
         E_delta = (E_final - E_initial) - E_supplied
         abs(E_delta) > energy_tolerance(E_initial) && error("gemb_core_prescribed: energy " *
             "not conserved: E_delta = $(E_delta) J m-2")

@@ -150,8 +150,7 @@ function initialize_climate_summary(cf::ClimateForcing, mp::ModelParameters;
     Σsin = 0.0
     ω = 2π / SECONDS_PER_YEAR
     @inbounds for i in 1:n
-        s = isfinite(f_snow[i]) ? precip[i] * clamp(f_snow[i], 0.0, 1.0) :
-            (T_air[i] <= mp.rain_temperature_threshold ? precip[i] : 0.0)
+        s = snowfall_mass(precip[i], T_air[i], f_snow[i], mp.rain_temperature_threshold)
         snow_total += s
         rain_total += precip[i] - s
         θ = ω * (i - 1) * dt
