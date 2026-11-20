@@ -344,8 +344,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         end
 
         longwave_net = cfs.longwave_downward - longwave_upward
-        E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, cfs.temperature_air)
-        E_rain = rain * specific_enthalpy_water(mp, cfs.temperature_air)
+        E_snow = (cfs.precipitation - rain) * specific_enthalpy(mp, snowfall_temperature(cfs))
+        E_rain = rain * specific_enthalpy_water(mp, rainfall_temperature(cfs))
         E_runoff = runoff * specific_enthalpy_water(mp)
         E_thermal = column_enthalpy(mp, M, temperature)
         E_water = sum(water) * specific_enthalpy_water(mp)

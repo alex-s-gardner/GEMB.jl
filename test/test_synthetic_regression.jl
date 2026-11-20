@@ -52,7 +52,8 @@ const ALBEDO_ATOL = 1e-5
 mass_tol(reference) = max(MASS_RTOL * abs(reference), MASS_ATOL_FLOOR)
 
 @testset "Synthetic regression: test_1 (cold accumulation site)" begin
-    ds = simulate_climate_forcing("test_1", 3)
+    # The references are for the rain-temperature-threshold partition.
+    ds = simulate_climate_forcing("test_1", 3; precipitation_phase=:threshold)
     cf = initialize_forcing(ds)
     mp = ModelParameters(output_frequency=:daily)
 
