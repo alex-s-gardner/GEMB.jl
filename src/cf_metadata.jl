@@ -210,6 +210,15 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "the epoch is the start of spinup rather than the start of the transient " *
                 "run. Under sustained ablation the deepest cell is a lower bound: basal " *
                 "accretion inherits that cell's own age."),
+    :black_carbon => CFAttrs("1e-6", "layer equivalent light-absorbing impurity loading",
+        "time: point";
+        comment="Mass mixing ratio of black-carbon-equivalent impurity in the ice matrix " *
+                "[ppmw], the c of the Gardner and Sharp (2010) albedo. New snow carries " *
+                "black_carbon_snow; merges mix it on matrix mass; melt leaves it unchanged. " *
+                "Where an albedo_observed forcing is supplied the near-surface snow is " *
+                "updated so that the model albedo matches it; the value is then an " *
+                "equivalent loading that also absorbs errors in wet-snow albedo and pixel " *
+                "mixing. No CF standard name exists."),
     # ---- lower_boundary = :ground only -------------------------------------
     :heat_flux_ground => CFAttrs("W m-2", "conductive heat flux from the ground into the snow",
         "time: mean";

@@ -160,7 +160,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # rebinds state to new_state after each call. `evaporation_condensation` is deliberately
     # absent: step 5 assigns it unconditionally before any read, so binding it here would be dead.
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age, melt_surface) = state
+       grain_sphericity, age, black_carbon, melt_surface) = state
 
     # 0. Advance the age clock, before any mass moves, so mass added later in this timestep
     #    reads as age 0 in this timestep's output. The column carries no absolute time, so
@@ -217,7 +217,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     #    A loss larger than the surface cell's ice is supplied by the cells below it; the cell
     #    count this removes is restored at step 9.
     expose_vapor_exchange_layer!(column_state(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age),
+            grain_dendricity, grain_sphericity, age, black_carbon),
         evaporation_condensation, evaporation_condensation_liquid, mp)
     S_surface = dz[1] * density[1] + water[1]
     E_evaporation_condensation = apply_vapor_exchange!(temperature, dz, density, water,
@@ -226,9 +226,9 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
 
     # 7. Add snow/rain to top grid cell
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age, rain =
+        grain_sphericity, age, black_carbon, rain =
         calculate_accumulation(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
+            grain_dendricity, grain_sphericity, age, black_carbon, cfs, mp, verbose)
 
     # 7b. Wind rework of snow already on the ground (both schemes are in `blowing_snow.jl`).
     # Here because wind acts on snow once it has landed, and this timestep's snowfall is the most
@@ -237,7 +237,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # thickness band is fixed up immediately. The two schemes are independent and may both be on.
     # A no-op under `blowing_snow_method = :none` and `drift_rate = 0.0`.
     cols_drift = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age)
+        grain_dendricity, grain_sphericity, age, black_carbon)
 
     # Both signed as a flux *into* the column, like `mass_lateral`.
     mass_sublimated, E_sublimated = apply_blowing_snow!(cols_drift, cfs, mp)
@@ -249,10 +249,10 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     densification_from_melt = sum(dz)
 
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age, melt, melt_surface, runoff, refreeze,
+        grain_sphericity, age, black_carbon, melt, melt_surface, runoff, refreeze,
         percolation_depth =
         calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose;
+            grain_dendricity, grain_sphericity, age, black_carbon, mp, verbose;
             workspace=column_workspace)
     refreeze += refreeze_thermal
 
@@ -267,14 +267,14 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # A no-op at the `runoff_method = :instantaneous` default.
     runoff += apply_lateral_drainage!(
         column_state(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age), cfs.dt, mp)
+            grain_dendricity, grain_sphericity, age, black_carbon), cfs.dt, mp)
 
     # 9. Return cells to their thickness bands and restore the cell count to n_target
     #    (exactly conservative)
     temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age, E_added =
+        grain_sphericity, age, black_carbon, E_added =
         manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose;
+            grain_dendricity, grain_sphericity, age, black_carbon, mp, verbose;
             dt=cfs.dt, n_target=n_target, workspace=column_workspace)
 
     # 10. Allow non-melt densification
@@ -302,7 +302,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # exports leaves laterally, not basally, so it is reported separately. A no-op at the
     # `horizontal_strain_rate = 0.0` default.
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age)
+        grain_dendricity, grain_sphericity, age, black_carbon)
     mass_lateral, strain_energy = apply_horizontal_strain!(cols, cfs.dt, mp)
     E_added += strain_energy
 
@@ -399,6 +399,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         grain_dendricity=grain_dendricity,
         grain_sphericity=grain_sphericity,
         age=age,
+        black_carbon=black_carbon,
         evaporation_condensation=evaporation_condensation,
         melt_surface=melt_surface,
     )

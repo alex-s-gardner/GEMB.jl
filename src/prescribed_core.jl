@@ -256,7 +256,7 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
     isfinite(T_base) || error("gemb_core_prescribed: the prescribed base temperature " *
         "(forcing layer temperature_ground) is $(T_base) K")
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age) = snow
+       grain_sphericity, age, black_carbon) = snow
     age .+= cfs.dt / 86400.0
     h_water = specific_enthalpy_water(mp)
 
@@ -274,7 +274,7 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
                 grain_dendricity, grain_sphericity, cfs, mp)
     end
     cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
+        grain_sphericity, age, black_carbon)
 
     # 2. Albedo and 3. shortwave
     albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius, cfs, mp)

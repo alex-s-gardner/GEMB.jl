@@ -141,7 +141,7 @@ end
     mp = GEMB.initialize_parameters(lower_boundary=:prescribed,
         dt_divisors=GEMB.fast_divisors(3600 * 10000) ./ 10000)
     snow() = GEMB.column_state([265.0, 268.0, 270.0], [0.05, 0.05, 0.05], [200.0, 220.0, 240.0],
-        zeros(3), fill(0.1, 3), zeros(3), fill(0.5, 3), fill(10.0, 3))
+        zeros(3), fill(0.1, 3), zeros(3), fill(0.5, 3), fill(10.0, 3), zero([0.05, 0.05, 0.05]))
     cfs = ClimateForcingStep(; dt=3600.0, temperature_air=263.15, pressure_air=80000.0,
         wind_speed=2.0, longwave_downward=220.0, vapor_pressure=200.0,
         temperature_observation_height=2.0, wind_observation_height=10.0,
@@ -166,7 +166,7 @@ end
     @test s.temperature[1] < CtoK
     # Trace snow on a warm base melts out in the step; on a cold one it takes the base
     # temperature.
-    trace() = GEMB.column_state([270.0], [0.001], [200.0], [0.0], [0.1], [0.0], [0.5], [1.0])
+    trace() = GEMB.column_state([270.0], [0.001], [200.0], [0.0], [0.1], [0.0], [0.5], [1.0], zero([0.001]))
     s_t, f_t = GEMB.gemb_core_prescribed(trace(), 276.15, cfs, mp, true)
     @test isempty(s_t.dz) && f_t.runoff ≈ 0.2
     s_c, _ = GEMB.gemb_core_prescribed(trace(), 266.0, cfs, mp, true)

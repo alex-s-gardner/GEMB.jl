@@ -157,7 +157,7 @@ function _check_melt_finite(dz::Vector{Float64}, water::Vector{Float64})
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool)
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -224,7 +224,7 @@ above — the two best-performing models at the ice-slab site KAN_U were bucket 
 delay runoff rather than models that percolate deeper.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
+age, black_carbon, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
 
 `melt_total` is the ice melted this timestep and `freeze_total` all liquid water refrozen,
 including rain, which arrives as pore water (see [`calculate_accumulation`](@ref)). Over any
@@ -244,6 +244,12 @@ water generated there and any water the cell expels (both at `age[i]`) mix with 
 from above (at `flux_age[i]`) into one pool; whatever refreezes enters the cell at the pool's
 age, and whatever continues down or runs off leaves at it. Refreezing therefore makes a cell
 *younger* only to the extent that genuinely younger water reached it, rather than resetting it.
+
+# Impurity loading
+
+`black_carbon` [ppmw] is unchanged by melt, refreeze and percolation: a cell keeps its loading
+as it loses or gains mass, and a cell that melts out takes its impurity with it. Enrichment of
+the remaining snow by impurities left behind at a melting surface is not modelled.
 
 `percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
 base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
@@ -278,6 +284,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
+    black_carbon::Vector{Float64},
     mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace(),
     basal_surplus::Union{Nothing,Base.RefValue{Float64}}=nothing)
 
@@ -634,7 +641,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         to_delete = findall(M .<= WATER_TOLERANCE)
         if !isempty(to_delete)
             close_slot!(column_state(temperature, M, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age), to_delete)
+                grain_dendricity, grain_sphericity, age, black_carbon), to_delete)
         end
 
         # calculate new grid lengths
@@ -672,7 +679,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
+    age, black_carbon, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
 end
 
 """

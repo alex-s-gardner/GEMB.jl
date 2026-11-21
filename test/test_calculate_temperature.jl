@@ -955,10 +955,10 @@ end
             @test M1 * (GEMB.specific_enthalpy(mp, T0) - GEMB.specific_enthalpy(mp, t_out[1])) ≈
                   100.0 * dt rtol = 1e-9
             out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n),
-                zeros(n), fill(0.5, n), zeros(n), mp, true)
+                zeros(n), fill(0.5, n), zeros(n), zero(dz), mp, true)
             @test out[1][1] ≈ T0 atol = 1e-6
             @test out[4][1] ≈ W - frozen rtol = 1e-9
-            @test out[12] ≈ frozen rtol = 1e-9
+            @test out[13] ≈ frozen rtol = 1e-9
         else
             # 7200 s freezes all of it after 3345 s; the surface then cools below 273.15 K.
             @test lw_up < ε * GEMB.SB * T0^4 + (1 - ε) * lw_down
@@ -1046,8 +1046,8 @@ end
         end
         # What calculate_melt then finds is a cell it does not refreeze further.
         out = GEMB.calculate_melt(t_out, dz, density, copy(water), fill(0.5, n), zeros(n),
-            fill(0.5, n), zeros(n), mp, true)
-        @test out[12] ≈ 0.0 atol = 1e-12
+            fill(0.5, n), zeros(n), zero(dz), mp, true)
+        @test out[13] ≈ 0.0 atol = 1e-12
     end
 end
 

@@ -10,7 +10,9 @@ function _make_melt_inputs(; n=5)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
-    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age
+    black_carbon = zeros(n)
+    return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age,
+        black_carbon
 end
 
 # `:constant` retention, which is what most of the assertions below are written against:
@@ -34,9 +36,9 @@ _cp_dh(T1, T2) = _cp_h(T2) - _cp_h(T1)
     rain = 0.0
     verbose = false
 
-    (t_out, _, d_out, w_out, _, _, _, _, m_tot, _, r_tot, f_tot) =
+    (t_out, _, d_out, w_out, _, _, _, _, _, m_tot, _, r_tot, f_tot) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     @test m_tot == 0.0
     @test r_tot == 0.0
@@ -56,9 +58,9 @@ end
     water[1] = 5.0
     mass_initial = density[1] * dz[1] + water[1]
 
-    (t_out, dz_out, d_out, w_out, _, _, _, _, _, _, _, f_tot) =
+    (t_out, dz_out, d_out, w_out, _, _, _, _, _, _, _, _, f_tot) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     # Verify refreeze occurred
     @test f_tot > 0.0
@@ -84,9 +86,9 @@ end
     # Hot surface layer
     temperature[1] = 280.0
 
-    (t_out, _, _, _, _, _, _, _, m_tot, m_surf, _, _) =
+    (t_out, _, _, _, _, _, _, _, _, m_tot, m_surf, _, _) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     @test t_out[1] ≈ GEMB.CtoK atol = 1e-10
     @test m_surf > 0.0
@@ -107,9 +109,9 @@ end
     # Pre-saturate top layer to trigger runoff
     water[1] = 10.0
 
-    (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =
+    (_, _, _, w_out, _, _, _, _, _, _, _, r_tot, _) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     @test r_tot > 0.0
     # Ice layer retains some irreducible water
@@ -130,9 +132,9 @@ end
     temperature[1] = GEMB.CtoK + 200.0
     M1 = dz[1] * density[1]
 
-    (t_out, _, d_out, _, _, _, _, _, m_tot, _, _, _) =
+    (t_out, _, d_out, _, _, _, _, _, _, m_tot, _, _, _) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     @test length(d_out) == 4
     @test t_out[1] > 260.0
@@ -160,9 +162,9 @@ end
     mp = GEMB.ModelParameters()
     M_in = sum(dz .* density) + sum(water)
 
-    (t_out, dz_out, d_out, w_out, _, _, _, _, m_tot, _, r_tot, f_tot) =
+    (t_out, dz_out, d_out, w_out, _, _, _, _, _, m_tot, _, r_tot, f_tot) =
         GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), copy(water),
-            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), mp, true)
+            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), zero(copy(dz)), mp, true)
 
     @test all(isfinite, w_out)
     # Cell 2 melts out; cell 1 does not, so the column loses exactly one cell.
@@ -178,8 +180,8 @@ end
     mp = GEMB.ModelParameters()
     temperature[1] = GEMB.CtoK + 200.0
     temperature[2] = GEMB.CtoK + 20.0
-    (_, _, _, _, _, _, _, _, m_tot, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
-        water, grain_radius, grain_dendricity, grain_sphericity, age, mp, true)
+    (_, _, _, _, _, _, _, _, _, m_tot, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
+        water, grain_radius, grain_dendricity, grain_sphericity, age, zero(dz), mp, true)
     @test m_tot > dz[1] * density[1]
 end
 
@@ -199,8 +201,8 @@ end
     temperature[3] = GEMB.CtoK + 200.0
     temperature[2] = 260.0
     temperature[4] = 230.0
-    (_, dz_out, _, w_out, _, _, _, _, _, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
-        water, grain_radius, grain_dendricity, grain_sphericity, age, mp, true)
+    (_, dz_out, _, w_out, _, _, _, _, _, _, _, _, _) = GEMB.calculate_melt(temperature, dz, density,
+        water, grain_radius, grain_dendricity, grain_sphericity, age, zero(dz), mp, true)
     @test all(isfinite, dz_out) && all(isfinite, w_out)
 end
 
@@ -214,9 +216,9 @@ end
     water[1] = 20.0
     temperature .= GEMB.CtoK
 
-    (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =
+    (_, _, _, w_out, _, _, _, _, _, _, _, r_tot, _) =
         GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, verbose)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, verbose)
 
     # Excess water should drain from top cell
     @test w_out[1] < 20.0
@@ -233,9 +235,9 @@ end
     M1 = dz[1] * density[1]
     for w in (0.0, 0.5)
         water_in = copy(water); water_in[1] = w
-        (_, _, _, _, _, _, _, _, m_tot, _, _, _) =
+        (_, _, _, _, _, _, _, _, _, m_tot, _, _, _) =
             GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), water_in,
-                copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age),
+                copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), zero(copy(dz)),
                 mp, true)
         @test m_tot ≈ M1 * _cp_dh(GEMB.CtoK, 280.0) / GEMB.LF rtol = 1e-12
     end
@@ -305,9 +307,9 @@ end
         # `:ColeouLesaffre` (the default) ignores it by design.
         mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=S,
             water_irreducible_method=:constant)
-        (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =
+        (_, _, _, w_out, _, _, _, _, _, _, _, r_tot, _) =
             GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, mp, false)
+                grain_dendricity, grain_sphericity, age, zero(dz), mp, false)
         return sum(w_out), r_tot
     end
 
@@ -328,9 +330,9 @@ end
         water = zeros(n)
         grain_radius = fill(1.0, n)
         mp = GEMB.ModelParameters(density_ice=917.0, water_irreducible_method=method)
-        (_, _, _, w_out, _, _, _, _, _, _, r_tot, f_tot) =
+        (_, _, _, w_out, _, _, _, _, _, _, _, r_tot, f_tot) =
             GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-                fill(0.0, n), fill(0.5, n), zeros(n), mp, true)
+                fill(0.0, n), fill(0.5, n), zeros(n), zero(dz), mp, true)
         return sum(w_out), r_tot, f_tot
     end
 
@@ -359,9 +361,9 @@ end
             water_irreducible_method=:constant,
             impermeable_density=density_threshold,
             impermeable_thickness=thickness_threshold)
-        (_, _, _, w_out, _, _, _, _, _, _, r_tot, _) =
+        (_, _, _, w_out, _, _, _, _, _, _, _, r_tot, _) =
             GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, mp, false)
+                grain_dendricity, grain_sphericity, age, zero(dz), mp, false)
         return r_tot, w_out
     end
 
@@ -408,8 +410,8 @@ end
         temperature[1] = T_surface
         mp = _melt_mp()
         out = GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, false)
-        return out[13], sum(out[2])   # percolation_depth, Σdz
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, false)
+        return out[14], sum(out[2])   # percolation_depth, Σdz
     end
 
     # A cold dry column: the melt block never runs, so the wetting front has zero depth.
@@ -429,9 +431,9 @@ end
         water[n] = 30.0
         mp = GEMB.ModelParameters(density_ice=917.0)
         out = GEMB.calculate_melt(fill(GEMB.CtoK, n), dz, fill(400.0, n), water,
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), zeros(n), mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), zeros(n), zero(dz), mp, false)
         @test sum(out[4][1:(n-1)]) == 0.0    # confirm no water entered the cells above
-        @test out[13] == 0.0                 # so the wetting front went nowhere
+        @test out[14] == 0.0                 # so the wetting front went nowhere
     end
 
     # More surface energy drives the front deeper, and it can never outrun the column.
@@ -507,8 +509,8 @@ end
         water = zeros(n)
         water[1] = 200.0                    # overwhelm irreducible retention above the ice
         out = GEMB.calculate_melt(fill(GEMB.CtoK, n), fill(0.1, n), copy(d_ice), water,
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), zeros(n), mp_low_ice, false)
-        @test out[11] > 0.0                 # runoff at the slab
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), zeros(n), zero(fill(0.1, n)), mp_low_ice, false)
+        @test out[12] > 0.0                 # runoff at the slab
         @test sum(out[4][11:n]) == 0.0      # nothing got past it
         # ...and the diagnostic, run on the column `calculate_melt` returned (which is where
         # `gemb_core` runs it), sees the same slab that did the blocking.
@@ -595,7 +597,7 @@ end
             water_irreducible_method=:constant, melt_geometry=geometry)
         M_initial = sum(dz .* density) + sum(water)
         out = GEMB.calculate_melt(copy(temperature), copy(dz), copy(density), copy(water),
-            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), mp, true)
+            copy(grain_radius), copy(grain_dendricity), copy(grain_sphericity), copy(age), zero(copy(dz)), mp, true)
         return out, M_initial, dz, density
     end
 
@@ -619,11 +621,11 @@ end
     @test dz_t[1] * rho_t[1] ≈ dz_d[1] * rho_d[1] rtol = 1e-12
 
     # And the same melt total, since melt is set by the energy excess, not the geometry.
-    @test out_t[9] ≈ out_d[9] rtol = 1e-12
+    @test out_t[10] ≈ out_d[10] rtol = 1e-12
 
     # --- mass conservation under both (verbose=true already asserts it internally) ----
     for (out, M0) in ((out_t, M0_t), (out_d, M0_d))
-        M_final = sum(out[2] .* out[3]) + sum(out[4]) + out[11]
+        M_final = sum(out[2] .* out[3]) + sum(out[4]) + out[12]
         @test M_final ≈ M0 atol = 1e-9
     end
 
@@ -719,16 +721,16 @@ end
     ΔT = 2.5
     T[1] = GEMB.CtoK + ΔT
     out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
-        fill(0.5, n), zeros(n), mp, true)
-    @test out[9] ≈ M * Δh(ΔT) / GEMB.LF rtol = 1e-12
+        fill(0.5, n), zeros(n), zero(copy(dz)), mp, true)
+    @test out[10] ≈ M * Δh(ΔT) / GEMB.LF rtol = 1e-12
 
     δ = 3.0
     T2 = copy(T); T2[1] = GEMB.CtoK + x_full + δ
     out = GEMB.calculate_melt(T2, copy(dz), copy(ρ), zeros(n), fill(0.5, n), zeros(n),
-        fill(0.5, n), zeros(n), mp, true)
+        fill(0.5, n), zeros(n), zero(copy(dz)), mp, true)
     @test length(out[2]) == n - 1                     # cell 1 melted out and was removed
     # Cell 2, at 0 °C, received M·(Δh(x_full + δ) − LF) and melted that over LF of itself.
-    @test out[9] ≈ M + M * (Δh(x_full + δ) - GEMB.LF) / GEMB.LF rtol = 1e-12
+    @test out[10] ≈ M + M * (Δh(x_full + δ) - GEMB.LF) / GEMB.LF rtol = 1e-12
 end
 
 @testset "Percolation into cold firn" begin
@@ -746,9 +748,9 @@ end
     W_irr = (mp.density_ice - 400.0) * 0.07 * 0.1
     cold2 = 400.0 * 0.1 * _cp_dh(GEMB.CtoK - 5.0, GEMB.CtoK) / GEMB.LF
     out = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), water, fill(0.5, n), zeros(n),
-        fill(0.5, n), zeros(n), mp, true)
-    @test out[12] ≈ min(W - W_irr, cold2, (mp.density_ice - 400.0) * 0.1) rtol = 1e-12
-    @test out[11] == 0.0
+        fill(0.5, n), zeros(n), zero(copy(dz)), mp, true)
+    @test out[13] ≈ min(W - W_irr, cold2, (mp.density_ice - 400.0) * 0.1) rtol = 1e-12
+    @test out[12] == 0.0
     @test out[4][1] ≈ W_irr rtol = 1e-12
 end
 
@@ -757,9 +759,9 @@ end
     n = 6
     T = fill(GEMB.CtoK, n); T[1] = GEMB.CtoK + 1.5
     out = GEMB.calculate_melt(T, fill(0.1, n), fill(mp.density_ice, n), zeros(n),
-        fill(2.5, n), zeros(n), zeros(n), zeros(n), mp, true)
-    @test out[11] == out[9]
-    @test out[9] > 0.0
+        fill(2.5, n), zeros(n), zeros(n), zeros(n), zero(fill(0.1, n)), mp, true)
+    @test out[12] == out[10]
+    @test out[10] > 0.0
 end
 
 @testset "Refreeze of expelled pore water leaves the through-flow" begin
@@ -804,19 +806,19 @@ end
         mp = GEMB.ModelParameters(density_ice=920.0, water_irreducible_saturation=0.07,
             water_irreducible_method=:constant, grain_growth_method=method)
         return GEMB.calculate_melt(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, mp, false)
+            grain_dendricity, grain_sphericity, age, zero(dz), mp, false)
     end
     for hot in (false, true)
         out_h = melt_run(:hybrid; hot)
         out_f = melt_run(:FlannerZender2006; hot)
-        @test out_f[12] > 0                                   # something refroze
+        @test out_f[13] > 0                                   # something refroze
         @test all(out_h[5] .== 0.1)                           # default: radius untouched
-        for k in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13)
+        for k in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14)
             @test out_f[k] == out_h[k]
         end
         if !hot
             # Only cell 1 froze: f = refrozen/(M + W) after freezing, 35 kg m-2 of 30 + 5.
-            f = out_f[12] / 35.0
+            f = out_f[13] / 35.0
             @test out_f[5][1] ≈ (100 + f * (GEMB.SNICAR_RADIUS_REFROZEN - 100)) / 1000 rtol = 1e-12
             @test all(out_f[5][2:end] .== 0.1)
         else

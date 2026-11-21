@@ -64,7 +64,7 @@ end
         n = 8
         state = (temperature=fill(263.0, n), dz=fill(0.5, n), density=fill(400.0, n),
             water=zeros(n), grain_radius=fill(0.5, n), grain_dendricity=zeros(n),
-            grain_sphericity=fill(0.5, n), age=zeros(n),
+            grain_sphericity=fill(0.5, n), age=zeros(n), black_carbon=zeros(n),
             evaporation_condensation=0.0, melt_surface=0.0)
         forcing = GEMB.ClimateForcingStep(10800.0, 263.0, 90000.0, 0.0, 5.0, 100.0, 250.0,
             300.0, 258.0, 5.0, 0.3, 2.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1)

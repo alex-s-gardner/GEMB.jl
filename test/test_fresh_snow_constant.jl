@@ -36,7 +36,7 @@ end
     cfs = GEMB.ClimateForcingStep(; dt=3600.0, temperature_air=250.0, precipitation=50.0,
         wind_speed=5.0, temperature_air_mean=260.0, precipitation_mean=200.0, wind_speed_mean=5.0)
     cell(mp) = GEMB.calculate_accumulation(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
-        zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), cfs, mp, false)
+        zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.1 * ones(n)), cfs, mp, false)
     out = cell(GEMB.ModelParameters(new_snow_method=:Constant, new_snow_density=250.0, column_dzmin=0.05))
     @test out[3][1] == 250.0
     @test out[2][1] ≈ 50.0 / 250.0 rtol = 1e-14

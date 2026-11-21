@@ -101,7 +101,7 @@ gemb_workspace_create(&workspace);
 for (int step = 0; step < n_steps; step++) {
     /* fill forcing[] for this step from your own data, in GEMB_FRC_* order */
     int status = gemb_step(n, temperature, dz, density, water, grain_radius,
-                          grain_dendricity, grain_sphericity, age, scalars, forcing,
+                          grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
                           params, workspace, flux, NULL);
     if (status != GEMB_OK) {
         char message[512];

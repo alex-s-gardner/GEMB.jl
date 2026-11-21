@@ -297,7 +297,7 @@ int gemb_workspace_destroy(int handle);
 /*
  * Advance one n-cell column by one forcing step.
  *
- * The eight profile arrays (each n doubles) and scalars are read, then overwritten with the new
+ * The nine profile arrays (each n doubles) and scalars are read, then overwritten with the new
  * state. The column holds its cell count and its total depth, so n and the sum of dz are
  * unchanged on return.
  *
@@ -319,6 +319,7 @@ int gemb_step(int n,
               double *grain_dendricity,  /* [-]       */
               double *grain_sphericity,  /* [-]       */
               double *age,               /* [days]    */
+              double *black_carbon,      /* [ppmw]    equivalent impurity loading */
               double *scalars,
               const double *forcing,
               int params_handle,

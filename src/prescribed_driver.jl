@@ -25,7 +25,7 @@ slots. The profile carries the `RESTART_LAYERS` and `material`.
 function initialize_profile_prescribed(mp::ModelParameters)
     validate_parameters(mp)
     e = Float64[]
-    state = _ground_state_vectors(mp, _no_ground(mp), e, e, e, e, e, e, e, e, e, e)
+    state = _ground_state_vectors(mp, _no_ground(mp), e, e, e, e, e, e, e, e, e, e, e)
     zdim = Z(1:length(state.dz); metadata=cf_layer_index_attributes())
     layers = NamedTuple(l => DimArray(getfield(state, l), (zdim,))
                         for l in (RESTART_LAYERS..., :material))
@@ -146,7 +146,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
             parent(output[:snow_water_equivalent])[oi] = column_mass(snow)
             col = _ground_state_vectors(mp, g, snow.temperature, snow.dz, snow.density,
                 snow.water, snow.grain_radius, snow.grain_dendricity, snow.grain_sphericity,
-                snow.age, e, e)
+                snow.age, snow.black_carbon, e, e)
             for l in GROUND_PROFILE_LAYERS
                 parent(output[l])[:, oi] .= getfield(col, l)
             end
