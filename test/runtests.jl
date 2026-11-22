@@ -77,6 +77,9 @@ include("cfm_snow_configuration.jl")
     @testset "Layer impurity loading" begin
         include("test_black_carbon.jl")
     end
+    @testset "Observed-albedo update" begin
+        include("test_assimilate_albedo.jl")
+    end
     @testset "Ablation Regime" begin
         include("test_ablation_regime.jl")
     end

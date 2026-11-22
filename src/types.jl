@@ -651,6 +651,13 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     black_carbon_snow::Float64 = 0.0
     black_carbon_ice::Float64 = 0.0
     cloud_fraction::Float64 = 0.1
+    # Snow depth [m] whose layers' `black_carbon` the albedo averages (see `surface_black_carbon`),
+    # and that an observed albedo updates (see `assimilate_albedo!`).
+    albedo_impurity_depth::Float64 = 0.02
+    # Prior standard deviations of the albedo update (see `assimilate_albedo!`), in ln(SSA) and
+    # ln(c + BLACK_CARBON_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
+    albedo_update_sigma_log_ssa::Float64 = 0.2
+    albedo_update_sigma_log_impurity::Float64 = 1.0
 
     # --- Output Controls ---
     output_frequency::Symbol = :all

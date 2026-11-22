@@ -599,13 +599,19 @@ end
     @test_throws "`black_carbon_snow` is 0.02" gemb(profile,
         initialize_forcing(DimStack(layers; metadata=meta)), mp)
 
-    # Matching values run, and give the run the parameter alone gives.
+    # Matching values run, and give the run the parameter alone gives. The snow already in the
+    # column keeps the loading it carries, so over these dry hours only a profile built with the new
+    # loading reads it.
     mp_bc = initialize_parameters(output_frequency=:all, black_carbon_snow=0.05,
         cloud_fraction=0.3)
     cf_bc = initialize_forcing(base...; kw..., black_carbon_snow=0.05, cloud_fraction=0.3)
     out_bc = gemb(profile, cf_bc, mp_bc)
+    @test parent(out_bc[:albedo_broadband]) == parent(out[:albedo_broadband])
+    profile_bc = deepcopy(profile)
+    parent(profile_bc[:black_carbon]) .= 0.05
+    out_bc = gemb(profile_bc, cf_bc, mp_bc)
     @test parent(out_bc[:albedo_broadband]) != parent(out[:albedo_broadband])
-    @test parent(gemb(profile, cf_bc, mp_bc)[:melt]) == parent(out_bc[:melt])
+    @test parent(gemb(profile_bc, cf_bc, mp_bc)[:melt]) == parent(out_bc[:melt])
 end
 
 @testset "Elevation identity: basal flux, SMB, water and firn air" begin

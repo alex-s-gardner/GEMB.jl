@@ -217,6 +217,10 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         heat_flux_latent=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_basal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        black_carbon_surface=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_dlog_ssa=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_dlog_impurity=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -457,6 +461,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lhf = parent(output[:heat_flux_latent])
     out_bhf = parent(output[:heat_flux_basal])
     out_albedo_broadband = parent(output[:albedo_broadband])
+    out_black_carbon_surface = parent(output[:black_carbon_surface])
+    out_albedo_update_dlog_ssa = parent(output[:albedo_update_dlog_ssa])
+    out_albedo_update_dlog_impurity = parent(output[:albedo_update_dlog_impurity])
+    out_albedo_update_count = parent(output[:albedo_update_count])
     out_fac = parent(output[:firn_air_content])
     out_fac10 = parent(output[:firn_air_content_10m])
     out_fac20 = parent(output[:firn_air_content_20m])
@@ -502,6 +510,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_lhf = 0.0
     cum_bhf = 0.0
     cum_albedo_broadband = 0.0
+    cum_black_carbon_surface = 0.0
+    cum_albedo_update_dlog_ssa = 0.0
+    cum_albedo_update_dlog_impurity = 0.0
+    cum_albedo_update_count = 0.0
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
     cum_strain_thinning = 0.0
@@ -592,6 +604,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_lhf += flux.heat_flux_latent
         cum_bhf += flux.heat_flux_basal
         cum_albedo_broadband += flux.albedo_broadband
+        cum_black_carbon_surface += flux.black_carbon_surface
+        cum_albedo_update_dlog_ssa += flux.albedo_update_dlog_ssa
+        cum_albedo_update_dlog_impurity += flux.albedo_update_dlog_impurity
+        cum_albedo_update_count += flux.albedo_update_count
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
         # Metres of thinning, sign-flipped so a divergent column reports a positive number.
@@ -650,6 +666,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lhf[oi] = cum_lhf / cum_count
                 out_bhf[oi] = cum_bhf / cum_count
                 out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
+                out_black_carbon_surface[oi] = cum_black_carbon_surface / cum_count
+                out_albedo_update_dlog_ssa[oi] = cum_albedo_update_dlog_ssa
+                out_albedo_update_dlog_impurity[oi] = cum_albedo_update_dlog_impurity
+                out_albedo_update_count[oi] = cum_albedo_update_count
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_fac10[oi] = cum_firn_air_content_10m / cum_count
                 out_fac20[oi] = cum_firn_air_content_20m / cum_count
@@ -727,6 +747,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_lhf = 0.0
             cum_bhf = 0.0
             cum_albedo_broadband = 0.0
+            cum_black_carbon_surface = 0.0
+            cum_albedo_update_dlog_ssa = 0.0
+            cum_albedo_update_dlog_impurity = 0.0
+            cum_albedo_update_count = 0.0
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0
             cum_strain_thinning = 0.0

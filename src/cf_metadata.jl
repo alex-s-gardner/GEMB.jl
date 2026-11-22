@@ -125,6 +125,13 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "started from an un-equilibrated profile."),
     :albedo_broadband => CFAttrs("1", "broadband surface albedo", "time: mean";
         standard_name="surface_albedo"),
+    :black_carbon_surface => CFAttrs("1e-6", "equivalent light-absorbing impurity loading of the near-surface snow", "time: mean";
+        comment="ppmw; the Gardner and Sharp (2010) soot loading the albedo reads, over the top albedo_impurity_depth of snow"),
+    :albedo_update_dlog_ssa => CFAttrs("1", "change of ln(specific surface area) by albedo updates", "time: sum";
+        comment="summed over the observed-albedo updates of the interval"),
+    :albedo_update_dlog_impurity => CFAttrs("1", "change of ln(impurity loading + 0.01 ppmw) by albedo updates", "time: sum";
+        comment="summed over the observed-albedo updates of the interval"),
+    :albedo_update_count => CFAttrs("1", "number of observed-albedo updates", "time: sum"),
     :temperature_air => CFAttrs("K", "near-surface air temperature",
         "time: mean"; standard_name="air_temperature"),
     :firn_air_content => CFAttrs("m", "firn air content", "time: mean";

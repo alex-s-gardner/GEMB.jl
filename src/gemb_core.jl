@@ -179,11 +179,15 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         calculate_grain_size(temperature, dz, density, water, grain_radius,
             grain_dendricity, grain_sphericity, cfs, mp)
 
+    # 1b. Update the near-surface snow from an observed albedo, where the step has one.
+    dlog_ssa, dlog_impurity, albedo_updated =
+        assimilate_albedo!(dz, density, grain_radius, black_carbon, cfs, mp)
+
     # 2. Calculate snow, firn, and ice albedo. Both are scalars diagnosed from the current
     #    column, not carried state. The direct and diffuse albedos combine into the
     #    shortwave-weighted `effective_albedo` returned in `flux` for output.
     albedo_broadband, albedo_diffuse =
-        calculate_albedo(dz, density, grain_radius, cfs, mp)
+        calculate_albedo(dz, density, grain_radius, black_carbon, cfs, mp)
 
     # 3. Determine distribution of absorbed SW radiation with depth
     _resize_workspace!(column_workspace, length(dz))
@@ -430,6 +434,12 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         # the number of cells it froze in.
         refreeze_thermal=refreeze_thermal,
         refreeze_thermal_count=refreeze_thermal_count,
+        # The near-surface equivalent impurity loading the albedo read, and the step's albedo
+        # update (see `assimilate_albedo!`): its change of ln SSA and ln(c + c₀), and 1 if applied.
+        black_carbon_surface=surface_black_carbon(dz, density, black_carbon, mp),
+        albedo_update_dlog_ssa=dlog_ssa,
+        albedo_update_dlog_impurity=dlog_impurity,
+        albedo_update_count=albedo_updated ? 1.0 : 0.0,
         viscosity=viscosity,
     )
 
