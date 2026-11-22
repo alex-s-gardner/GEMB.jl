@@ -103,6 +103,8 @@ int main(void) {
     forcing[GEMB_FRC_TEMPERATURE_AIR_EFFECTIVE] = 258.0;
     /* NaN: split precipitation at the rain temperature threshold, as the Julia reference does. */
     forcing[GEMB_FRC_SNOWFALL_FRACTION] = NAN;
+    /* NaN: no albedo observation, as the Julia reference has. */
+    forcing[GEMB_FRC_ALBEDO_OBSERVED] = NAN;
 
     double flux[GEMB_N_FLUX];
     double flux_total[GEMB_N_FLUX] = {0.0};

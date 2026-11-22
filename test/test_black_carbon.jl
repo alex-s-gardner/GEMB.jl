@@ -76,3 +76,43 @@ end
     out = GEMB.calculate_accumulation(column()..., step(2.0, 278.0), mp, true)
     @test out[9] == fill(3.0, n)
 end
+
+@testset "albedo_observed forcing layer" begin
+    n = 48
+    time = collect(DateTime(2001, 6, 1):Hour(1):(DateTime(2001, 6, 1) + Hour(n - 1)))
+    base = (time, fill(265.0, n), fill(80000.0, n), zeros(n), fill(3.0, n), fill(200.0, n),
+        fill(250.0, n), fill(300.0, n))
+    kw = (temperature_air_mean=265.0, wind_speed_mean=3.0, precipitation_mean=300.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0)
+
+    # Absent: a Fill-backed NaN layer, and NaN in every ClimateForcingStep form.
+    cf = initialize_forcing(base...; kw...)
+    @test :albedo_observed in keys(cf)
+    @test all(isnan, parent(cf.albedo_observed))
+    @test isnan(GEMB.ClimateForcingStep().albedo_observed)
+    @test isnan(GEMB.ClimateForcingStep(ntuple(_ -> 0.0, 23)...).albedo_observed)
+    @test isnan(GEMB.ClimateForcingStep(ntuple(_ -> 0.0, 19)...).albedo_observed)
+
+    # Present: carried through, NaN where there is no observation.
+    obs = fill(NaN, n); obs[12] = 0.62
+    cf = initialize_forcing(base...; kw..., albedo_observed=obs)
+    @test parent(cf.albedo_observed)[12] == 0.62
+    @test isnan(parent(cf.albedo_observed)[1])
+
+    # Range-checked where finite.
+    bad = copy(obs); bad[3] = 1.0
+    @test_throws "albedo_observed values must be in (0, 1)" initialize_forcing(base...; kw...,
+        albedo_observed=bad)
+    bad[3] = 0.0
+    @test_throws "albedo_observed values must be in (0, 1)" initialize_forcing(base...; kw...,
+        albedo_observed=bad)
+
+    # A DimStack layer of that name is read.
+    tdim = GEMB.Ti(time)
+    names = (:temperature_air, :pressure_air, :precipitation, :wind_speed,
+        :shortwave_downward, :longwave_downward, :vapor_pressure)
+    layers = NamedTuple{names}(Tuple(DimArray(collect(Float64, v), (tdim,)) for v in base[2:end]))
+    meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(kw))
+    stack = DimStack(merge(layers, (; albedo_observed=DimArray(obs, (tdim,)))); metadata=meta)
+    @test isequal(parent(initialize_forcing(stack).albedo_observed), obs)
+end
