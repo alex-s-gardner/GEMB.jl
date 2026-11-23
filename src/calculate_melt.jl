@@ -107,29 +107,55 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
 end
 
 """
-    _enrich_impurities!(black_carbon, impurity_initial, M, melt, k)
+    _scavenge_impurities!(black_carbon, impurity, M, water, flux_dn, runoff, k; basal_leaves)
 
-Set `black_carbon` [ppmw] from the impurity mass after melt. Cell `i` held `impurity_initial[i]`
-[ppmw · kg m-2] in its matrix on entry and melted `melt[i]` [kg m-2] of it; the impurity of the
-melted ice, `impurity_initial[i] · melt[i] / (M[i] + melt[i])`, is retained in the fraction `1 − k`
-and the rest leaves with the meltwater. What a cell keeps is spread over its remaining matrix mass
-`M[i]`, which already includes any refrozen water. A cell left with no matrix (`M[i]` at most
-`WATER_TOLERANCE`) passes its retained impurity to the nearest cell below that has matrix, or
-loses it when no cell below has any.
+Move impurity with the water that left each cell this timestep and set `black_carbon` [ppmw]
+from the result, following the meltwater scavenging of CLM5 (Flanner et al., 2007):
+
+    Δmᵢ = k · (qᵢ₋₁ cᵢ₋₁ − qᵢ cᵢ),   cᵢ = mᵢ / (Mᵢ + wᵢ)
+
+`impurity[i]` [ppmw · kg m-2] is the impurity mass of cell `i` before this step's melt (melting
+ice leaves its impurity in the cell), `M` and `water` [kg m-2] the cell's matrix and pore water
+after percolation, and `qᵢ = flux_dn[i+1] + runoff[i]` the water that left it. Cells are swept
+from the top, so a cell's outflow is computed after the impurity arriving from above is added,
+and is capped at the cell's whole load. The part carried by `flux_dn[i+1]` enters cell `i+1`,
+and the part carried by `runoff[i]` leaves the column. What leaves the deepest cell leaves the
+column when `basal_leaves`, and otherwise stays in the deepest cell with matrix (the water is
+ponded by [`pond_blocked_water!`](@ref), which has already zeroed `runoff`). A cell left with no
+matrix (`M[i]` at most `WATER_TOLERANCE`) passes its whole remaining load to the cell below.
+`k = 0` moves impurity only out of cells that melted out. `impurity` is overwritten.
+
+# References
+- Flanner, M. G., Zender, C. S., Randerson, J. T., and Rasch, P. J. (2007). Present-day climate
+  forcing and response from black carbon in snow. *J. Geophys. Res.* 112, D11202. Sect. 2.4.
+- Lawrence, D. M., et al. (2018). CLM5 Technical Note, Sect. 8.6 (eq. 8.38).
 """
-function _enrich_impurities!(black_carbon::Vector{Float64}, impurity_initial::Vector{Float64},
-    M::Vector{Float64}, melt::Vector{Float64}, k::Float64)
-    carry = 0.0
-    for i in eachindex(black_carbon, impurity_initial, M, melt)
-        M_entry = M[i] + melt[i]
-        lost = M_entry > 0.0 ? k * impurity_initial[i] * melt[i] / M_entry : 0.0
-        kept = impurity_initial[i] - lost + carry
+function _scavenge_impurities!(black_carbon::Vector{Float64}, impurity::Vector{Float64},
+    M::Vector{Float64}, water::Vector{Float64}, flux_dn::Vector{Float64},
+    runoff::Vector{Float64}, k::Float64; basal_leaves::Bool=true)
+    inflow = 0.0
+    i_last = 0
+    for i in eachindex(black_carbon, impurity, M, water, runoff)
+        load = impurity[i] + inflow
+        q_down = flux_dn[i+1]
+        q_out = q_down + runoff[i]
+        S = M[i] + water[i]
+        out = q_out > 0.0 ? (S > 0.0 ? min(load, k * q_out * load / S) : load) : 0.0
+        down = q_out > 0.0 ? out * (q_down / q_out) : 0.0
+        load -= out
         if M[i] > WATER_TOLERANCE
-            black_carbon[i] = kept / M[i]
-            carry = 0.0
+            impurity[i] = load
+            black_carbon[i] = load / M[i]
+            inflow = down
+            i_last = i
         else
-            carry = kept
+            impurity[i] = 0.0
+            inflow = down + load
         end
+    end
+    if !basal_leaves && i_last > 0 && inflow > 0.0
+        impurity[i_last] += inflow
+        black_carbon[i_last] = impurity[i_last] / M[i_last]
     end
     return nothing
 end
@@ -275,11 +301,12 @@ age, and whatever continues down or runs off leaves at it. Refreezing therefore 
 
 # Impurity loading
 
-`black_carbon` [ppmw] tracks the impurity mass of each cell, `c · M`. Of the impurity in the
-ice a cell melts, the fraction `mp.impurity_scavenging_efficiency` leaves with the meltwater and
-the rest stays at the melting surface ([`_enrich_impurities!`](@ref)), so a melting cell grows
-dirtier and the impurity of a cell that melts out passes to the nearest cell below that remains.
-Refreezing and percolation move water only: refrozen ice adds matrix mass without impurity.
+`black_carbon` [ppmw] tracks the impurity mass of each cell, `c · M`. Melting ice leaves its
+impurity in the cell, so a melting cell grows dirtier, and a cell that melts out passes its load
+to the cell below. Water leaving a cell carries impurity at `mp.impurity_scavenging_efficiency`
+times the cell's concentration in ice plus liquid, into the cell below with the percolating water
+or out of the column with runoff, as in CLM5 ([`_scavenge_impurities!`](@ref)). Refrozen ice
+adds matrix mass without impurity.
 
 `percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
 base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
@@ -327,7 +354,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)
-    # Impurity mass of each cell on entry [ppmw · kg m-2], for the melt enrichment below.
+    # Impurity mass of each cell on entry [ppmw · kg m-2], for the scavenging below.
     impurity_initial = black_carbon .* (dz .* density)
     # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
     # further down run over the same elements in the same order and the broadcasts against the column
@@ -667,11 +694,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         independent_grain_radius(mp) &&
             snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
 
-        # Impurities of melted ice: the fraction `mp.impurity_scavenging_efficiency` leaves with
-        # the meltwater and the rest stays at the melting surface, in the cell or, for a cell
-        # that melted out, in the nearest cell below that did not.
-        _enrich_impurities!(black_carbon, impurity_initial, M, melt,
-            mp.impurity_scavenging_efficiency)
+        # Impurity moves with the water that left each cell; `water` is post-percolation here.
+        _scavenge_impurities!(black_carbon, impurity_initial, M, water, flux_dn, runoff,
+            mp.impurity_scavenging_efficiency; basal_leaves=mp.runoff_method === :instantaneous)
 
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the

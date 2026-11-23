@@ -144,7 +144,7 @@ function validate_parameters(mp::ModelParameters)
     @assert 0 <= mp.black_carbon_snow <= 2
     @assert 0 <= mp.black_carbon_ice <= 2
     @assert 0 <= mp.cloud_fraction <= 1
-    @assert 0 <= mp.impurity_scavenging_efficiency <= 1 "impurity_scavenging_efficiency must be in [0, 1]"
+    @assert mp.impurity_scavenging_efficiency >= 0 "impurity_scavenging_efficiency must be ≥ 0"
     @assert mp.albedo_impurity_depth > 0 "albedo_impurity_depth must be positive"
     @assert mp.albedo_update_sigma_log_ssa >= 0 "albedo_update_sigma_log_ssa must be ≥ 0"
     @assert mp.albedo_update_sigma_log_impurity > 0 "albedo_update_sigma_log_impurity must be positive"

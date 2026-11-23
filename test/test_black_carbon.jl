@@ -117,29 +117,56 @@ end
     @test isequal(parent(initialize_forcing(stack).albedo_observed), obs)
 end
 
-@testset "melt leaves impurities at the surface" begin
-    # Three cells; the top two melt (one entirely, one by half).
+@testset "meltwater scavenging follows CLM5" begin
+    # Three cells; the top one melted out, the second lost half its matrix.
     c = [0.10, 0.20, 0.05]; M_entry = [2.0, 4.0, 10.0]
-    melt = [2.0, 2.0, 0.0]; M = M_entry .- melt
-    initial = c .* M_entry
-    # k = 0: no impurity leaves; the melted-out top cell passes its load to cell 2.
-    bc = copy(c)
-    GEMB._enrich_impurities!(bc, initial, M, melt, 0.0)
+    M = [0.0, 2.0, 10.0]; water = [0.0, 0.5, 1.0]
+    initial() = c .* M_entry
+    load = sum(initial())
+
+    # k = 0: no impurity moves with water; the melted-out cell passes its load down.
+    bc = copy(c); m = initial()
+    GEMB._scavenge_impurities!(bc, m, M, water, [0.0, 2.0, 3.0, 1.0], zeros(3), 0.0)
     @test bc[2] ≈ (0.10 * 2.0 + 0.20 * 4.0) / 2.0
     @test bc[3] == 0.05
-    @test sum(bc[2:3] .* M[2:3]) ≈ sum(initial)
-    # k = 1: the impurity of all melted ice leaves; the loading of what remains is unchanged.
-    bc = copy(c)
-    GEMB._enrich_impurities!(bc, initial, M, melt, 1.0)
-    @test bc[2] ≈ 0.20 && bc[3] == 0.05
-    # k between: the retained fraction.
-    bc = copy(c)
-    GEMB._enrich_impurities!(bc, initial, M, melt, 0.3)
-    @test bc[2] * M[2] ≈ 0.7 * 0.10 * 2.0 + (0.20 * 4.0 - 0.3 * 0.20 * 2.0)
-    # No melt: unchanged.
-    bc = copy(c)
-    GEMB._enrich_impurities!(bc, initial, M_entry, zeros(3), 0.0)
-    @test bc == c
-    @test_throws "impurity_scavenging_efficiency must be in [0, 1]" GEMB.initialize_parameters(;
-        impurity_scavenging_efficiency = 1.5)
+    @test sum(m) ≈ load
+
+    # k > 0: cell i sends k · q_out · m / (M + w) down; the deepest cell's outflow leaves.
+    k = 0.2; flux_dn = [0.0, 2.0, 3.0, 1.0]
+    bc = copy(c); m = initial()
+    GEMB._scavenge_impurities!(bc, m, M, water, flux_dn, zeros(3), k)
+    m2 = 0.10 * 2.0 + 0.20 * 4.0
+    out2 = k * 3.0 * m2 / 2.5
+    m3 = 0.05 * 10.0 + out2
+    out3 = k * 1.0 * m3 / 11.0
+    @test m[2] ≈ m2 - out2 && bc[2] ≈ (m2 - out2) / 2.0
+    @test m[3] ≈ m3 - out3 && bc[3] ≈ (m3 - out3) / 10.0
+    @test sum(m) ≈ load - out3
+
+    # Ponded basal water keeps its impurity in the column.
+    bc = copy(c); m = initial()
+    GEMB._scavenge_impurities!(bc, m, M, water, flux_dn, zeros(3), k; basal_leaves=false)
+    @test sum(m) ≈ load
+    @test bc[3] ≈ m3 / 10.0
+
+    # Runoff carries its share out of the column; the rest continues down.
+    bc = copy(c); m = initial()
+    GEMB._scavenge_impurities!(bc, m, M, water, [0.0, 2.0, 1.0, 0.0], [0.0, 2.0, 0.0], k)
+    out2 = k * 3.0 * m2 / 2.5
+    @test m[3] ≈ 0.05 * 10.0 + out2 / 3.0
+    @test sum(m) ≈ load - out2 * 2.0 / 3.0
+
+    # Outflow is capped at the cell's load (k above 1 is allowed, as in CLM5).
+    bc = copy(c); m = initial()
+    GEMB._scavenge_impurities!(bc, m, M, water, [0.0, 2.0, 30.0, 0.0], zeros(3), 5.0)
+    @test m[2] == 0.0 && bc[2] == 0.0
+    @test m[3] ≈ load
+
+    # No water leaving: unchanged.
+    bc = copy(c); m = c .* M_entry
+    GEMB._scavenge_impurities!(bc, m, M_entry, zeros(3), zeros(4), zeros(3), 0.2)
+    @test bc ≈ c
+
+    @test_throws "impurity_scavenging_efficiency must be ≥ 0" GEMB.initialize_parameters(;
+        impurity_scavenging_efficiency = -0.1)
 end

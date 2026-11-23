@@ -658,8 +658,10 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # ln(c + BLACK_CARBON_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
     albedo_update_sigma_log_ssa::Float64 = 0.2
     albedo_update_sigma_log_impurity::Float64 = 1.0
-    # Fraction of the impurity in melted ice that leaves with the meltwater; the rest stays at the
-    # melting surface (see `calculate_melt`). 0 keeps all of it.
+    # Meltwater scavenging efficiency `k` of CLM5 (Flanner et al., 2007): water leaving a cell
+    # carries impurity at `k` times the cell's concentration in ice plus liquid (see
+    # `calculate_melt`). 0 leaves all impurity at the melting surface; CLM5 uses 0.2 for
+    # hydrophilic and 0.03 for hydrophobic black carbon, and values above 1 are allowed.
     impurity_scavenging_efficiency::Float64 = 0.0
 
     # --- Output Controls ---
