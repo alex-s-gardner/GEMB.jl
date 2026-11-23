@@ -13,8 +13,9 @@ This is the restart contract. Every layer is required: `gemb` indexes them by na
 initial state, so a profile missing one fails on the first timestep rather than silently
 defaulting. `age` is part of the state even though no physics reads it — it is the column's only
 clock, and dropping it would restart every continuation's age at whatever the saved column held.
-`black_carbon` is the per-layer equivalent impurity loading the albedo reads, so a continuation
-without it would lose every loading an observed albedo has set.
+`black_carbon` and `black_carbon_retained` are the per-layer equivalent impurity loadings whose sum
+the albedo reads, so a continuation without them would lose every loading an observed albedo has
+set.
 
 Exported so a caller that persists a column between runs (writing it to disk and reading it back
 later) can validate a restored profile against the set `gemb` actually requires, instead of
@@ -26,7 +27,8 @@ checking, and the validation would pass.
 output layout; recompute it with `dz2z(profile[:dz])` where needed.
 """
 const RESTART_LAYERS = (:dz, :temperature, :density, :water, :grain_radius,
-                        :grain_dendricity, :grain_sphericity, :age, :black_carbon)
+                        :grain_dendricity, :grain_sphericity, :age, :black_carbon,
+                        :black_carbon_retained)
 
 """
     DERIVED_PARAMETERS
@@ -651,18 +653,23 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     black_carbon_snow::Float64 = 0.0
     black_carbon_ice::Float64 = 0.0
     cloud_fraction::Float64 = 0.1
-    # Snow depth [m] whose layers' `black_carbon` the albedo averages (see `surface_black_carbon`),
+    # Snow depth [m] whose layers' impurity loading the albedo averages (see `surface_black_carbon`),
     # and that an observed albedo updates (see `assimilate_albedo!`).
     albedo_impurity_depth::Float64 = 0.02
     # Prior standard deviations of the albedo update (see `assimilate_albedo!`), in ln(SSA) and
     # ln(c + BLACK_CARBON_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
     albedo_update_sigma_log_ssa::Float64 = 0.2
     albedo_update_sigma_log_impurity::Float64 = 1.0
-    # Meltwater scavenging efficiency `k` of CLM5 (Flanner et al., 2007): water leaving a cell
+    # Meltwater scavenging efficiencies `k` of CLM5 (Flanner et al., 2007): water leaving a cell
     # carries impurity at `k` times the cell's concentration in ice plus liquid (see
-    # `calculate_melt`). 0 leaves all impurity at the melting surface; CLM5 uses 0.2 for
-    # hydrophilic and 0.03 for hydrophobic black carbon, and values above 1 are allowed.
-    impurity_scavenging_efficiency::Float64 = 0.0
+    # `calculate_melt`). 0 leaves all impurity at the melting surface; values above 1 are allowed.
+    # The mobile class (`black_carbon`, from snowfall) takes CLM5's 0.2 for hydrophilic black
+    # carbon, the top of the 10–20 % Doherty et al. (2013) measured in melting snow. The retained
+    # class (`black_carbon_retained`, set by an observed albedo) is the insoluble residue a melting
+    # surface keeps, and takes 0.02, CLM5's value for fine dust (0.01–0.03 for dust and
+    # hydrophobic black carbon).
+    impurity_scavenging_efficiency::Float64 = 0.2
+    impurity_scavenging_efficiency_retained::Float64 = 0.02
 
     # --- Output Controls ---
     output_frequency::Symbol = :all

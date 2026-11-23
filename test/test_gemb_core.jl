@@ -71,6 +71,7 @@ function _make_core_state(; n=10)
         grain_sphericity = 0.5 * ones(n),
         age = zeros(n),
         black_carbon = zeros(n),
+        black_carbon_retained = zeros(n),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -138,6 +139,7 @@ end
         grain_sphericity = 0.5 * ones(10),
         age = zeros(10),
         black_carbon = zeros(10),
+        black_carbon_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -160,6 +162,7 @@ end
         grain_sphericity = 0.5 * ones(10),
         age = zeros(10),
         black_carbon = zeros(10),
+        black_carbon_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -253,7 +256,7 @@ end
         ρ = [526.9061080205456, 881.5853409714182, 917.0, 917.0, 917.0, 917.0]
         T = [262.2079961800943, 262.5, 263.0, 263.5, 264.0, 264.5]
         w = [0.019731192872351207; zeros(n - 1)]
-        cols = GEMB.column_state(T, dz, ρ, w, fill(0.5, n), zeros(n), ones(n), collect(1.0:n), zero(dz))
+        cols = GEMB.column_state(T, dz, ρ, w, fill(0.5, n), zeros(n), ones(n), collect(1.0:n), zero(dz), zero(dz))
         return cols
     end
     ec, ec_liquid = -0.4159663397101932, -0.0038105098446434005
@@ -292,7 +295,7 @@ end
     @test cols.dz[1] * cols.density[1] > loss
 
     # A one-cell column is left to apply_vapor_exchange!, which throws.
-    cols = GEMB.column_state([262.0], [0.0005], [500.0], [0.0], [0.5], [0.0], [1.0], [1.0], zero([0.0005]))
+    cols = GEMB.column_state([262.0], [0.0005], [500.0], [0.0], [0.5], [0.0], [1.0], [1.0], zero([0.0005]), zero([0.0005]))
     @test GEMB.expose_vapor_exchange_layer!(cols, -1.0, 0.0, mp) == 0
 end
 
@@ -307,7 +310,7 @@ end
     col() = GEMB.column_state([272.74146787005026, 271.0, 268.0, 265.0, 263.0, 262.0],
         [0.009683123707120817, 0.05, 0.05, 0.05, 0.05, 0.05],
         [124.10592904997176, 600.0, 917.0, 917.0, 917.0, 917.0], zeros(n), fill(0.5, n),
-        zeros(n), ones(n), collect(1.0:n), zero([0.009683123707120817, 0.05, 0.05, 0.05, 0.05, 0.05]))
+        zeros(n), ones(n), collect(1.0:n), zero([0.009683123707120817, 0.05, 0.05, 0.05, 0.05, 0.05]), zero([0.009683123707120817, 0.05, 0.05, 0.05, 0.05, 0.05]))
     ec_liquid = -0.219918229915523
     ec = ec_liquid - 0.25
 

@@ -238,14 +238,14 @@ end
         ρ = collect(range(300.0, 320.0; length=n)); W = zeros(n)
         r = fill(0.1, n); d = zeros(n); s = ones(n); a = ones(n)
         M0 = sum(dz .* ρ)
-        E0 = GEMB.column_mass_energy(GEMB.column_state(T, dz, ρ, W, r, d, s, a, zero(dz)), mp)[2]
+        E0 = GEMB.column_mass_energy(GEMB.column_state(T, dz, ρ, W, r, d, s, a, zero(dz), zero(dz)), mp)[2]
         dzmin = zeros(n); GEMB.column_bands!(dzmin, zeros(n), dz, mp)
         @test all(dz .< dzmin)
-        out = GEMB.manage_layer_thickness(T, dz, ρ, W, r, d, s, a, zero(dz), mp, true; dt=3600.0,
+        out = GEMB.manage_layer_thickness(T, dz, ρ, W, r, d, s, a, zero(dz), zero(dz), mp, true; dt=3600.0,
             n_target=n, n_max=GEMB.ground_snow_slots(mp), dirichlet_bottom=false)
         @test length(out[2]) == 1
         @test out[2][1] * out[3][1] ≈ M0
-        E1 = GEMB.column_mass_energy(GEMB.column_state(out[1:9]...), mp)[2]
+        E1 = GEMB.column_mass_energy(GEMB.column_state(out[1:10]...), mp)[2]
         @test E1 ≈ E0 rtol = 1e-14
     end
 end
@@ -283,7 +283,7 @@ end
         dt_divisors=GEMB.fast_divisors(3600 * 10000) ./ 10000)
     g = GEMB.ground_column(mp, GEMB.ground_grid(mp.ground_depth))
     Tg = fill(276.0, length(g.dz))
-    snow = GEMB.column_state([CtoK], [0.03], [700.0], [0.1], [0.16], [0.0], [0.0], [150.0], zero([0.03]))
+    snow = GEMB.column_state([CtoK], [0.03], [700.0], [0.1], [0.16], [0.0], [0.0], [150.0], zero([0.03]), zero([0.03]))
     cfs = ClimateForcingStep(; dt=3600.0, temperature_air=287.0, pressure_air=73760.0,
         wind_speed=22.8, longwave_downward=256.0, vapor_pressure=1049.0,
         temperature_observation_height=2.75, wind_observation_height=10.0,

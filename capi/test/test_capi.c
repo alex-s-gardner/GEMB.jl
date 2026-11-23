@@ -68,7 +68,7 @@ int main(void) {
 
     double temperature[N_CELLS], dz[N_CELLS], density[N_CELLS], water[N_CELLS];
     double grain_radius[N_CELLS], grain_dendricity[N_CELLS], grain_sphericity[N_CELLS];
-    double age[N_CELLS], black_carbon[N_CELLS];
+    double age[N_CELLS], black_carbon[N_CELLS], black_carbon_retained[N_CELLS];
     double scalars[2] = {0.0, 0.0};
 
     for (int i = 0; i < N_CELLS; i++) {
@@ -81,6 +81,7 @@ int main(void) {
         grain_sphericity[i] = 0.5;
         age[i] = 0.0;
         black_carbon[i] = 0.0;
+        black_carbon_retained[i] = 0.0;
     }
 
     double forcing[GEMB_N_FORCING] = {0.0};
@@ -111,7 +112,8 @@ int main(void) {
 
     for (int step = 0; step < N_STEPS; step++) {
         int status = gemb_step(N_CELLS, temperature, dz, density, water, grain_radius,
-                               grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                               grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                                params, workspace, flux, NULL);
         if (status != GEMB_OK) {
             char message[512];
@@ -125,15 +127,16 @@ int main(void) {
         }
     }
 
-    static const char *const PROFILE_NAMES[9] = {
+    static const char *const PROFILE_NAMES[10] = {
         "temperature", "dz", "density", "water",
-        "grain_radius", "grain_dendricity", "grain_sphericity", "age", "black_carbon"
+        "grain_radius", "grain_dendricity", "grain_sphericity", "age", "black_carbon",
+        "black_carbon_retained"
     };
-    const double *const profiles[9] = {
+    const double *const profiles[10] = {
         temperature, dz, density, water,
-        grain_radius, grain_dendricity, grain_sphericity, age, black_carbon
+        grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained
     };
-    for (int p = 0; p < 9; p++) {
+    for (int p = 0; p < 10; p++) {
         for (int i = 0; i < N_CELLS; i++) {
             emit(PROFILE_NAMES[p], i + 1, profiles[p][i]);
         }
@@ -155,22 +158,26 @@ int main(void) {
     /* --- Failure paths. ------------------------------------------------------------------ */
 
     check_status(gemb_step(N_CELLS, temperature, dz, density, water, grain_radius,
-                           grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                           grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                            params + 9999, workspace, flux, NULL),
                  GEMB_ERR_BAD_HANDLE, "gemb_step rejects an unknown params handle");
 
     check_status(gemb_step(N_CELLS, temperature, dz, density, water, grain_radius,
-                           grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                           grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                            params, workspace + 9999, flux, NULL),
                  GEMB_ERR_BAD_HANDLE, "gemb_step rejects an unknown workspace handle");
 
     check_status(gemb_step(1, temperature, dz, density, water, grain_radius,
-                           grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                           grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                            params, workspace, flux, NULL),
                  GEMB_ERR_BAD_ARGUMENT, "gemb_step rejects n < 2");
 
     check_status(gemb_step(N_CELLS, NULL, dz, density, water, grain_radius,
-                           grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                           grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                            params, workspace, flux, NULL),
                  GEMB_ERR_BAD_ARGUMENT, "gemb_step rejects a NULL profile");
 
@@ -210,7 +217,8 @@ int main(void) {
         viscosity[i] = -1.0;
     }
     check_status(gemb_step(N_CELLS, temperature, dz, density, water, grain_radius,
-                           grain_dendricity, grain_sphericity, age, black_carbon, scalars, forcing,
+                           grain_dendricity, grain_sphericity, age, black_carbon,
+                               black_carbon_retained, scalars, forcing,
                            viscosity_params, viscosity_workspace, flux, viscosity),
                  GEMB_OK, "gemb_step with a viscosity buffer");
     int viscosity_written = 1;

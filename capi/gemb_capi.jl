@@ -175,9 +175,10 @@ const N_FLAGS = length(FLAG_FIELDS)
 const N_FORCING = fieldcount(GEMB.ClimateForcingStep)
 const N_FLUX = 21  # the flux scalars; `viscosity` comes back through its own buffer
 
-# Flux terms `gemb_core` returns that do not cross the C boundary: solver diagnostics, available
-# from the Julia driver's output only.
-const JULIA_ONLY_FLUX = (:refreeze_thermal, :refreeze_thermal_count)
+# Flux terms `gemb_core` returns that do not cross the C boundary: solver and albedo-update
+# diagnostics, available from the Julia driver's output only.
+const JULIA_ONLY_FLUX = (:refreeze_thermal, :refreeze_thermal_count, :black_carbon_surface,
+    :albedo_update_dlog_ssa, :albedo_update_dlog_impurity, :albedo_update_count)
 
 """
     _resolve_option(i, code) -> Symbol
@@ -400,12 +401,13 @@ end
 
 """
     gemb_step(n, temperature, dz, density, water, grain_radius, grain_dendricity,
-              grain_sphericity, age, black_carbon, scalars, forcing, params_handle,
+              grain_sphericity, age, black_carbon, black_carbon_retained, scalars, forcing,
+              params_handle,
               workspace_handle, flux_out, viscosity_out) -> Cint
 
 Advance one `n`-cell column by one forcing step.
 
-The nine profile arrays and `scalars` are read and then overwritten with the new column state.
+The ten profile arrays and `scalars` are read and then overwritten with the new column state.
 The column keeps its cell count and its total depth, so `n` and `sum(dz)` are the same on
 return as on entry.
 
@@ -424,6 +426,7 @@ Base.@ccallable function gemb_step(
     grain_sphericity::Ptr{Cdouble},
     age::Ptr{Cdouble},
     black_carbon::Ptr{Cdouble},
+    black_carbon_retained::Ptr{Cdouble},
     scalars::Ptr{Cdouble},
     forcing::Ptr{Cdouble},
     params_handle::Cint,
@@ -434,7 +437,8 @@ Base.@ccallable function gemb_step(
 
     n >= 2 || return GEMB_ERR_BAD_ARGUMENT
     for p in (temperature, dz, density, water, grain_radius, grain_dendricity,
-              grain_sphericity, age, black_carbon, scalars, forcing, flux_out)
+              grain_sphericity, age, black_carbon, black_carbon_retained, scalars, forcing,
+              flux_out)
         p == C_NULL && return GEMB_ERR_BAD_ARGUMENT
     end
 
@@ -459,6 +463,7 @@ Base.@ccallable function gemb_step(
             grain_sphericity=[unsafe_load(grain_sphericity, i) for i in 1:m],
             age=[unsafe_load(age, i) for i in 1:m],
             black_carbon=[unsafe_load(black_carbon, i) for i in 1:m],
+            black_carbon_retained=[unsafe_load(black_carbon_retained, i) for i in 1:m],
             evaporation_condensation=unsafe_load(scalars, 1),
             melt_surface=unsafe_load(scalars, 2),
         )
@@ -486,6 +491,7 @@ Base.@ccallable function gemb_step(
             unsafe_store!(grain_sphericity, new_state.grain_sphericity[i], i)
             unsafe_store!(age, new_state.age[i], i)
             unsafe_store!(black_carbon, new_state.black_carbon[i], i)
+            unsafe_store!(black_carbon_retained, new_state.black_carbon_retained[i], i)
         end
         unsafe_store!(scalars, new_state.evaporation_condensation, 1)
         unsafe_store!(scalars, new_state.melt_surface, 2)

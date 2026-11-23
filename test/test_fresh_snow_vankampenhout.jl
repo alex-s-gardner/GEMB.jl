@@ -156,7 +156,7 @@ end
         temperature_air_mean=255.0, wind_speed_mean=4.0, precipitation_mean=500.0,
         temperature_observation_height=2.0, wind_observation_height=2.0)
     out = GEMB.calculate_accumulation(fill(260.0, n), fill(0.1, n), fill(300.0, n), zeros(n),
-        fill(0.5, n), zeros(n), fill(0.5, n), zeros(n), zero(fill(0.1, n)), cfs, mp, true)
+        fill(0.5, n), zeros(n), fill(0.5, n), zeros(n), zeros(n), zeros(n), cfs, mp, true)
     expected = GEMB.vankampenhout_density_temperature(265.0) +
                GEMB.vankampenhout_density_wind(GEMB.wind_speed_10m(6.0, 2.0, GEMB.Z0_SNOW_DRY))
     @test out[3][1] ≈ expected rtol = 1e-14

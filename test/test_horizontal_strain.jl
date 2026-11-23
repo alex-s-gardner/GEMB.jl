@@ -10,7 +10,7 @@ using GEMB
 _cols(; dz=[1.0, 2.0], water=[5.0, 0.0], density=[400.0, 600.0],
     temperature=[260.0, 265.0]) = GEMB.column_state(
     copy(temperature), copy(dz), copy(density), copy(water),
-    [0.1, 0.2], [0.0, 0.0], [0.5, 0.5], zeros(length(dz)), zero(copy(dz)))
+    [0.1, 0.2], [0.0, 0.0], [0.5, 0.5], zeros(length(dz)), zero(dz), zero(dz))
 
 @testset "apply_horizontal_strain!" begin
     yr = GEMB.SECONDS_PER_YEAR

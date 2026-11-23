@@ -166,6 +166,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity = Vector{Float64}(profile[:grain_sphericity]),
         age = Vector{Float64}(profile[:age]),
         black_carbon = Vector{Float64}(profile[:black_carbon]),
+        black_carbon_retained = Vector{Float64}(profile[:black_carbon_retained]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -251,6 +252,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         age=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         black_carbon=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        black_carbon_retained=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
 
     # Optional layers, appended last so the base stack's layer order — and therefore the
@@ -487,6 +489,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_sphericity = parent(output[:grain_sphericity])
     out_age = parent(output[:age])
     out_black_carbon = parent(output[:black_carbon])
+    out_black_carbon_retained = parent(output[:black_carbon_retained])
     # Empty when the layer was not allocated, which is what gates the write below. Empty
     # rather than `nothing` for the same reason as `NO_VISCOSITY`: this is a local in the
     # time loop, so a `Union{Nothing,Matrix{Float64}}` would leave its element type
@@ -719,6 +722,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_grain_sphericity[k, oi] = state.grain_sphericity[k]
                 out_age[k, oi] = state.age[k]
                 out_black_carbon[k, oi] = state.black_carbon[k]
+                out_black_carbon_retained[k, oi] = state.black_carbon_retained[k]
             end
 
             # From `flux`, not `state`: viscosity is a per-step diagnostic of the

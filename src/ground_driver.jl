@@ -128,7 +128,7 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
             end
             col = _ground_state_vectors(mp, g, snow.temperature, snow.dz, snow.density,
                 snow.water, snow.grain_radius, snow.grain_dendricity, snow.grain_sphericity,
-                snow.age, snow.black_carbon, temperature_ground, water_ground)
+                snow.age, snow.black_carbon, snow.black_carbon_retained, temperature_ground, water_ground)
             for l in GROUND_PROFILE_LAYERS
                 parent(output[l])[:, oi] .= getfield(col, l)
             end
@@ -172,7 +172,7 @@ function _remove_snow(profile::DimStack, mp::ModelParameters)
     full = NamedTuple(l => Vector{Float64}(parent(profile[l])) for l in GROUND_PROFILE_LAYERS)
     _, Tg, Wg = _ground_state_split(full, g)
     col = _ground_state_vectors(mp, g, Float64[], Float64[], Float64[], Float64[], Float64[],
-        Float64[], Float64[], Float64[], Float64[], Tg, Wg)
+        Float64[], Float64[], Float64[], Float64[], Float64[], Tg, Wg)
     zdim = Z(1:length(col.dz); metadata=cf_layer_index_attributes())
     layers = NamedTuple(l => DimArray(getfield(col, l), (zdim,)) for l in GROUND_PROFILE_LAYERS)
     return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))

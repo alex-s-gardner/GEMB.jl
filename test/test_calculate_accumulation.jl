@@ -47,9 +47,9 @@ end
     )
     cfs = _make_accum_cfs(precipitation=0.0, temperature_air=270.0)
 
-    (t_out, dz_out, d_out, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp, false)
 
     @test dz_out == dz
@@ -81,9 +81,9 @@ end
     )
     cfs = _make_accum_cfs(precipitation=50.0, temperature_air=260.0)
 
-    (t_out, dz_out, d_out, _, _, gdn_out, gsp_out, _, _, _) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, gdn_out, gsp_out, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp, false)
 
     expected_dz = 50.0 / density_snow
@@ -129,9 +129,9 @@ end
     old_dz1 = dz[1]
     old_t1 = t_vec[1]
 
-    (t_out, dz_out, d_out, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (t_out, dz_out, d_out, _, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp, false)
 
     # Small snow should merge, no new layer
@@ -163,7 +163,7 @@ end
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
     pristine = map(copy, (t_vec, dz, density, water, grain_radius,
-                          grain_dendricity, grain_sphericity, age, zeros(n)))
+                          grain_dendricity, grain_sphericity, age, zeros(n), zeros(n)))
 
     cfs = _make_accum_cfs(precipitation=10.0, temperature_air=275.0, wind_speed=0.0)
     # Matrix heat capacity, and its chord between two temperatures: 2102 under `:constant`;
@@ -177,7 +177,7 @@ end
         mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05,
             density_ice=917.0, rain_temperature_threshold=273.15,
             rain_heat_capacity=rain_heat_capacity, heat_capacity_method=hcm)
-        (t_out, dz_out, d_out, w_out, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
+        (t_out, dz_out, d_out, w_out, _, _, _, _, _, _, ra_out) = GEMB.calculate_accumulation(
             map(copy, pristine)..., cfs, mp, true)
         @test ra_out == 10.0
         @test w_out[1] == 10.0
@@ -195,7 +195,7 @@ end
     # verbose = true closes the mass and enthalpy budgets and throws otherwise.
     n = 5
     column() = (fill(260.0, n), fill(0.1, n), fill(400.0, n), zeros(n), fill(0.5, n), fill(0.5, n),
-                fill(0.5, n), zeros(n), zeros(n))
+                fill(0.5, n), zeros(n), zeros(n), zeros(n))
     mp = GEMB.ModelParameters(new_snow_method=:Constant150, column_dzmin=0.05, density_ice=917.0,
         rain_temperature_threshold=273.15)
     step(T, f; P=10.0) = GEMB.ClimateForcingStep(; dt=86400.0, temperature_air=T, pressure_air=80000.0,
@@ -211,7 +211,7 @@ end
     # A mixed step at +2 °C: 9 kg of snow (0.06 m, above column_dzmin) forms a new cell at 0 °C and
     # 1 kg of rain at +2 °C joins it, its sensible heat raising the cell above the melting point
     # (melt removes the excess later in the step).
-    (t, dz, d, w, _, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(275.15, 0.9), mp, true)
+    (t, dz, d, w, _, _, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(275.15, 0.9), mp, true)
     @test rain ≈ 1.0
     @test w[1] ≈ 1.0
     @test length(dz) == n + 1 && d[1] == 150.0
@@ -222,7 +222,7 @@ end
           1.0 * c_rain * 2.0 rtol = 1e-6
 
     # All rain in air at −3 °C arrives at 0 °C, so it brings no sensible heat.
-    (t, _, _, w, _, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(270.15, 0.0), mp, true)
+    (t, _, _, w, _, _, _, _, _, _, rain) = GEMB.calculate_accumulation(column()..., step(270.15, 0.0), mp, true)
     @test rain == 10.0 && w[1] == 10.0 && t[1] == 260.0
 
     # Fractions 1 and 0 at temperatures the threshold agrees with reproduce it bit for bit.
@@ -247,12 +247,12 @@ end
     mp = GEMB.ModelParameters(new_snow_method=:Constant150, density_ice=917.0,
         rain_temperature_threshold=273.15, melt_geometry=:thickness)
     cfs = _make_accum_cfs(precipitation=5.0, temperature_air=275.15, wind_speed=0.0)
-    t1, dz1, ρ1, w1, gr1, gd1, gs1, a1, bc1, rain = GEMB.calculate_accumulation(t_vec, dz,
-        density, water, gr, gd, gs, age, zero(dz), cfs, mp, true)
+    t1, dz1, ρ1, w1, gr1, gd1, gs1, a1, bc1, bcr1, rain = GEMB.calculate_accumulation(t_vec, dz,
+        density, water, gr, gd, gs, age, zero(dz), zero(dz), cfs, mp, true)
     @test ρ1[1] == 350.0
     @test dz1[1] == 0.05
-    t2, dz2, ρ2, w2, _, _, _, _, _, melt, _, runoff, refreeze, _ = GEMB.calculate_melt(t1, dz1,
-        ρ1, w1, gr1, gd1, gs1, a1, bc1, mp, true)
+    t2, dz2, ρ2, w2, _, _, _, _, _, _, melt, _, runoff, refreeze, _ = GEMB.calculate_melt(t1, dz1,
+        ρ1, w1, gr1, gd1, gs1, a1, bc1, bcr1, mp, true)
     melted = 5.0 * GEMB.HEAT_CAPACITY_WATER * 2.0 / GEMB.LF
     @test all(ρ2 .== 350.0)
     @test sum(w2) ≈ 5.0 + melted rtol = 1e-6
@@ -275,19 +275,19 @@ end
     mp = GEMB.ModelParameters(new_snow_method=:Constant150, density_ice=917.0,
         rain_temperature_threshold=273.15)
     cfs = _make_accum_cfs(precipitation=2.0, temperature_air=274.15, wind_speed=0.0)
-    out = GEMB.calculate_accumulation(t_vec, dz, density, zeros(n), gr, gd, gs, age, zero(dz), cfs, mp,
+    out = GEMB.calculate_accumulation(t_vec, dz, density, zeros(n), gr, gd, gs, age, zero(dz), zero(dz), cfs, mp,
         true)
     M = 0.05 * 350.0
     w_before = sum(out[4])
-    t2, dz2, ρ2, w2, _, _, _, _, _, melt, _, runoff, refreeze, _ =
-        GEMB.calculate_melt(out[1:9]..., mp, true)
+    t2, dz2, ρ2, w2, _, _, _, _, _, _, melt, _, runoff, refreeze, _ =
+        GEMB.calculate_melt(out[1:10]..., mp, true)
     c = 152.5 + 7.122 * (GEMB.CtoK - 5.0)
     expected = (c * M * 10.0 - 2.0 * GEMB.HEAT_CAPACITY_WATER * 1.0) / GEMB.LF
     @test refreeze ≈ expected rtol = 1e-9
     @test melt == 0.0
     @test t2[1] ≈ GEMB.CtoK atol = 1e-9
     # Liquid budget: melt + rain − refreeze − runoff = change in column water.
-    @test melt + out[10] - refreeze - runoff ≈ sum(w2) - 0.0 atol = 1e-12
+    @test melt + out[11] - refreeze - runoff ≈ sum(w2) - 0.0 atol = 1e-12
 end
 
 @testset "New snow density methods" begin
@@ -319,9 +319,9 @@ end
         albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
-    (_, _, d1, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d1, _, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp1, false)
     @test d1[1] == 350.0
 
@@ -335,9 +335,9 @@ end
         albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
-    (_, _, d1b, _, re1b, gdn1b, gsp1b, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d1b, _, re1b, gdn1b, gsp1b, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp1b, false)
     @test d1b[1] == 315.0
     # ...and the default grain properties, not the Crocus wind-dependent ones.
@@ -354,9 +354,9 @@ end
         albedo_method=:GardnerSharp,
         rain_temperature_threshold=273.15,
     )
-    (_, _, d2, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d2, _, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp2, false)
     @test d2[1] == 315.0
 
@@ -370,9 +370,9 @@ end
         rain_temperature_threshold=273.15,
     )
     expected_3 = (7.36e-2 + 1.06e-3 * temperature_air_mean + 6.69e-2 * precipitation_mean / 1000.0 + 4.77e-3 * wind_speed_mean) * 1000.0
-    (_, _, d3, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d3, _, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp3, false)
     @test d3[1] ≈ expected_3 atol = 1e-5
 
@@ -386,9 +386,9 @@ end
         rain_temperature_threshold=273.15,
     )
     expected_4 = 481.0 + 4.834 * (temperature_air_mean - 273.15)
-    (_, _, d4, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
+    (_, _, d4, _, _, _, _, _, _, _, _) = GEMB.calculate_accumulation(
         t_vec, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, zero(dz),
+        grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
         cfs, mp4, false)
     @test d4[1] ≈ expected_4 atol = 1e-5
 end
@@ -441,7 +441,7 @@ end
             wind_speed=5.0, precipitation_mean=200.0, temperature_air_mean=260.0,
             wind_speed_mean=5.0)
         return GEMB.calculate_accumulation(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.1 * ones(n)), cfs, mp, false)
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zeros(n), zeros(n), cfs, mp, false)
     end
 
     (_, dz_a, dens_a, _, re_a, gdn_a, gsp_a, _, _) = _fresh_cell(mp_fit; temperature_air=250.0)
@@ -541,7 +541,7 @@ end
             wind_speed=wind_speed, precipitation_mean=200.0, temperature_air_mean=260.0,
             wind_speed_mean=3.0)
         return GEMB.calculate_accumulation(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.1 * ones(n)), cfs, mp, false)
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zeros(n), zeros(n), cfs, mp, false)
     end
 
     (_, dz_a, dens_a, _, re_a, gdn_a, gsp_a, _, _) =
@@ -599,7 +599,7 @@ function _layer_column(; dz1=0.05, ρ1=350.0, r1=1.0, d1=0.0, s1=0.8, age1=100.0
     ρ = [ρ1; fill(350.0, 4); fill(ρ_ice, n - 5)]
     return ([T1; fill(260.0, n - 1)], [dz1; fill(0.05, n - 1)], ρ, [w1; zeros(n - 1)],
         [r1; fill(1.0, 4); fill(GEMB.GRAIN_RADIUS_ICE, n - 5)], [d1; zeros(n - 1)],
-        [s1; fill(0.8, n - 1)], [age1; fill(100.0, n - 1)], zeros(n))
+        [s1; fill(0.8, n - 1)], [age1; fill(100.0, n - 1)], zeros(n), zeros(n))
 end
 
 @testset "Optical diameter (Crocus eqs. D1, D5)" begin
@@ -743,7 +743,7 @@ end
         end
         # Layer management keeps the thin cell (distinct, at least the minimum thickness) and
         # leaves the old cell as it was.
-        lay = GEMB.manage_layer_thickness(out[1:9]..., mp, true; dt=10800.0, n_target=11)
+        lay = GEMB.manage_layer_thickness(out[1:10]..., mp, true; dt=10800.0, n_target=11)
         for k in 1:8
             @test lay[k][1] == out[k][1]
             @test lay[k][2] == before[k][1]
@@ -802,8 +802,8 @@ end
         old_top = [c[k == 1 ? 1 : 2] for c in col]
         out = GEMB.calculate_accumulation(col..., _make_accum_cfs(dt=10800.0, precipitation=2.0,
             temperature_air=258.0, wind_speed=0.0), mp, true)
-        out = GEMB.manage_layer_thickness(out[1:9]..., mp, true; dt=10800.0, n_target=n + 1)
-        col = collect(out[1:9])
+        out = GEMB.manage_layer_thickness(out[1:10]..., mp, true; dt=10800.0, n_target=n + 1)
+        col = collect(out[1:10])
         @test length(col[2]) == n + 1
         @test [c[2] for c in col] == old_top
         r, d, s = GEMB.calculate_grain_size(col[1], col[2], col[3], col[4], col[5], col[6],

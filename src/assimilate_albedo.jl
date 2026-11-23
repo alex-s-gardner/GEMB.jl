@@ -10,8 +10,11 @@ by the prior standard deviations `mp.albedo_update_sigma_log_ssa` and
 the observation.
 
 The loading so obtained is an *equivalent* one: it also absorbs errors of the albedo model, of
-wet-snow albedo and of mixing in the observation footprint. It is written into the near-surface
-snow layers' `black_carbon` and then moves with the snow, buried by new snow and re-exposed by
+wet-snow albedo and of mixing in the observation footprint. The near-surface snow a satellite sees
+during melt holds the insoluble residue meltwater did not carry away, so the update sets the
+retained class `black_carbon_retained` of the near-surface layers, which meltwater scavenges at
+`mp.impurity_scavenging_efficiency_retained`, and leaves the mobile `black_carbon` from snowfall
+as it is. The retained loading then moves with the snow, buried by new snow and re-exposed by
 melt, until the next observation; the grain radius is scaled and evolves by metamorphism.
 """
 
@@ -130,33 +133,35 @@ function _loading_for_albedo(target::Float64, r::Float64, albedo_under::Float64,
 end
 
 """
-    assimilate_albedo!(dz, density, grain_radius, black_carbon, cfs, mp) -> (dlog_ssa, dlog_impurity, applied)
+    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp) -> (dlog_ssa, dlog_impurity, applied)
 
 Update the near-surface snow from `cfs.albedo_observed` when it is finite, the albedo method is
 `:GardnerSharp` and the surface is snow (its top layer below pore close-off density). The update
-is [`albedo_update`](@ref) from the surface grain radius and [`surface_black_carbon`](@ref); it sets
-`black_carbon` of every snow layer within the top `mp.albedo_impurity_depth` to the new loading and
-scales those layers' `grain_radius` by `r_new / r_surface`, leaving the profile's shape.
+is [`albedo_update`](@ref) from the surface grain radius and the total [`surface_black_carbon`](@ref).
+In every snow layer within the top `mp.albedo_impurity_depth` it sets `black_carbon_retained` so that
+the layer's total loading is the new one, `max(0, c_new − black_carbon)`, and scales `grain_radius`
+by `r_new / r_surface`, leaving the profile's shape. Where the mobile loading alone exceeds `c_new`
+the retained class is 0 and the layer stays darker than the update.
 
 Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, and whether an update was
 applied; `(0, 0, false)` when none was.
 """
 function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
-    grain_radius::Vector{Float64}, black_carbon::Vector{Float64}, cfs::ClimateForcingStep,
-    mp::ModelParameters)
+    grain_radius::Vector{Float64}, black_carbon::Vector{Float64},
+    black_carbon_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
     (isfinite(cfs.albedo_observed) && mp.albedo_method === :GardnerSharp && !isempty(dz)) ||
         return (0.0, 0.0, false)
     density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return (0.0, 0.0, false)
     albedo_under, _, mass_snow = _snow_over_firn_ice(dz, density, mp)
     z_we = mass_snow / DENSITY_WATER
     r0 = grain_radius[1]
-    c0 = surface_black_carbon(dz, density, black_carbon, mp)
+    c0 = surface_black_carbon(dz, density, black_carbon, black_carbon_retained, mp)
     r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp)
     scale = r / r0
     remaining = mp.albedo_impurity_depth
-    for i in eachindex(dz, density, grain_radius, black_carbon)
+    for i in eachindex(dz, density, grain_radius, black_carbon, black_carbon_retained)
         density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && break
-        black_carbon[i] = c
+        black_carbon_retained[i] = max(0.0, c - black_carbon[i])
         grain_radius[i] = clamp(grain_radius[i] * scale, ALBEDO_UPDATE_RADIUS_RANGE...)
         remaining -= dz[i]
         remaining <= 0.0 && break

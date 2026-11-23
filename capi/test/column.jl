@@ -42,6 +42,7 @@ function reference_setup()
         grain_sphericity=fill(0.5, N_CELLS),
         age=zeros(N_CELLS),
         black_carbon=zeros(N_CELLS),
+        black_carbon_retained=zeros(N_CELLS),
         evaporation_condensation=0.0,
         melt_surface=0.0,
     )

@@ -20,8 +20,9 @@ function _make_layer_inputs(; n=10)
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
     black_carbon = zeros(n)
+    black_carbon_retained = zeros(n)
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age,
-        black_carbon
+        black_carbon, black_carbon_retained
 end
 
 function _layer_mp(; column_dzmin=0.05, column_dzmax=0.10, column_depth_max=1.0,
@@ -49,9 +50,9 @@ _col_energy(temperature, dz, density, water, mp=_layer_mp()) =
     dz_in = copy(dz)
     t_in = copy(temperature)
 
-    (t_out, dz_out, d_out, _, _, _, _, _, _, e_add) =
+    (t_out, dz_out, d_out, _, _, _, _, _, _, _, e_add) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, zero(dz),
+            grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
             mp, true; dt=10800.0)
 
     # Every cell is inside its band and the count already matches, so nothing moves.
@@ -73,9 +74,9 @@ end
     expected_dz = dz[1] + dz[2]
     expected_d = (dz[1] * density[1] + dz[2] * density[2]) / expected_dz
 
-    (t_out, dz_out, d_out, w_out, _, _, _, _, _, e_add) =
+    (t_out, dz_out, d_out, w_out, _, _, _, _, _, _, e_add) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, zero(dz),
+            grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
             mp, true; dt=10800.0)
 
     # Count control restores the length the merge took away (by splitting a deep cell).
@@ -97,9 +98,9 @@ end
 
     m_before = _col_mass(dz, density, water)
 
-    (t_out, dz_out, d_out, w_out, _, _, _, _, _, _) =
+    (t_out, dz_out, d_out, w_out, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, zero(dz),
+            grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
             mp, true; dt=10800.0)
 
     # The split adds a cell; count control reclaims the slot with a deep merge.
@@ -117,16 +118,16 @@ end
 
     # Start short: the count controller must split to reach the target.
     temperature, dz, density, water, gr, gd, gs, ag = _make_layer_inputs(n=8)
-    (_, dz_out, _, _, _, _, _, _, _, _) =
-        GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag, zero(dz),
+    (_, dz_out, _, _, _, _, _, _, _, _, _) =
+        GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag, zero(dz), zero(dz),
             mp, true; dt=10800.0, n_target=10)
     @test length(dz_out) == 10
     @test sum(dz_out) ≈ 0.8 atol = 1e-10   # splitting preserves total depth
 
     # Start long: the count controller must merge to reach the target.
     temperature, dz, density, water, gr, gd, gs, ag = _make_layer_inputs(n=13)
-    (_, dz_out, _, _, _, _, _, _, _, _) =
-        GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag, zero(dz),
+    (_, dz_out, _, _, _, _, _, _, _, _, _) =
+        GEMB.manage_layer_thickness(temperature, dz, density, water, gr, gd, gs, ag, zero(dz), zero(dz),
             mp, true; dt=10800.0, n_target=10)
     @test length(dz_out) == 10
     @test sum(dz_out) ≈ 1.3 atol = 1e-10   # merging preserves total depth
@@ -139,9 +140,9 @@ end
     dz[1] = 0.2  # triggers split
     mp = _layer_mp()
 
-    (t_out, _, _, _, _, _, _, _, _, _) =
+    (t_out, _, _, _, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, zero(dz),
+            grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
             mp, true; dt=10800.0)
 
     @test t_out[end] == t_orig_bottom
@@ -155,9 +156,9 @@ end
     m_before = _col_mass(dz, density, water)
     mp = _layer_mp()
 
-    (_, dz_out, d_out, w_out, _, _, _, _, _, _) =
+    (_, dz_out, d_out, w_out, _, _, _, _, _, _, _) =
         GEMB.manage_layer_thickness(temperature, dz, density, water, grain_radius,
-            grain_dendricity, grain_sphericity, age, zero(dz),
+            grain_dendricity, grain_sphericity, age, zero(dz), zero(dz),
             mp, true; dt=10800.0)
 
     # The bottom cell merges *upward* into the deepest surviving cell above it, and count
@@ -175,7 +176,7 @@ end
     @testset "shrink — accumulation regime" begin
         n = 5
         cols = GEMB.column_state(260.0 * ones(n), 0.2 * ones(n), 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.2 * ones(n)))
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.2 * ones(n)), zero(0.2 * ones(n)))
         z_target = 0.95           # column is 1.0 m -> trim 0.05 m off the bottom cell
 
         mass_added, e_added = GEMB.trim_bottom!(cols, z_target, mp)
@@ -191,7 +192,7 @@ end
     @testset "grow — ablation regime (basal accretion)" begin
         n = 5
         cols = GEMB.column_state(260.0 * ones(n), 0.2 * ones(n), 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.2 * ones(n)))
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.2 * ones(n)), zero(0.2 * ones(n)))
         z_target = 1.05           # column is 1.0 m -> accrete 0.05 m onto the bottom cell
 
         mass_added, e_added = GEMB.trim_bottom!(cols, z_target, mp)
@@ -206,7 +207,7 @@ end
     @testset "pore water is carried proportionally" begin
         n = 3
         cols = GEMB.column_state(273.15 * ones(n), [0.2, 0.2, 0.2], 400.0 * ones(n),
-            [0.0, 0.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.2, 0.2, 0.2]))
+            [0.0, 0.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.2, 0.2, 0.2]), zero([0.2, 0.2, 0.2]))
         # Remove half of the bottom cell -> half of its water leaves with it.
         mass_added, _ = GEMB.trim_bottom!(cols, 0.5, mp)
 
@@ -219,7 +220,7 @@ end
         n = 4
         dz = 0.25 * ones(n)
         cols = GEMB.column_state(260.0 * ones(n), dz, 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(dz))
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(dz), zero(dz))
         mass_added, e_added = GEMB.trim_bottom!(cols, 1.0, mp)
         @test mass_added == 0.0
         @test e_added == 0.0
@@ -234,7 +235,7 @@ end
     @testset "adjustment spanning more than the bottom cell" begin
         _spanning_cols(temperature) = GEMB.column_state(collect(Float64, temperature),
             [0.4, 0.4, 0.2], 400.0 * ones(3), zeros(3),
-            0.5 * ones(3), 0.5 * ones(3), 0.5 * ones(3), zeros(3), zero([0.4, 0.4, 0.2]))
+            0.5 * ones(3), 0.5 * ones(3), 0.5 * ones(3), zeros(3), zero([0.4, 0.4, 0.2]), zero([0.4, 0.4, 0.2]))
 
         @testset "consumes the bottom cell and trims the next" begin
             cols = _spanning_cols([260.0, 260.0, 260.0])
@@ -269,7 +270,7 @@ end
         @testset "consumes several cells" begin
             n = 6
             cols = GEMB.column_state(260.0 * ones(n), 0.1 * ones(n), 400.0 * ones(n),
-                zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero(0.1 * ones(n)))
+                zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zeros(n), zeros(n))
             m0, e0 = GEMB.column_mass_energy(cols, mp)
             # 0.6 m column -> 0.25 m: three whole cells plus half of the fourth.
             mass_added, e_added = GEMB.trim_bottom!(cols, 0.25, mp)
@@ -285,7 +286,7 @@ end
         @testset "pore water of a consumed cell leaves with it" begin
             n = 3
             cols = GEMB.column_state(273.15 * ones(n), [0.4, 0.4, 0.2], 400.0 * ones(n),
-                [0.0, 8.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.4, 0.4, 0.2]))
+                [0.0, 8.0, 10.0], 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.4, 0.4, 0.2]), zero([0.4, 0.4, 0.2]))
             m0, _ = GEMB.column_mass_energy(cols, mp)
             mass_added, _ = GEMB.trim_bottom!(cols, 0.7, mp)
             m1, _ = GEMB.column_mass_energy(cols, mp)
@@ -300,7 +301,7 @@ end
     @testset "an adjustment exceeding the whole column is an error" begin
         n = 3
         cols = GEMB.column_state(260.0 * ones(n), [0.4, 0.4, 0.2], 400.0 * ones(n),
-            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.4, 0.4, 0.2]))
+            zeros(n), 0.5 * ones(n), 0.5 * ones(n), 0.5 * ones(n), zeros(n), zero([0.4, 0.4, 0.2]), zero([0.4, 0.4, 0.2]))
         # Needs to remove more than the 1.0 m the column holds.
         @test_throws "exceeds the whole column" GEMB.trim_bottom!(cols, -0.2, mp)
     end
@@ -358,7 +359,7 @@ function _surface_layer_column(; dz1=0.008, ρ1=200.0, r1=0.05, d1=1.0, s1=0.5, 
     return ([T1; fill(260.0, n - 1)], [dz1; fill(0.05, n - 1)],
         [ρ1; fill(under, 4); fill(917.0, n - 5)], zeros(n),
         [r1; fill(0.6, 4); fill(GEMB.GRAIN_RADIUS_ICE, n - 5)], [d1; zeros(n - 1)],
-        [s1; fill(0.9, n - 1)], [age1; fill(200.0, n - 1)], zeros(n))
+        [s1; fill(0.9, n - 1)], [age1; fill(200.0, n - 1)], zeros(n), zeros(n))
 end
 _snow_mp(; kw...) = GEMB.ModelParameters(; column_dzmin=0.025, column_dzmax=0.075,
     column_ztop=10.0, kw...)

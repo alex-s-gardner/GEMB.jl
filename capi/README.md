@@ -66,8 +66,8 @@ gemb_workspace_create(&workspace);
 for (int step = 0; step < n_steps; step++) {
     /* fill forcing[] for this step from your own data */
     if (gemb_step(n, temperature, dz, density, water, grain_radius, grain_dendricity,
-                  grain_sphericity, age, black_carbon, scalars, forcing, params, workspace,
-                  flux, NULL) != GEMB_OK) {
+                  grain_sphericity, age, black_carbon, black_carbon_retained, scalars, forcing,
+                  params, workspace, flux, NULL) != GEMB_OK) {
         char message[512];
         gemb_last_error(message, sizeof(message));
         fprintf(stderr, "GEMB: %s\n", message);

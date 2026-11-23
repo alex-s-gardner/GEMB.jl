@@ -13,6 +13,7 @@ function _drain_cols(; n=5, density=400.0, water=0.0, grain_radius=0.5, dz=0.1)
         0.5 * ones(n),            # grain_sphericity
         zeros(n),                 # age
         zeros(n),                 # black_carbon
+        zeros(n),                 # black_carbon_retained
     )
 end
 
@@ -50,6 +51,7 @@ _hydro_state(; n=10) = (
     grain_sphericity=0.5 * ones(n),
     age=zeros(n),
     black_carbon=zeros(n),
+    black_carbon_retained=zeros(n),
     evaporation_condensation=0.0,
     melt_surface=0.0,
 )
@@ -258,7 +260,7 @@ end
             water[i] = _irr(mp, density[i], dz[i])
         end
         return (temperature, dz, density, water, 0.5 * ones(n), 0.5 * ones(n),
-            0.5 * ones(n), zeros(n), zeros(n))
+            0.5 * ones(n), zeros(n), zeros(n), zeros(n))
     end
 
     mp_inst = GEMB.ModelParameters(density_ice=917.0, water_irreducible_saturation=0.07,
@@ -269,8 +271,8 @@ end
     out_inst = GEMB.calculate_melt(_blocked_column(mp_inst)..., mp_inst, true)
     out_pond = GEMB.calculate_melt(_blocked_column(mp_pond)..., mp_pond, true)
 
-    w_inst, r_inst = out_inst[4], out_inst[12]
-    w_pond, r_pond = out_pond[4], out_pond[12]
+    w_inst, r_inst = out_inst[4], out_inst[13]
+    w_pond, r_pond = out_pond[4], out_pond[13]
     dz_inst, d_inst = out_inst[2], out_inst[3]
     dz_pond, d_pond = out_pond[2], out_pond[3]
 
@@ -391,6 +393,7 @@ end
             grain_sphericity=0.5 * ones(n),
             age=zeros(n),
             black_carbon=zeros(n),
+            black_carbon_retained=zeros(n),
             evaporation_condensation=0.0,
             melt_surface=0.0,
         )
