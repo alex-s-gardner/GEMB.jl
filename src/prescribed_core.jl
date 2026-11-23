@@ -278,8 +278,7 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
 
     # 2. Albedo, after updating the near-surface snow from an observed albedo where there is one,
     # and 3. shortwave
-    isempty(dz) || assimilate_albedo!(dz, density, grain_radius, black_carbon,
-        black_carbon_retained, cfs, mp)
+    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp)
     albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius,
         black_carbon, black_carbon_retained, cfs, mp)
     sw_net = shortwave_net_surface(albedo_broadband, albedo_diffuse, cfs)

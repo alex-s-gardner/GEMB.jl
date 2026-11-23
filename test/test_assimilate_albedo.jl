@@ -79,7 +79,7 @@ end
     cfs = GEMB.ClimateForcingStep(; dt = 3600.0, cloud_optical_thickness = 1.0,
         solar_zenith_angle = 60.0, black_carbon_snow = 0.05)
     mp = GEMB.ModelParameters()
-    @test GEMB.calculate_albedo(dz, density, grain_radius, fill(0.05, n), cfs, mp) ==
+    @test GEMB.calculate_albedo(dz, density, grain_radius, fill(0.05, n), zeros(n), cfs, mp) ==
           GEMB.calculate_albedo(dz, density, grain_radius, cfs, mp)
 end
 
@@ -90,7 +90,8 @@ end
         solar_zenith_angle = 60.0)
     mp = GEMB.ModelParameters()
     @test GEMB.calculate_albedo(dz, density, grain_radius, fill(0.03, n), fill(0.02, n), cfs, mp) ==
-          GEMB.calculate_albedo(dz, density, grain_radius, fill(0.05, n), cfs, mp)
+          GEMB.calculate_albedo(dz, density, grain_radius, fill(0.05, n), zeros(n), cfs, mp)
     @test GEMB.calculate_albedo_ground(dz, density, grain_radius, fill(0.03, n), fill(0.02, n),
-        cfs, mp) == GEMB.calculate_albedo_ground(dz, density, grain_radius, fill(0.05, n), cfs, mp)
+        cfs, mp) == GEMB.calculate_albedo_ground(dz, density, grain_radius, fill(0.05, n),
+        zeros(n), cfs, mp)
 end

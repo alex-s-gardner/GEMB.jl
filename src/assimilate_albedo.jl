@@ -25,6 +25,9 @@ const BLACK_CARBON_EQUIVALENT_MAX = 20.0
 # Grain-radius range [mm] an update may set: new snow to the non-spherical grain cap.
 const ALBEDO_UPDATE_RADIUS_RANGE = (RE_NEW_SNOW, GRAIN_RADIUS_ICE)
 const ALBEDO_UPDATE_TOLERANCE = 1e-6
+# Points of the grain-size scan in `albedo_update`, and the albedo residual the loading solve stops at.
+const ALBEDO_UPDATE_SCAN_POINTS = 40
+const ALBEDO_LOADING_TOLERANCE = 1e-13
 
 # SSA [cm2 g-1] of an effective grain radius [mm], and back, as in `_gardner_terms`.
 @inline _ssa_of_radius(r) = 3.0 / (0.091 * r)
@@ -48,10 +51,10 @@ change from the model's `r` and `c` in `y = (ln SSA, ln(c + c₀))` weighted by
 with `r` in `ALBEDO_UPDATE_RADIUS_RANGE` and `c` in `[0, BLACK_CARBON_EQUIVALENT_MAX]`.
 
 The albedo falls monotonically with the loading at fixed grain size, so for each `y₁` the
-constraint has at most one `y₂` ([`_loading_for_albedo`](@ref), by bisection). The update is the
-minimum of the cost along that contour, a one-dimensional problem in `y₁`: a scan of 200 points
-over the bounds of `y₁` finds the best point at which the contour exists, and a golden-section
-search refines it within the neighbouring interval. With `σ_ssa = 0` the grain size is
+constraint has at most one `y₂` ([`_loading_for_albedo`](@ref)). The update is the minimum of the
+cost along that contour, a one-dimensional problem in `y₁`: a scan of `ALBEDO_UPDATE_SCAN_POINTS`
+points over the bounds of `y₁` finds the best point at which the contour exists, and a
+golden-section search refines it within the neighbouring interval. With `σ_ssa = 0` the grain size is
 held and only the loading changes. When no state within the bounds reaches the observation, the
 update is the reachable state nearest to it (clean snow at the smallest grain for an observation
 brighter than any, the largest loading at the largest grain for one darker than any), with
@@ -87,10 +90,16 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     # largest loading at least as dark. Scan y₁ for the best feasible point, then refine it by
     # golden-section search over the neighbouring interval.
     y1lo, y1hi = log(_ssa_of_radius(rhi)), log(_ssa_of_radius(rlo))
-    feasible(y1) = _intrinsic_albedo(radius(y1), 0.0, au, zw) >= target &&
-                   _intrinsic_albedo(radius(y1), BLACK_CARBON_EQUIVALENT_MAX, au, zw) <= target
-    f(y1) = feasible(y1) ? cost(y1, first(_loading_for_albedo(target, radius(y1), au, zw))) : Inf
-    n = 200
+    # Inf where the contour does not exist at this grain size: clean snow darker than the target, or
+    # the largest loading brighter.
+    function f(y1)
+        rr = radius(y1)
+        a_clean = _intrinsic_albedo(rr, 0.0, au, zw)
+        a_dark = _intrinsic_albedo(rr, BLACK_CARBON_EQUIVALENT_MAX, au, zw)
+        (a_clean >= target && a_dark <= target) || return Inf
+        return cost(y1, _loading_in_bracket(target, rr, au, zw, a_clean, a_dark))
+    end
+    n = ALBEDO_UPDATE_SCAN_POINTS
     grid = range(y1lo, y1hi; length = n)
     vals = f.(grid)
     k = argmin(vals)
@@ -115,21 +124,58 @@ end
     _loading_for_albedo(target, r, albedo_under, z_we) -> (c, converged)
 
 The equivalent loading `c` [ppmw] in `[0, BLACK_CARBON_EQUIVALENT_MAX]` at which the intrinsic
-albedo of grain radius `r` equals `target`, by bisection (the albedo falls monotonically with `c`).
-Clamped to a bound, with `converged = false`, when the target lies outside that range.
+albedo of grain radius `r` equals `target` ([`_loading_in_bracket`](@ref)). Clamped to a bound when
+the target lies outside that range, with `converged` true only if the bound's albedo is within
+`ALBEDO_UPDATE_TOLERANCE` of it.
 """
 function _loading_for_albedo(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64)
-    _intrinsic_albedo(r, 0.0, albedo_under, z_we) <= target && return 0.0, abs(_intrinsic_albedo(r, 0.0, albedo_under, z_we) - target) < ALBEDO_UPDATE_TOLERANCE
-    _intrinsic_albedo(r, BLACK_CARBON_EQUIVALENT_MAX, albedo_under, z_we) >= target &&
-        return BLACK_CARBON_EQUIVALENT_MAX, false
-    lo, hi = 0.0, BLACK_CARBON_EQUIVALENT_MAX
-    for _ in 1:80
-        m = (lo + hi) / 2
-        _intrinsic_albedo(r, m, albedo_under, z_we) > target ? (lo = m) : (hi = m)
-        hi - lo < 1e-12 && break
-    end
-    c = (lo + hi) / 2
+    a_clean = _intrinsic_albedo(r, 0.0, albedo_under, z_we)
+    a_clean <= target && return 0.0, abs(a_clean - target) < ALBEDO_UPDATE_TOLERANCE
+    a_dark = _intrinsic_albedo(r, BLACK_CARBON_EQUIVALENT_MAX, albedo_under, z_we)
+    a_dark >= target && return BLACK_CARBON_EQUIVALENT_MAX, abs(a_dark - target) < ALBEDO_UPDATE_TOLERANCE
+    c = _loading_in_bracket(target, r, albedo_under, z_we, a_clean, a_dark)
     return c, abs(_intrinsic_albedo(r, c, albedo_under, z_we) - target) < ALBEDO_UPDATE_TOLERANCE
+end
+
+"""
+    _loading_in_bracket(target, r, albedo_under, z_we, a_clean, a_dark) -> c
+
+The loading `c` [ppmw] at which the intrinsic albedo of grain radius `r` equals `target`, given
+that clean snow (`a_clean`) is at least as bright as `target` and the largest loading (`a_dark`) at
+most as bright. The albedo falls monotonically with `c`; the root is found in `ln(c + c₀)`, where
+the albedo is close to linear, by regula falsi with the Illinois modification (Dowell and Jarratt,
+1971), which keeps the bracket and converges superlinearly. It stops when the albedo is within
+`ALBEDO_LOADING_TOLERANCE` of `target` or the bracket has closed.
+
+# References
+- Dowell, M. and Jarratt, P. (1971). A modified regula falsi method for computing the root of an
+  equation. *BIT* 11, 168-174.
+"""
+function _loading_in_bracket(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64,
+    a_clean::Float64, a_dark::Float64)
+    c0 = BLACK_CARBON_UPDATE_OFFSET
+    loading(y) = clamp(exp(y) - c0, 0.0, BLACK_CARBON_EQUIVALENT_MAX)
+    ylo, yhi = log(c0), log(BLACK_CARBON_EQUIVALENT_MAX + c0)
+    glo, ghi = a_clean - target, a_dark - target
+    glo == 0.0 && return 0.0
+    ghi == 0.0 && return BLACK_CARBON_EQUIVALENT_MAX
+    side = 0
+    y = ylo
+    for _ in 1:100
+        y = (ylo * ghi - yhi * glo) / (ghi - glo)
+        g = _intrinsic_albedo(r, loading(y), albedo_under, z_we) - target
+        (abs(g) < ALBEDO_LOADING_TOLERANCE || yhi - ylo < 1e-14) && break
+        if g > 0
+            ylo, glo = y, g
+            side == -1 && (ghi /= 2)
+            side = -1
+        else
+            yhi, ghi = y, g
+            side == 1 && (glo /= 2)
+            side = 1
+        end
+    end
+    return loading(y)
 end
 
 """

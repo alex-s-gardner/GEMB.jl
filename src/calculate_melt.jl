@@ -357,8 +357,10 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
 
     m = length(temperature)
     # Impurity mass of each cell on entry [ppmw · kg m-2], for the scavenging below.
-    impurity_initial = black_carbon .* (dz .* density)
-    impurity_retained_initial = black_carbon_retained .* (dz .* density)
+    impurity_initial = _fit_buffer!(workspace.impurity, m)
+    impurity_retained_initial = _fit_buffer!(workspace.impurity_retained, m)
+    @. impurity_initial = black_carbon * (dz * density)
+    @. impurity_retained_initial = black_carbon_retained * (dz * density)
     # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
     # further down run over the same elements in the same order and the broadcasts against the column
     # still match lengths.

@@ -122,6 +122,21 @@ loading through every merge, and `c1` when the total mass is not positive.
 end
 
 """
+    mix_impurities!(cols, i, i_target, M_i, M_target)
+
+Set both impurity loadings of cell `i_target` to the matrix-mass-weighted mean of cells `i` (matrix
+mass `M_i`) and `i_target` (`M_target`), as a merge of the two requires ([`mix_black_carbon`](@ref)).
+"""
+@inline function mix_impurities!(cols::NamedTuple, i::Int, i_target::Int, M_i::Float64,
+    M_target::Float64)
+    cols.black_carbon[i_target] = mix_black_carbon(cols.black_carbon[i], M_i,
+        cols.black_carbon[i_target], M_target)
+    cols.black_carbon_retained[i_target] = mix_black_carbon(cols.black_carbon_retained[i], M_i,
+        cols.black_carbon_retained[i_target], M_target)
+    return nothing
+end
+
+"""
     open_slot!(cols, i)
 
 Insert a cell at index `i`, duplicating the current contents of cell `i` into the new
@@ -202,10 +217,7 @@ slot; the caller removes it with [`close_slot!`](@ref), either immediately or in
         # which needs each cell's pore water separately.
         cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
             cols.age[i_target], M_target + cols.water[i_target])
-        cols.black_carbon[i_target] = mix_black_carbon(cols.black_carbon[i], M_i,
-            cols.black_carbon[i_target], M_target)
-        cols.black_carbon_retained[i_target] = mix_black_carbon(cols.black_carbon_retained[i],
-            M_i, cols.black_carbon_retained[i_target], M_target)
+        mix_impurities!(cols, i, i_target, M_i, M_target)
 
         cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
         cols.density[i_target] = M_new / cols.dz[i_target]
@@ -396,10 +408,7 @@ water and thickness summed, age and impurity loadings mass-weighted), but with t
             independent_grain_radius(mp))
     cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
         cols.age[i_target], M_target + cols.water[i_target])
-    cols.black_carbon[i_target] = mix_black_carbon(cols.black_carbon[i], M_i,
-        cols.black_carbon[i_target], M_target)
-    cols.black_carbon_retained[i_target] = mix_black_carbon(cols.black_carbon_retained[i], M_i,
-        cols.black_carbon_retained[i_target], M_target)
+    mix_impurities!(cols, i, i_target, M_i, M_target)
     cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
     cols.density[i_target] = M_new / cols.dz[i_target]
     cols.water[i_target] = cols.water[i] + cols.water[i_target]
@@ -427,10 +436,7 @@ the firn or ice albedo it had, rather than a diluted density that would read as 
         cols.temperature[i], M_i, cols.temperature[i_target], M_target)
     cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
         cols.age[i_target], M_target + cols.water[i_target])
-    cols.black_carbon[i_target] = mix_black_carbon(cols.black_carbon[i], M_i,
-        cols.black_carbon[i_target], M_target)
-    cols.black_carbon_retained[i_target] = mix_black_carbon(cols.black_carbon_retained[i], M_i,
-        cols.black_carbon_retained[i_target], M_target)
+    mix_impurities!(cols, i, i_target, M_i, M_target)
     cols.dz[i_target] += M_i / cols.density[i_target]
     cols.water[i_target] = cols.water[i] + cols.water[i_target]
     return M_new

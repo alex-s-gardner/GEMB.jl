@@ -322,6 +322,8 @@ struct ColumnWorkspace
     runoff::Vector{Float64}       # runoff per cell [kg m-2]
     flux_dn::Vector{Float64}      # water flux across cell boundaries [kg m-2], m+1 entries
     flux_age::Vector{Float64}     # mass-weighted age of `flux_dn` [d], m+1 entries
+    impurity::Vector{Float64}     # mobile impurity mass per cell [ppmw · kg m-2]
+    impurity_retained::Vector{Float64} # retained impurity mass per cell [ppmw · kg m-2]
     # Index lists, emptied and refilled rather than sized, so they are outside the length contract
     # above and carry nothing between timesteps.
     to_delete::Vector{Int}
@@ -329,11 +331,12 @@ struct ColumnWorkspace
 end
 
 ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[],
-    (Float64[] for _ in 1:9)..., Int[], Int[])
+    (Float64[] for _ in 1:11)..., Int[], Int[])
 
 _workspace_buffers(ws::ColumnWorkspace) =
     (ws.dzmin, ws.dzmax, ws.mass, ws.shortwave, ws.water_delta, ws.t_excess,
-     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age)
+     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age,
+     ws.impurity, ws.impurity_retained)
 
 function _resize_workspace!(ws::ColumnWorkspace, n::Int)
     for buffer in _workspace_buffers(ws)

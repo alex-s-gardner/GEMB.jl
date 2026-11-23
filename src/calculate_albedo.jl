@@ -1,6 +1,5 @@
 """
     calculate_albedo(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs::ClimateForcingStep, mp::ModelParameters)
-    calculate_albedo(dz, density, grain_radius, black_carbon, cfs::ClimateForcingStep, mp::ModelParameters)
     calculate_albedo(dz, density, grain_radius, cfs::ClimateForcingStep, mp::ModelParameters)
 
 Calculate snow, firn, and ice albedo using one of several methods:
@@ -14,8 +13,7 @@ direct-beam and for the diffuse stream.
 Every method here is **diagnostic**: the albedo is a function of the current column
 state alone. Under `:GardnerSharp` that state includes each layer's equivalent impurity loading
 [ppmw], the sum of `black_carbon` and `black_carbon_retained`, read as
-[`surface_black_carbon`](@ref); given one loading vector it is the total, and without one every
-layer takes `cfs.black_carbon_snow`. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
+[`surface_black_carbon`](@ref); without them every layer takes `cfs.black_carbon_snow`. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
 fixed 50° effective zenith angle); the other methods return it equal to `albedo`.
 [`calculate_shortwave_radiation`](@ref) applies `albedo` to the direct beam
 `SW↓ − SW↓_diffuse` and `albedo_diffuse` to `SW↓_diffuse`.
@@ -63,8 +61,8 @@ Where the column has a surface of firn or ice, or snow over one, the albedos are
   of the 0.65 minimum snow albedo used as `ALBEDO_FIRN_MAX`.)
 """
 function calculate_albedo(dz::Vector{Float64},
-    density::Vector{Float64}, grain_radius::Vector{Float64}, black_carbon::Vector{Float64},
-    black_carbon_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
+    density::Vector{Float64}, grain_radius::Vector{Float64}, black_carbon::AbstractVector,
+    black_carbon_retained::AbstractVector, cfs::ClimateForcingStep, mp::ModelParameters)
 
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
 
@@ -92,34 +90,20 @@ function calculate_albedo(dz::Vector{Float64},
     return albedo, albedo_diffuse
 end
 
-# One loading vector: the total. Without one: the step's `cfs.black_carbon_snow` in every layer.
-calculate_albedo(dz::Vector{Float64}, density::Vector{Float64}, grain_radius::Vector{Float64},
-    black_carbon::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters) =
-    calculate_albedo(dz, density, grain_radius, black_carbon, zero(black_carbon), cfs, mp)
+# Without layer loadings: the step's `cfs.black_carbon_snow` in every layer, none retained.
 calculate_albedo(dz::Vector{Float64}, density::Vector{Float64}, grain_radius::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters) =
-    calculate_albedo(dz, density, grain_radius, fill(cfs.black_carbon_snow, length(dz)), cfs, mp)
-calculate_albedo_ground(dz::Vector{Float64}, density::Vector{Float64},
-    grain_radius::Vector{Float64}, black_carbon::Vector{Float64}, cfs::ClimateForcingStep,
-    mp::ModelParameters) =
-    calculate_albedo_ground(dz, density, grain_radius, black_carbon, zero(black_carbon), cfs, mp)
-calculate_albedo_ground(dz::Vector{Float64}, density::Vector{Float64},
-    grain_radius::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters) =
-    calculate_albedo_ground(dz, density, grain_radius, fill(cfs.black_carbon_snow, length(dz)),
-        cfs, mp)
+    calculate_albedo(dz, density, grain_radius, Fill(cfs.black_carbon_snow, length(dz)),
+        Zeros(length(dz)), cfs, mp)
 
 """
-    surface_black_carbon(dz, density, black_carbon, [black_carbon_retained,] mp) -> Float64
+    surface_black_carbon(dz, density, black_carbon, black_carbon_retained, mp) -> Float64
 
 Equivalent impurity loading [ppmw] of the near-surface snow: the thickness-weighted mean of the
-layers' loading, `black_carbon` plus `black_carbon_retained` when given, over the top `mp.albedo_impurity_depth` of snow (layers below pore close-off
+layers' loading, `black_carbon` plus `black_carbon_retained`, over the top `mp.albedo_impurity_depth` of snow (layers below pore close-off
 density), the loading the Gardner & Sharp (2010) albedo reads. A top layer thicker than that depth
 gives its own value. 0 when the surface is firn or ice.
 """
-surface_black_carbon(dz::AbstractVector, density::AbstractVector,
-    black_carbon::AbstractVector, mp::ModelParameters) =
-    surface_black_carbon(dz, density, black_carbon, Zeros(length(black_carbon)), mp)
-
 function surface_black_carbon(dz::AbstractVector, density::AbstractVector,
     black_carbon::AbstractVector, black_carbon_retained::AbstractVector, mp::ModelParameters)
     remaining = mp.albedo_impurity_depth
@@ -169,7 +153,7 @@ end
 end
 
 """
-    calculate_albedo_ground(dz, density, grain_radius, black_carbon, cfs, mp) -> (albedo, albedo_diffuse)
+    calculate_albedo_ground(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp) -> (albedo, albedo_diffuse)
 
 [`calculate_albedo`](@ref) for the snow over the ground of `lower_boundary = :ground`. `dz`,
 `density` and `grain_radius` are the snow cells only and may be empty.

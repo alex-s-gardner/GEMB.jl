@@ -219,8 +219,7 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
         grain_sphericity, age, black_carbon, black_carbon_retained)
 
     # 2. Albedo, after updating the near-surface snow from an observed albedo where there is one.
-    isempty(dz) || assimilate_albedo!(dz, density, grain_radius, black_carbon,
-        black_carbon_retained, cfs, mp)
+    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp)
     albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius,
         black_carbon, black_carbon_retained, cfs, mp)
 
