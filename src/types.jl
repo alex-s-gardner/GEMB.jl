@@ -658,6 +658,9 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # ln(c + BLACK_CARBON_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
     albedo_update_sigma_log_ssa::Float64 = 0.2
     albedo_update_sigma_log_impurity::Float64 = 1.0
+    # Fraction of the impurity in melted ice that leaves with the meltwater; the rest stays at the
+    # melting surface (see `calculate_melt`). 0 keeps all of it.
+    impurity_scavenging_efficiency::Float64 = 0.0
 
     # --- Output Controls ---
     output_frequency::Symbol = :all

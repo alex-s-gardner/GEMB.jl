@@ -116,3 +116,30 @@ end
     stack = DimStack(merge(layers, (; albedo_observed=DimArray(obs, (tdim,)))); metadata=meta)
     @test isequal(parent(initialize_forcing(stack).albedo_observed), obs)
 end
+
+@testset "melt leaves impurities at the surface" begin
+    # Three cells; the top two melt (one entirely, one by half).
+    c = [0.10, 0.20, 0.05]; M_entry = [2.0, 4.0, 10.0]
+    melt = [2.0, 2.0, 0.0]; M = M_entry .- melt
+    initial = c .* M_entry
+    # k = 0: no impurity leaves; the melted-out top cell passes its load to cell 2.
+    bc = copy(c)
+    GEMB._enrich_impurities!(bc, initial, M, melt, 0.0)
+    @test bc[2] ≈ (0.10 * 2.0 + 0.20 * 4.0) / 2.0
+    @test bc[3] == 0.05
+    @test sum(bc[2:3] .* M[2:3]) ≈ sum(initial)
+    # k = 1: the impurity of all melted ice leaves; the loading of what remains is unchanged.
+    bc = copy(c)
+    GEMB._enrich_impurities!(bc, initial, M, melt, 1.0)
+    @test bc[2] ≈ 0.20 && bc[3] == 0.05
+    # k between: the retained fraction.
+    bc = copy(c)
+    GEMB._enrich_impurities!(bc, initial, M, melt, 0.3)
+    @test bc[2] * M[2] ≈ 0.7 * 0.10 * 2.0 + (0.20 * 4.0 - 0.3 * 0.20 * 2.0)
+    # No melt: unchanged.
+    bc = copy(c)
+    GEMB._enrich_impurities!(bc, initial, M_entry, zeros(3), 0.0)
+    @test bc == c
+    @test_throws "impurity_scavenging_efficiency must be in [0, 1]" GEMB.initialize_parameters(;
+        impurity_scavenging_efficiency = 1.5)
+end

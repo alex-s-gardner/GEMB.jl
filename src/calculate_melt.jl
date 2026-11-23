@@ -107,6 +107,34 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
 end
 
 """
+    _enrich_impurities!(black_carbon, impurity_initial, M, melt, k)
+
+Set `black_carbon` [ppmw] from the impurity mass after melt. Cell `i` held `impurity_initial[i]`
+[ppmw · kg m-2] in its matrix on entry and melted `melt[i]` [kg m-2] of it; the impurity of the
+melted ice, `impurity_initial[i] · melt[i] / (M[i] + melt[i])`, is retained in the fraction `1 − k`
+and the rest leaves with the meltwater. What a cell keeps is spread over its remaining matrix mass
+`M[i]`, which already includes any refrozen water. A cell left with no matrix (`M[i]` at most
+`WATER_TOLERANCE`) passes its retained impurity to the nearest cell below that has matrix, or
+loses it when no cell below has any.
+"""
+function _enrich_impurities!(black_carbon::Vector{Float64}, impurity_initial::Vector{Float64},
+    M::Vector{Float64}, melt::Vector{Float64}, k::Float64)
+    carry = 0.0
+    for i in eachindex(black_carbon, impurity_initial, M, melt)
+        M_entry = M[i] + melt[i]
+        lost = M_entry > 0.0 ? k * impurity_initial[i] * melt[i] / M_entry : 0.0
+        kept = impurity_initial[i] - lost + carry
+        if M[i] > WATER_TOLERANCE
+            black_carbon[i] = kept / M[i]
+            carry = 0.0
+        else
+            carry = kept
+        end
+    end
+    return nothing
+end
+
+"""
     _refreeze_cell(mp, melt_input, water, freeze_max, M, density, dz) ->
         (freeze1, freeze2, water_delta, flux_out, M_new, density_new)
 
@@ -247,9 +275,11 @@ age, and whatever continues down or runs off leaves at it. Refreezing therefore 
 
 # Impurity loading
 
-`black_carbon` [ppmw] is unchanged by melt, refreeze and percolation: a cell keeps its loading
-as it loses or gains mass, and a cell that melts out takes its impurity with it. Enrichment of
-the remaining snow by impurities left behind at a melting surface is not modelled.
+`black_carbon` [ppmw] tracks the impurity mass of each cell, `c · M`. Of the impurity in the
+ice a cell melts, the fraction `mp.impurity_scavenging_efficiency` leaves with the meltwater and
+the rest stays at the melting surface ([`_enrich_impurities!`](@ref)), so a melting cell grows
+dirtier and the impurity of a cell that melts out passes to the nearest cell below that remains.
+Refreezing and percolation move water only: refrozen ice adds matrix mass without impurity.
 
 `percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
 base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
@@ -297,6 +327,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)
+    # Impurity mass of each cell on entry [ppmw · kg m-2], for the melt enrichment below.
+    impurity_initial = black_carbon .* (dz .* density)
     # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
     # further down run over the same elements in the same order and the broadcasts against the column
     # still match lengths.
@@ -634,6 +666,12 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         # before cells are deleted.
         independent_grain_radius(mp) &&
             snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
+
+        # Impurities of melted ice: the fraction `mp.impurity_scavenging_efficiency` leaves with
+        # the meltwater and the rest stays at the melting surface, in the cell or, for a cell
+        # that melted out, in the nearest cell below that did not.
+        _enrich_impurities!(black_carbon, impurity_initial, M, melt,
+            mp.impurity_scavenging_efficiency)
 
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
