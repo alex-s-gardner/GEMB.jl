@@ -93,11 +93,11 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     # Inf where the contour does not exist at this grain size: clean snow darker than the target, or
     # the largest loading brighter.
     function f(y1)
-        rr = radius(y1)
-        a_clean = _intrinsic_albedo(rr, 0.0, au, zw)
-        a_dark = _intrinsic_albedo(rr, BLACK_CARBON_EQUIVALENT_MAX, au, zw)
+        r1 = radius(y1)
+        a_clean = _intrinsic_albedo(r1, 0.0, au, zw)
+        a_dark = _intrinsic_albedo(r1, BLACK_CARBON_EQUIVALENT_MAX, au, zw)
         (a_clean >= target && a_dark <= target) || return Inf
-        return cost(y1, _loading_in_bracket(target, rr, au, zw, a_clean, a_dark))
+        return cost(y1, _loading_in_bracket(target, r1, au, zw, a_clean, a_dark))
     end
     n = ALBEDO_UPDATE_SCAN_POINTS
     grid = range(y1lo, y1hi; length = n)

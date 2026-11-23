@@ -95,3 +95,13 @@ end
         cfs, mp) == GEMB.calculate_albedo_ground(dz, density, grain_radius, fill(0.05, n),
         zeros(n), cfs, mp)
 end
+
+@testset "albedo update is type-stable" begin
+    # The trimmed C library cannot compile a dynamic call, so these must infer concretely.
+    mp = GEMB.ModelParameters()
+    @test (@inferred GEMB.albedo_update(0.55, 0.5, 0.05, 0.5, Inf, mp)) isa Tuple{Float64,Float64,Bool}
+    n = 4
+    cfs = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = 0.55)
+    @test (@inferred GEMB.assimilate_albedo!(fill(0.01, n), fill(350.0, n), fill(0.3, n),
+        zeros(n), zeros(n), cfs, mp)) isa Tuple{Float64,Float64,Bool}
+end
