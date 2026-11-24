@@ -165,8 +165,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_dendricity = Vector{Float64}(profile[:grain_dendricity]),
         grain_sphericity = Vector{Float64}(profile[:grain_sphericity]),
         age = Vector{Float64}(profile[:age]),
-        black_carbon = Vector{Float64}(profile[:black_carbon]),
-        black_carbon_retained = Vector{Float64}(profile[:black_carbon_retained]),
+        impurity_effective = Vector{Float64}(profile[:impurity_effective]),
+        impurity_effective_retained = Vector{Float64}(profile[:impurity_effective_retained]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -218,7 +218,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         heat_flux_latent=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_basal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
-        black_carbon_surface=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        impurity_effective_surface=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_update_dlog_ssa=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_update_dlog_impurity=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_update_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -251,8 +251,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_dendricity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         age=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-        black_carbon=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
-        black_carbon_retained=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        impurity_effective=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        impurity_effective_retained=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
 
     # Optional layers, appended last so the base stack's layer order — and therefore the
@@ -463,7 +463,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lhf = parent(output[:heat_flux_latent])
     out_bhf = parent(output[:heat_flux_basal])
     out_albedo_broadband = parent(output[:albedo_broadband])
-    out_black_carbon_surface = parent(output[:black_carbon_surface])
+    out_impurity_effective_surface = parent(output[:impurity_effective_surface])
     out_albedo_update_dlog_ssa = parent(output[:albedo_update_dlog_ssa])
     out_albedo_update_dlog_impurity = parent(output[:albedo_update_dlog_impurity])
     out_albedo_update_count = parent(output[:albedo_update_count])
@@ -488,8 +488,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_dendricity = parent(output[:grain_dendricity])
     out_grain_sphericity = parent(output[:grain_sphericity])
     out_age = parent(output[:age])
-    out_black_carbon = parent(output[:black_carbon])
-    out_black_carbon_retained = parent(output[:black_carbon_retained])
+    out_impurity_effective = parent(output[:impurity_effective])
+    out_impurity_effective_retained = parent(output[:impurity_effective_retained])
     # Empty when the layer was not allocated, which is what gates the write below. Empty
     # rather than `nothing` for the same reason as `NO_VISCOSITY`: this is a local in the
     # time loop, so a `Union{Nothing,Matrix{Float64}}` would leave its element type
@@ -513,7 +513,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_lhf = 0.0
     cum_bhf = 0.0
     cum_albedo_broadband = 0.0
-    cum_black_carbon_surface = 0.0
+    cum_impurity_effective_surface = 0.0
     cum_albedo_update_dlog_ssa = 0.0
     cum_albedo_update_dlog_impurity = 0.0
     cum_albedo_update_count = 0.0
@@ -607,7 +607,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_lhf += flux.heat_flux_latent
         cum_bhf += flux.heat_flux_basal
         cum_albedo_broadband += flux.albedo_broadband
-        cum_black_carbon_surface += flux.black_carbon_surface
+        cum_impurity_effective_surface += flux.impurity_effective_surface
         cum_albedo_update_dlog_ssa += flux.albedo_update_dlog_ssa
         cum_albedo_update_dlog_impurity += flux.albedo_update_dlog_impurity
         cum_albedo_update_count += flux.albedo_update_count
@@ -669,7 +669,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lhf[oi] = cum_lhf / cum_count
                 out_bhf[oi] = cum_bhf / cum_count
                 out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
-                out_black_carbon_surface[oi] = cum_black_carbon_surface / cum_count
+                out_impurity_effective_surface[oi] = cum_impurity_effective_surface / cum_count
                 out_albedo_update_dlog_ssa[oi] = cum_albedo_update_dlog_ssa
                 out_albedo_update_dlog_impurity[oi] = cum_albedo_update_dlog_impurity
                 out_albedo_update_count[oi] = cum_albedo_update_count
@@ -721,8 +721,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_grain_dendricity[k, oi] = state.grain_dendricity[k]
                 out_grain_sphericity[k, oi] = state.grain_sphericity[k]
                 out_age[k, oi] = state.age[k]
-                out_black_carbon[k, oi] = state.black_carbon[k]
-                out_black_carbon_retained[k, oi] = state.black_carbon_retained[k]
+                out_impurity_effective[k, oi] = state.impurity_effective[k]
+                out_impurity_effective_retained[k, oi] = state.impurity_effective_retained[k]
             end
 
             # From `flux`, not `state`: viscosity is a per-step diagnostic of the
@@ -751,7 +751,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_lhf = 0.0
             cum_bhf = 0.0
             cum_albedo_broadband = 0.0
-            cum_black_carbon_surface = 0.0
+            cum_impurity_effective_surface = 0.0
             cum_albedo_update_dlog_ssa = 0.0
             cum_albedo_update_dlog_impurity = 0.0
             cum_albedo_update_count = 0.0

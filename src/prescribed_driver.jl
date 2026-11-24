@@ -147,7 +147,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
             parent(output[:snow_water_equivalent])[oi] = column_mass(snow)
             col = _ground_state_vectors(mp, g, snow.temperature, snow.dz, snow.density,
                 snow.water, snow.grain_radius, snow.grain_dendricity, snow.grain_sphericity,
-                snow.age, snow.black_carbon, snow.black_carbon_retained, e, e)
+                snow.age, snow.impurity_effective, snow.impurity_effective_retained, e, e)
             for l in GROUND_PROFILE_LAYERS
                 parent(output[l])[:, oi] .= getfield(col, l)
             end

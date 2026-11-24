@@ -41,8 +41,8 @@ function reference_setup()
         grain_dendricity=zeros(N_CELLS),
         grain_sphericity=fill(0.5, N_CELLS),
         age=zeros(N_CELLS),
-        black_carbon=zeros(N_CELLS),
-        black_carbon_retained=zeros(N_CELLS),
+        impurity_effective=zeros(N_CELLS),
+        impurity_effective_retained=zeros(N_CELLS),
         evaporation_condensation=0.0,
         melt_surface=0.0,
     )

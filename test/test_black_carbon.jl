@@ -1,53 +1,53 @@
-# Tests for the per-layer equivalent impurity loading `black_carbon`: how the grid primitives and
+# Tests for the per-layer equivalent impurity loading `impurity_effective`: how the grid primitives and
 # the accumulation carry it.
 
-_bc_cols(; n=4, black_carbon=[0.0, 0.5, 2.0, 7.0], density=[200.0, 300.0, 450.0, 600.0],
+_bc_cols(; n=4, impurity_effective=[0.0, 0.5, 2.0, 7.0], density=[200.0, 300.0, 450.0, 600.0],
     water=[0.0, 0.4, 1.0, 0.0]) = GEMB.column_state(fill(260.0, n), fill(0.05, n),
     copy(density), copy(water), fill(0.3, n), zeros(n), fill(0.5, n), collect(1.0:n),
-    copy(black_carbon), zero(black_carbon))
+    copy(impurity_effective), zero(impurity_effective))
 
-_impurity_mass(cols) = sum(cols.black_carbon .* cols.dz .* cols.density)
+_impurity_mass(cols) = sum(cols.impurity_effective .* cols.dz .* cols.density)
 
-@testset "merge conserves matrix-mass-weighted black_carbon; split copies" begin
+@testset "merge conserves matrix-mass-weighted impurity_effective; split copies" begin
     mp = GEMB.ModelParameters()
     for merge! in (GEMB.merge_pair!, GEMB.merge_snow_pair!, GEMB.absorb_snow!)
         cols = _bc_cols()
         i, j = merge! === GEMB.absorb_snow! ? (1, 2) : (2, 3)
         Mi, Mj = cols.dz[i] * cols.density[i], cols.dz[j] * cols.density[j]
-        expected = (cols.black_carbon[i] * Mi + cols.black_carbon[j] * Mj) / (Mi + Mj)
-        impurity = cols.black_carbon[i] * Mi + cols.black_carbon[j] * Mj
+        expected = (cols.impurity_effective[i] * Mi + cols.impurity_effective[j] * Mj) / (Mi + Mj)
+        impurity = cols.impurity_effective[i] * Mi + cols.impurity_effective[j] * Mj
         merge!(cols, i, j, Mi, Mj, mp)
-        @test cols.black_carbon[j] ≈ expected rtol = 1e-15
+        @test cols.impurity_effective[j] ≈ expected rtol = 1e-15
         # Pore water carries no impurity: the weights are matrix masses.
-        @test cols.black_carbon[j] * (Mi + Mj) ≈ impurity rtol = 1e-15
+        @test cols.impurity_effective[j] * (Mi + Mj) ≈ impurity rtol = 1e-15
     end
 
     # The retained class mixes on matrix mass in every merge too.
     for merge! in (GEMB.merge_pair!, GEMB.merge_snow_pair!, GEMB.absorb_snow!)
         cols = _bc_cols()
-        cols.black_carbon_retained .= [1.0, 0.0, 4.0, 0.5]
+        cols.impurity_effective_retained .= [1.0, 0.0, 4.0, 0.5]
         i, j = merge! === GEMB.absorb_snow! ? (1, 2) : (2, 3)
         Mi, Mj = cols.dz[i] * cols.density[i], cols.dz[j] * cols.density[j]
-        expected = (cols.black_carbon_retained[i] * Mi + cols.black_carbon_retained[j] * Mj) /
+        expected = (cols.impurity_effective_retained[i] * Mi + cols.impurity_effective_retained[j] * Mj) /
                    (Mi + Mj)
         merge!(cols, i, j, Mi, Mj, mp)
-        @test cols.black_carbon_retained[j] ≈ expected rtol = 1e-15
+        @test cols.impurity_effective_retained[j] ≈ expected rtol = 1e-15
     end
 
     # A column at a uniform loading stays at exactly that loading through any merge.
-    cols = _bc_cols(black_carbon=fill(0.3, 4))
+    cols = _bc_cols(impurity_effective=fill(0.3, 4))
     GEMB.merge_pair!(cols, 1, 2, 10.0, 15.0, mp)
-    @test cols.black_carbon[2] === 0.3
+    @test cols.impurity_effective[2] === 0.3
 
     cols = _bc_cols()
-    before = copy(cols.black_carbon)
+    before = copy(cols.impurity_effective)
     impurity = _impurity_mass(cols)
     GEMB.split_cell!(cols, 3)
-    @test cols.black_carbon == [before[1], before[2], before[3], before[3], before[4]]
+    @test cols.impurity_effective == [before[1], before[2], before[3], before[3], before[4]]
     @test _impurity_mass(cols) ≈ impurity rtol = 1e-15
 
-    @test GEMB.mix_black_carbon(1.0, 3.0, 5.0, 1.0) == 2.0
-    @test GEMB.mix_black_carbon(1.0, 0.0, 5.0, 0.0) == 1.0
+    @test GEMB.mix_impurity(1.0, 3.0, 5.0, 1.0) == 2.0
+    @test GEMB.mix_impurity(1.0, 0.0, 5.0, 0.0) == 1.0
 end
 
 @testset "manage_layer_thickness conserves impurity mass of both classes" begin
@@ -87,10 +87,17 @@ end
     @test length(out[2]) == n
     M = 0.1 * 400.0
     @test out[9][1] ≈ (3.0 * M + 0.1 * 0.5) / (M + 0.5) rtol = 1e-14
-    # A retained loading is diluted by the snow, which carries none.
+    # Snow too light for a layer of its own still mixes into a surface carrying a retained film,
+    # diluting it (it carries none)...
     col = column(); col[10] .= 2.0
-    out = GEMB.calculate_accumulation(col..., step(0.5, 260.0), mp, true)
-    @test out[10][1] ≈ 2.0 * M / (M + 0.5) rtol = 1e-14
+    light = 0.5 * GEMB.snow_layer_min_mass(10800.0)
+    out = GEMB.calculate_accumulation(deepcopy(col)..., step(light, 260.0), mp, true)
+    @test length(out[2]) == n
+    @test out[10][1] ≈ 2.0 * M / (M + light) rtol = 1e-14
+    # ...but snow of at least `snow_layer_min_mass` always buries the film in a new cell.
+    out = GEMB.calculate_accumulation(deepcopy(col)..., step(2.0 * GEMB.snow_layer_min_mass(10800.0), 260.0), mp, true)
+    @test length(out[2]) == n + 1
+    @test out[10][1] == 0.0 && out[10][2] == 2.0 && length(out[10]) == n + 1
 
     # Rain does not change it.
     out = GEMB.calculate_accumulation(column()..., step(2.0, 278.0), mp, true)

@@ -19,10 +19,10 @@ function _make_layer_inputs(; n=10)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
-    black_carbon = zeros(n)
-    black_carbon_retained = zeros(n)
+    impurity_effective = zeros(n)
+    impurity_effective_retained = zeros(n)
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age,
-        black_carbon, black_carbon_retained
+        impurity_effective, impurity_effective_retained
 end
 
 function _layer_mp(; column_dzmin=0.05, column_dzmax=0.10, column_depth_max=1.0,

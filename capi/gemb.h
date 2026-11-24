@@ -321,8 +321,8 @@ int gemb_step(int n,
               double *grain_dendricity,  /* [-]       */
               double *grain_sphericity,  /* [-]       */
               double *age,               /* [days]    */
-              double *black_carbon,      /* [ppmw]    mobile equivalent impurity loading */
-              double *black_carbon_retained, /* [ppmw] retained equivalent impurity loading */
+              double *impurity_effective,      /* [ppmw]    mobile equivalent impurity loading */
+              double *impurity_effective_retained, /* [ppmw] retained equivalent impurity loading */
               double *scalars,
               const double *forcing,
               int params_handle,

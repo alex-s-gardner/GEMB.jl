@@ -9,19 +9,19 @@ by the prior standard deviations `mp.albedo_update_sigma_log_ssa` and
 `mp.albedo_update_sigma_log_impurity`. The split between the two is set by those weights, not by
 the observation.
 
-The loading so obtained is an *equivalent* one: it also absorbs errors of the albedo model, of
+The loading so obtained is an *effective* one, not a measured or inferred impurity concentration: it also absorbs errors of the albedo model, of
 wet-snow albedo and of mixing in the observation footprint. The near-surface snow a satellite sees
 during melt holds the insoluble residue meltwater did not carry away, so the update sets the
-retained class `black_carbon_retained` of the near-surface layers, which meltwater scavenges at
-`mp.impurity_scavenging_efficiency_retained`, and leaves the mobile `black_carbon` from snowfall
+retained class `impurity_effective_retained` of the near-surface layers, which meltwater scavenges at
+`mp.impurity_scavenging_efficiency_retained`, and leaves the mobile `impurity_effective` from snowfall
 as it is. The retained loading then moves with the snow, buried by new snow and re-exposed by
 melt, until the next observation; the grain radius is scaled and evolves by metamorphism.
 """
 
 # Offset c₀ [ppmw] in the update's impurity coordinate ln(c + c₀), so clean snow (c = 0) is finite.
-const BLACK_CARBON_UPDATE_OFFSET = 0.01
-# Largest equivalent loading [ppmw] an update may set.
-const BLACK_CARBON_EQUIVALENT_MAX = 20.0
+const IMPURITY_UPDATE_OFFSET = 0.01
+# Largest effective loading [ppmw] an update may set.
+const IMPURITY_EFFECTIVE_MAX = 20.0
 # Grain-radius range [mm] an update may set: new snow to the non-spherical grain cap.
 const ALBEDO_UPDATE_RADIUS_RANGE = (RE_NEW_SNOW, GRAIN_RADIUS_ICE)
 const ALBEDO_UPDATE_TOLERANCE = 1e-6
@@ -41,14 +41,14 @@ const ALBEDO_LOADING_TOLERANCE = 1e-13
 """
     albedo_update(albedo_observed, r, c, albedo_under, z_we, mp) -> (r_new, c_new, converged)
 
-The near-surface grain radius `r_new` [mm] and equivalent loading `c_new` [ppmw] whose intrinsic
+The near-surface grain radius `r_new` [mm] and effective loading `c_new` [ppmw] whose intrinsic
 Gardner & Sharp albedo (diffuse stream, no cloud term) equals `albedo_observed`, by the smallest
 change from the model's `r` and `c` in `y = (ln SSA, ln(c + c₀))` weighted by
 `σ = (mp.albedo_update_sigma_log_ssa, mp.albedo_update_sigma_log_impurity)`:
 
     minimize ((y₁ − y₁⁰)/σ₁)² + ((y₂ − y₂⁰)/σ₂)²  subject to  α(y) = albedo_observed,
 
-with `r` in `ALBEDO_UPDATE_RADIUS_RANGE` and `c` in `[0, BLACK_CARBON_EQUIVALENT_MAX]`.
+with `r` in `ALBEDO_UPDATE_RADIUS_RANGE` and `c` in `[0, IMPURITY_EFFECTIVE_MAX]`.
 
 The albedo falls monotonically with the loading at fixed grain size, so for each `y₁` the
 constraint has at most one `y₂` ([`_loading_for_albedo`](@ref)). The update is the minimum of the
@@ -71,10 +71,10 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
         "$(σ1) and $(σ2)"))
     target = Float64(albedo_observed); au = Float64(albedo_under); zw = Float64(z_we)
     rlo, rhi = ALBEDO_UPDATE_RADIUS_RANGE
-    r0 = clamp(Float64(r), rlo, rhi); c0 = clamp(Float64(c), 0.0, BLACK_CARBON_EQUIVALENT_MAX)
-    y10 = log(_ssa_of_radius(r0)); y20 = log(c0 + BLACK_CARBON_UPDATE_OFFSET)
+    r0 = clamp(Float64(r), rlo, rhi); c0 = clamp(Float64(c), 0.0, IMPURITY_EFFECTIVE_MAX)
+    y10 = log(_ssa_of_radius(r0)); y20 = log(c0 + IMPURITY_UPDATE_OFFSET)
     radius(y1) = _radius_of_ssa(exp(y1))
-    cost(y1, cc) = (σ1 > 0 ? ((y1 - y10) / σ1)^2 : 0.0) + ((log(cc + BLACK_CARBON_UPDATE_OFFSET) - y20) / σ2)^2
+    cost(y1, cc) = (σ1 > 0 ? ((y1 - y10) / σ1)^2 : 0.0) + ((log(cc + IMPURITY_UPDATE_OFFSET) - y20) / σ2)^2
 
     # Grain size held: a one-dimensional solve in the loading.
     if σ1 == 0
@@ -83,9 +83,9 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     end
     # Out of reach at every grain size within the bounds.
     brightest = _intrinsic_albedo(rlo, 0.0, au, zw)
-    darkest = _intrinsic_albedo(rhi, BLACK_CARBON_EQUIVALENT_MAX, au, zw)
+    darkest = _intrinsic_albedo(rhi, IMPURITY_EFFECTIVE_MAX, au, zw)
     target > brightest && return rlo, 0.0, false
-    target < darkest && return rhi, BLACK_CARBON_EQUIVALENT_MAX, false
+    target < darkest && return rhi, IMPURITY_EFFECTIVE_MAX, false
     # The contour exists where clean snow of that grain is at least as bright as the target and the
     # largest loading at least as dark. Scan y₁ for the best feasible point, then refine it by
     # golden-section search over the neighbouring interval.
@@ -95,7 +95,7 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     function f(y1)
         r1 = radius(y1)
         a_clean = _intrinsic_albedo(r1, 0.0, au, zw)
-        a_dark = _intrinsic_albedo(r1, BLACK_CARBON_EQUIVALENT_MAX, au, zw)
+        a_dark = _intrinsic_albedo(r1, IMPURITY_EFFECTIVE_MAX, au, zw)
         (a_clean >= target && a_dark <= target) || return Inf
         return cost(y1, _loading_in_bracket(target, r1, au, zw, a_clean, a_dark))
     end
@@ -123,7 +123,7 @@ end
 """
     _loading_for_albedo(target, r, albedo_under, z_we) -> (c, converged)
 
-The equivalent loading `c` [ppmw] in `[0, BLACK_CARBON_EQUIVALENT_MAX]` at which the intrinsic
+The effective loading `c` [ppmw] in `[0, IMPURITY_EFFECTIVE_MAX]` at which the intrinsic
 albedo of grain radius `r` equals `target` ([`_loading_in_bracket`](@ref)). Clamped to a bound when
 the target lies outside that range, with `converged` true only if the bound's albedo is within
 `ALBEDO_UPDATE_TOLERANCE` of it.
@@ -131,8 +131,8 @@ the target lies outside that range, with `converged` true only if the bound's al
 function _loading_for_albedo(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64)
     a_clean = _intrinsic_albedo(r, 0.0, albedo_under, z_we)
     a_clean <= target && return 0.0, abs(a_clean - target) < ALBEDO_UPDATE_TOLERANCE
-    a_dark = _intrinsic_albedo(r, BLACK_CARBON_EQUIVALENT_MAX, albedo_under, z_we)
-    a_dark >= target && return BLACK_CARBON_EQUIVALENT_MAX, abs(a_dark - target) < ALBEDO_UPDATE_TOLERANCE
+    a_dark = _intrinsic_albedo(r, IMPURITY_EFFECTIVE_MAX, albedo_under, z_we)
+    a_dark >= target && return IMPURITY_EFFECTIVE_MAX, abs(a_dark - target) < ALBEDO_UPDATE_TOLERANCE
     c = _loading_in_bracket(target, r, albedo_under, z_we, a_clean, a_dark)
     return c, abs(_intrinsic_albedo(r, c, albedo_under, z_we) - target) < ALBEDO_UPDATE_TOLERANCE
 end
@@ -153,12 +153,12 @@ the albedo is close to linear, by regula falsi with the Illinois modification (D
 """
 function _loading_in_bracket(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64,
     a_clean::Float64, a_dark::Float64)
-    c0 = BLACK_CARBON_UPDATE_OFFSET
-    loading(y) = clamp(exp(y) - c0, 0.0, BLACK_CARBON_EQUIVALENT_MAX)
-    ylo, yhi = log(c0), log(BLACK_CARBON_EQUIVALENT_MAX + c0)
+    c0 = IMPURITY_UPDATE_OFFSET
+    loading(y) = clamp(exp(y) - c0, 0.0, IMPURITY_EFFECTIVE_MAX)
+    ylo, yhi = log(c0), log(IMPURITY_EFFECTIVE_MAX + c0)
     glo, ghi = a_clean - target, a_dark - target
     glo == 0.0 && return 0.0
-    ghi == 0.0 && return BLACK_CARBON_EQUIVALENT_MAX
+    ghi == 0.0 && return IMPURITY_EFFECTIVE_MAX
     side = 0
     y = ylo
     for _ in 1:100
@@ -179,39 +179,47 @@ function _loading_in_bracket(target::Float64, r::Float64, albedo_under::Float64,
 end
 
 """
-    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp) -> (dlog_ssa, dlog_impurity, applied)
+    assimilate_albedo!(dz, density, grain_radius, age, impurity_effective, impurity_effective_retained, cfs, mp) -> (dlog_ssa, dlog_impurity, applied)
 
 Update the near-surface snow from `cfs.albedo_observed` when it is finite, the albedo method is
 `:GardnerSharp` and the surface is snow (its top layer below pore close-off density). The update
-is [`albedo_update`](@ref) from the surface grain radius and the total [`surface_black_carbon`](@ref).
-In every snow layer within the top `mp.albedo_impurity_depth` it sets `black_carbon_retained` so that
-the layer's total loading is the new one, `max(0, c_new − black_carbon)`, and scales `grain_radius`
-by `r_new / r_surface`, leaving the profile's shape. Where the mobile loading alone exceeds `c_new`
-the retained class is 0 and the layer stays darker than the update.
+is [`albedo_update`](@ref) from the surface grain radius and the total [`surface_impurity_effective`](@ref).
+It sets the surface layer's retained film so that the loading the albedo reads is the new one: the
+film supplies `max(0, c_new − c_mobile)`, `c_mobile` being the mobile loading over the top
+`mp.albedo_impurity_depth`, held as retained mass in the surface layer
+([`surface_impurity_effective`](@ref)); the retained loading of the layers below is left as it is. It
+scales `grain_radius` of every snow layer within the top `mp.albedo_impurity_depth` by
+`r_new / r_surface`, leaving the profile's shape. Where the mobile loading alone exceeds `c_new` the
+film is 0 and the surface stays darker than the update.
+
+No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d]: the
+observation is a multi-day composite that still shows the surface the fresh snow buried.
 
 Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, and whether an update was
 applied; `(0, 0, false)` when none was.
 """
 function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
-    grain_radius::Vector{Float64}, black_carbon::Vector{Float64},
-    black_carbon_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
+    grain_radius::Vector{Float64}, age::Vector{Float64}, impurity_effective::Vector{Float64},
+    impurity_effective_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
     (isfinite(cfs.albedo_observed) && mp.albedo_method === :GardnerSharp && !isempty(dz)) ||
         return (0.0, 0.0, false)
     density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return (0.0, 0.0, false)
+    age[1] < mp.albedo_update_snow_age_min && return (0.0, 0.0, false)
     albedo_under, _, mass_snow = _snow_over_firn_ice(dz, density, mp)
     z_we = mass_snow / DENSITY_WATER
     r0 = grain_radius[1]
-    c0 = surface_black_carbon(dz, density, black_carbon, black_carbon_retained, mp)
+    c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
     r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp)
     scale = r / r0
+    c_mobile = surface_impurity_effective(dz, density, impurity_effective, Zeros(length(dz)), mp)
+    impurity_effective_retained[1] = max(0.0, c - c_mobile) * mp.albedo_impurity_depth / dz[1]
     remaining = mp.albedo_impurity_depth
-    for i in eachindex(dz, density, grain_radius, black_carbon, black_carbon_retained)
+    for i in eachindex(dz, density, grain_radius)
         density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && break
-        black_carbon_retained[i] = max(0.0, c - black_carbon[i])
         grain_radius[i] = clamp(grain_radius[i] * scale, ALBEDO_UPDATE_RADIUS_RANGE...)
         remaining -= dz[i]
         remaining <= 0.0 && break
     end
     return (log(_ssa_of_radius(r)) - log(_ssa_of_radius(r0)),
-            log(c + BLACK_CARBON_UPDATE_OFFSET) - log(c0 + BLACK_CARBON_UPDATE_OFFSET), true)
+            log(c + IMPURITY_UPDATE_OFFSET) - log(c0 + IMPURITY_UPDATE_OFFSET), true)
 end

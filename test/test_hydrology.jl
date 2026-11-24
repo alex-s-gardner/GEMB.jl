@@ -12,8 +12,8 @@ function _drain_cols(; n=5, density=400.0, water=0.0, grain_radius=0.5, dz=0.1)
         0.5 * ones(n),            # grain_dendricity
         0.5 * ones(n),            # grain_sphericity
         zeros(n),                 # age
-        zeros(n),                 # black_carbon
-        zeros(n),                 # black_carbon_retained
+        zeros(n),                 # impurity_effective
+        zeros(n),                 # impurity_effective_retained
     )
 end
 
@@ -50,8 +50,8 @@ _hydro_state(; n=10) = (
     grain_dendricity=0.5 * ones(n),
     grain_sphericity=0.5 * ones(n),
     age=zeros(n),
-    black_carbon=zeros(n),
-    black_carbon_retained=zeros(n),
+    impurity_effective=zeros(n),
+    impurity_effective_retained=zeros(n),
     evaporation_condensation=0.0,
     melt_surface=0.0,
 )
@@ -392,8 +392,8 @@ end
             grain_dendricity=0.5 * ones(n),
             grain_sphericity=0.5 * ones(n),
             age=zeros(n),
-            black_carbon=zeros(n),
-            black_carbon_retained=zeros(n),
+            impurity_effective=zeros(n),
+            impurity_effective_retained=zeros(n),
             evaporation_condensation=0.0,
             melt_surface=0.0,
         )

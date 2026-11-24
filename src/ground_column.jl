@@ -42,16 +42,16 @@ end
 
 """
     _ground_state_vectors(mp, g, temperature, dz, density, water, grain_radius,
-                          grain_dendricity, grain_sphericity, age, black_carbon,
-                          black_carbon_retained, temperature_ground, water_ground) -> NamedTuple
+                          grain_dendricity, grain_sphericity, age, impurity_effective,
+                          impurity_effective_retained, temperature_ground, water_ground) -> NamedTuple
 
 Assemble the fixed-length column of the module preamble from the `ns` snow cells and the ground
 state (temperature [K] and unfrozen pore water [kg m-2] per ground cell). Throws when the snow
 exceeds its slots.
 """
 function _ground_state_vectors(mp::ModelParameters, g::GroundColumn, temperature, dz, density,
-    water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon,
-    black_carbon_retained, temperature_ground, water_ground)
+    water, grain_radius, grain_dendricity, grain_sphericity, age, impurity_effective,
+    impurity_effective_retained, temperature_ground, water_ground)
     ns = length(dz)
     ng = length(g.dz)
     S = ground_snow_slots(mp)
@@ -60,14 +60,14 @@ function _ground_state_vectors(mp::ModelParameters, g::GroundColumn, temperature
     N = S + ng
     out = (temperature=fill(NaN, N), dz=zeros(N), density=zeros(N), water=zeros(N),
         grain_radius=zeros(N), grain_dendricity=zeros(N), grain_sphericity=zeros(N),
-        age=zeros(N), black_carbon=zeros(N), black_carbon_retained=zeros(N), material=fill(MATERIAL_EMPTY, N))
+        age=zeros(N), impurity_effective=zeros(N), impurity_effective_retained=zeros(N), material=fill(MATERIAL_EMPTY, N))
     for i in 1:ns
         out.temperature[i] = temperature[i]; out.dz[i] = dz[i]; out.density[i] = density[i]
         out.water[i] = water[i]; out.grain_radius[i] = grain_radius[i]
         out.grain_dendricity[i] = grain_dendricity[i]
         out.grain_sphericity[i] = grain_sphericity[i]; out.age[i] = age[i]
-        out.black_carbon[i] = black_carbon[i]
-        out.black_carbon_retained[i] = black_carbon_retained[i]
+        out.impurity_effective[i] = impurity_effective[i]
+        out.impurity_effective_retained[i] = impurity_effective_retained[i]
         out.material[i] = MATERIAL_SNOW
     end
     solids = (1 - g.porosity) * mp.ground_solid_density
@@ -111,7 +111,7 @@ function _ground_state_split(state, g::GroundColumn)
     r = 1:ns
     snow = column_state(state.temperature[r], state.dz[r], state.density[r], state.water[r],
         state.grain_radius[r], state.grain_dendricity[r], state.grain_sphericity[r],
-        state.age[r], state.black_carbon[r], state.black_carbon_retained[r])
+        state.age[r], state.impurity_effective[r], state.impurity_effective_retained[r])
     rg = ns+1:ns+ng
     return snow, state.temperature[rg], state.water[rg]
 end
