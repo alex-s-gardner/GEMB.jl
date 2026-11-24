@@ -13,6 +13,9 @@ This is the restart contract. Every layer is required: `gemb` indexes them by na
 initial state, so a profile missing one fails on the first timestep rather than silently
 defaulting. `age` is part of the state even though no physics reads it — it is the column's only
 clock, and dropping it would restart every continuation's age at whatever the saved column held.
+`black_carbon` and `black_carbon_retained` are the per-layer equivalent impurity loadings whose sum
+the albedo reads, so a continuation without them would lose every loading an observed albedo has
+set.
 
 Exported so a caller that persists a column between runs (writing it to disk and reading it back
 later) can validate a restored profile against the set `gemb` actually requires, instead of
@@ -24,7 +27,8 @@ checking, and the validation would pass.
 output layout; recompute it with `dz2z(profile[:dz])` where needed.
 """
 const RESTART_LAYERS = (:dz, :temperature, :density, :water, :grain_radius,
-                        :grain_dendricity, :grain_sphericity, :age)
+                        :grain_dendricity, :grain_sphericity, :age, :black_carbon,
+                        :black_carbon_retained)
 
 """
     DERIVED_PARAMETERS
@@ -318,6 +322,8 @@ struct ColumnWorkspace
     runoff::Vector{Float64}       # runoff per cell [kg m-2]
     flux_dn::Vector{Float64}      # water flux across cell boundaries [kg m-2], m+1 entries
     flux_age::Vector{Float64}     # mass-weighted age of `flux_dn` [d], m+1 entries
+    impurity::Vector{Float64}     # mobile impurity mass per cell [ppmw · kg m-2]
+    impurity_retained::Vector{Float64} # retained impurity mass per cell [ppmw · kg m-2]
     # Index lists, emptied and refilled rather than sized, so they are outside the length contract
     # above and carry nothing between timesteps.
     to_delete::Vector{Int}
@@ -325,11 +331,12 @@ struct ColumnWorkspace
 end
 
 ColumnWorkspace() = ColumnWorkspace(Float64[], Float64[], Float64[], Bool[],
-    (Float64[] for _ in 1:9)..., Int[], Int[])
+    (Float64[] for _ in 1:11)..., Int[], Int[])
 
 _workspace_buffers(ws::ColumnWorkspace) =
     (ws.dzmin, ws.dzmax, ws.mass, ws.shortwave, ws.water_delta, ws.t_excess,
-     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age)
+     ws.water_excess, ws.freeze, ws.t_surplus, ws.runoff, ws.flux_dn, ws.flux_age,
+     ws.impurity, ws.impurity_retained)
 
 function _resize_workspace!(ws::ColumnWorkspace, n::Int)
     for buffer in _workspace_buffers(ws)
@@ -649,6 +656,23 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     black_carbon_snow::Float64 = 0.0
     black_carbon_ice::Float64 = 0.0
     cloud_fraction::Float64 = 0.1
+    # Snow depth [m] whose layers' impurity loading the albedo averages (see `surface_black_carbon`),
+    # and that an observed albedo updates (see `assimilate_albedo!`).
+    albedo_impurity_depth::Float64 = 0.02
+    # Prior standard deviations of the albedo update (see `assimilate_albedo!`), in ln(SSA) and
+    # ln(c + BLACK_CARBON_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
+    albedo_update_sigma_log_ssa::Float64 = 0.2
+    albedo_update_sigma_log_impurity::Float64 = 1.0
+    # Meltwater scavenging efficiencies `k` of CLM5 (Flanner et al., 2007): water leaving a cell
+    # carries impurity at `k` times the cell's concentration in ice plus liquid (see
+    # `calculate_melt`). 0 leaves all impurity at the melting surface; values above 1 are allowed.
+    # The mobile class (`black_carbon`, from snowfall) takes CLM5's 0.2 for hydrophilic black
+    # carbon, the top of the 10–20 % Doherty et al. (2013) measured in melting snow. The retained
+    # class (`black_carbon_retained`, set by an observed albedo) is the insoluble residue a melting
+    # surface keeps, and takes 0.02, CLM5's value for fine dust (0.01–0.03 for dust and
+    # hydrophobic black carbon).
+    impurity_scavenging_efficiency::Float64 = 0.2
+    impurity_scavenging_efficiency_retained::Float64 = 0.02
 
     # --- Output Controls ---
     output_frequency::Symbol = :all
@@ -803,7 +827,7 @@ Time-series surface meteorological forcing for GEMB, implemented as an
 date-range subsetting `cf[Ti(a .. b)]` and single-time selection `cf[Ti(At(t))]`
 — all returning a `ClimateForcing` (a sub-stack), never a scalar step.
 
-# Layers (16 time-series `DimArray`s sharing a common `Ti` dimension)
+# Layers (17 time-series `DimArray`s sharing a common `Ti` dimension)
 Required forcing: `temperature_air`, `pressure_air`, `precipitation`,
 `wind_speed`, `shortwave_downward`, `longwave_downward`, `vapor_pressure`.
 Time-varying model parameters (typically `Fill`-backed): `black_carbon_snow`,
@@ -818,6 +842,9 @@ when not supplied, and read under no other lower boundary.
 `snowfall_fraction` [-], the fraction of each step's precipitation that falls as snow, in
 `[0, 1]`; `Fill`-backed `NaN` when not supplied, which partitions precipitation on
 `mp.rain_temperature_threshold` instead (see [`snowfall_mass`](@ref)).
+`albedo_observed` [-], an observed broadband surface albedo in `(0, 1)` for the steps that have
+one; `Fill`-backed `NaN` when not supplied, and `NaN` at every step without an observation. Where
+finite it sets the near-surface snow state (see `assimilate_albedo!`).
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -858,17 +885,17 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 16 forcing layers. The first 13 are in positional-constructor order; `snow_drift`,
-# `temperature_ground` and `snowfall_fraction` are keyword-only and trailing, so every existing
-# 19-argument positional call site stays valid; forcing built without them carries a
-# `Fill`-backed zero drift layer and `Fill`-backed `NaN` ground-temperature and snowfall-fraction
-# layers.
+# The 17 forcing layers. The first 13 are in positional-constructor order; `snow_drift`,
+# `temperature_ground`, `snowfall_fraction` and `albedo_observed` are keyword-only and trailing,
+# so every existing 19-argument positional call site stays valid; forcing built without them
+# carries a `Fill`-backed zero drift layer and `Fill`-backed `NaN` ground-temperature,
+# snowfall-fraction and observed-albedo layers.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
-    :snow_drift, :temperature_ground, :snowfall_fraction,
+    :snow_drift, :temperature_ground, :snowfall_fraction, :albedo_observed,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -908,6 +935,9 @@ boundary.
 The 16th layer, `snowfall_fraction` [-], is keyword-only and defaults to `Fill`-backed `NaN`,
 the partition on `mp.rain_temperature_threshold`.
 
+The 17th layer, `albedo_observed` [-], is keyword-only and defaults to `Fill`-backed `NaN`, no
+observation at any step.
+
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
 forcing represents after any elevation adjustment), `elevation_native` (the source
@@ -945,7 +975,7 @@ function ClimateForcing(
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
     snow_drift=nothing, temperature_ground=nothing, snowfall_fraction=nothing,
-    accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
+    albedo_observed=nothing, accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
     climatology_window_start=nothing, climatology_window_stop=nothing,
@@ -965,12 +995,16 @@ function ClimateForcing(
         tdim = dims(temperature_air, Ti)
         snowfall_fraction = DimArray(Fill(NaN, length(tdim)), (tdim,))
     end
+    if albedo_observed === nothing
+        tdim = dims(temperature_air, Ti)
+        albedo_observed = DimArray(Fill(NaN, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        snow_drift, temperature_ground, snowfall_fraction,
+        snow_drift, temperature_ground, snowfall_fraction, albedo_observed,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -1051,7 +1085,26 @@ struct ClimateForcingStep
     # Fraction of the step's precipitation that falls as snow, or NaN to partition on
     # `mp.rain_temperature_threshold` (see `snowfall_mass`). NaN in every shorter form.
     snowfall_fraction::Float64
+    # Observed broadband surface albedo of the step, or NaN for none (see
+    # `assimilate_albedo!`). NaN in every shorter form.
+    albedo_observed::Float64
 end
+
+# 23-argument positional form: everything but the observed albedo, which is absent.
+ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction) =
+    ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction, NaN)
 
 # 22-argument positional form: everything but the snowfall fraction, which partitions on the
 # threshold.
@@ -1128,7 +1181,7 @@ function ClimateForcingStep(;
     shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0,
     accumulation_mean::Real=precipitation_mean,
     temperature_air_effective::Real=temperature_air_mean,
-    snow_drift::Real=0.0, snowfall_fraction::Real=NaN)
+    snow_drift::Real=0.0, snowfall_fraction::Real=NaN, albedo_observed::Real=NaN)
 
     return ClimateForcingStep(
         dt, temperature_air, pressure_air, precipitation, wind_speed,
@@ -1138,5 +1191,6 @@ function ClimateForcingStep(;
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
         accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction,
+        albedo_observed,
     )
 end

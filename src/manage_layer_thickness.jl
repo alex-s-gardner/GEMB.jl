@@ -1,5 +1,5 @@
 """
-    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool; dt, n_target=length(dz))
+    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, mp::ModelParameters, verbose::Bool; dt, n_target=length(dz))
 
 Return every cell to its per-cell thickness band, then restore the column to exactly
 `n_target` cells.
@@ -34,7 +34,7 @@ The Dirichlet temperature boundary condition is re-imposed at the bottom; the en
 requires is the only term returned in `E_added`.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
-grain_sphericity, age, E_added)`. Arrays are mutated in place and their
+grain_sphericity, age, black_carbon, black_carbon_retained, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
 
 Two keywords serve the snow over the ground of `lower_boundary = :ground`, whose cell count
@@ -54,12 +54,13 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
+    black_carbon::Vector{Float64}, black_carbon_retained::Vector{Float64},
     mp::ModelParameters, verbose::Bool; dt::Float64, n_target::Int=length(dz),
     workspace::ColumnWorkspace=ColumnWorkspace(), n_max::Int=0,
     dirichlet_bottom::Bool=true)
 
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age)
+        grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained)
 
     if verbose
         M_total_initial, E_total_initial = column_mass_energy(cols, mp)
@@ -165,7 +166,7 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    age, E_added
+    age, black_carbon, black_carbon_retained, E_added
 end
 
 # Whether a surface cell thinner than its band is kept as a layer of its own: it is snow, holds

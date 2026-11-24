@@ -73,7 +73,8 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
     f = (cf.temperature_air, cf.pressure_air, cf.precipitation, cf.wind_speed,
         cf.shortwave_downward, cf.longwave_downward, cf.vapor_pressure, cf.black_carbon_snow,
         cf.black_carbon_ice, cf.cloud_optical_thickness, cf.solar_zenith_angle,
-        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction)
+        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction,
+        cf.albedo_observed)
     sums = Dict(k => 0.0 for k in (:melt, :runoff, :refreeze, :evaporation_condensation,
         :shortwave_net, :longwave_net, :heat_flux_sensible, :heat_flux_latent, :heat_flux_basal,
         :albedo_broadband, :blowing_snow, :temperature_air, :precipitation, :rain,
@@ -91,7 +92,7 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
             f[7][i], cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
             cf.temperature_observation_height, cf.wind_observation_height, f[8][i], f[9][i],
             f[10][i], f[11][i], f[12][i], f[13][i], cf.accumulation_mean,
-            cf.temperature_air_effective, f[14][i], f[15][i])
+            cf.temperature_air_effective, f[14][i], f[15][i], f[16][i])
         snow, temperature_ground, water_ground, flux = gemb_core_ground(snow, temperature_ground,
             water_ground, g, cfs, model_parameters, verbose; thermal_workspace, column_workspace)
 
@@ -127,7 +128,7 @@ function _gemb_ground(profile::DimStack, climate_forcing::ClimateForcing, mp::Mo
             end
             col = _ground_state_vectors(mp, g, snow.temperature, snow.dz, snow.density,
                 snow.water, snow.grain_radius, snow.grain_dendricity, snow.grain_sphericity,
-                snow.age, temperature_ground, water_ground)
+                snow.age, snow.black_carbon, snow.black_carbon_retained, temperature_ground, water_ground)
             for l in GROUND_PROFILE_LAYERS
                 parent(output[l])[:, oi] .= getfield(col, l)
             end
@@ -171,7 +172,7 @@ function _remove_snow(profile::DimStack, mp::ModelParameters)
     full = NamedTuple(l => Vector{Float64}(parent(profile[l])) for l in GROUND_PROFILE_LAYERS)
     _, Tg, Wg = _ground_state_split(full, g)
     col = _ground_state_vectors(mp, g, Float64[], Float64[], Float64[], Float64[], Float64[],
-        Float64[], Float64[], Float64[], Tg, Wg)
+        Float64[], Float64[], Float64[], Float64[], Float64[], Tg, Wg)
     zdim = Z(1:length(col.dz); metadata=cf_layer_index_attributes())
     layers = NamedTuple(l => DimArray(getfield(col, l), (zdim,)) for l in GROUND_PROFILE_LAYERS)
     return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))

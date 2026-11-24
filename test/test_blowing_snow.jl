@@ -23,7 +23,7 @@ _drift_cols(; dz=[0.1, 0.2, 0.3], density=[150.0, 200.0, 250.0],
     grain_radius=[0.15, 0.3, 0.5], dendricity=zeros(3), sphericity=fill(0.5, 3),
     age=zeros(3)) = GEMB.column_state(
     copy(temperature), copy(dz), copy(density), copy(water), copy(grain_radius),
-    copy(dendricity), copy(sphericity), copy(age))
+    copy(dendricity), copy(sphericity), copy(age), zero(dz), zero(dz))
 
 # A windy, cold, dry step. At `wind_speed = 15` the 5 m gust speed is ~17 m s-1, well above the
 # ~12.4 m s-1 at which every layer with non-negative mobility drifts, so the scheme is

@@ -123,6 +123,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         snow_drift=snow_drift_forcing,
         temperature_ground=climate_forcing.temperature_ground,
         snowfall_fraction=climate_forcing.snowfall_fraction,
+        albedo_observed=climate_forcing.albedo_observed,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -164,6 +165,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_dendricity = Vector{Float64}(profile[:grain_dendricity]),
         grain_sphericity = Vector{Float64}(profile[:grain_sphericity]),
         age = Vector{Float64}(profile[:age]),
+        black_carbon = Vector{Float64}(profile[:black_carbon]),
+        black_carbon_retained = Vector{Float64}(profile[:black_carbon_retained]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -215,6 +218,10 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         heat_flux_latent=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         heat_flux_basal=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_broadband=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        black_carbon_surface=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_dlog_ssa=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_dlog_impurity=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_update_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -244,6 +251,8 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         grain_dendricity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         grain_sphericity=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
         age=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        black_carbon=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
+        black_carbon_retained=DimArray(fill(NaN, profile_size, n_outputs), (z_dim, ti_dim)),
     )
 
     # Optional layers, appended last so the base stack's layer order — and therefore the
@@ -304,6 +313,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.cloud_fraction,
         climate_forcing.snow_drift,
         climate_forcing.snowfall_fraction,
+        climate_forcing.albedo_observed,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
@@ -430,7 +440,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     f_black_carbon_ice::AbstractVector, f_cloud_optical_thickness::AbstractVector,
     f_solar_zenith_angle::AbstractVector, f_shortwave_downward_diffuse::AbstractVector,
     f_cloud_fraction::AbstractVector, f_snow_drift::AbstractVector,
-    f_snowfall_fraction::AbstractVector,
+    f_snowfall_fraction::AbstractVector, f_albedo_observed::AbstractVector,
     temperature_air_mean::Float64, wind_speed_mean::Float64,
     precipitation_mean::Float64, temperature_observation_height::Float64,
     wind_observation_height::Float64,
@@ -453,6 +463,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_lhf = parent(output[:heat_flux_latent])
     out_bhf = parent(output[:heat_flux_basal])
     out_albedo_broadband = parent(output[:albedo_broadband])
+    out_black_carbon_surface = parent(output[:black_carbon_surface])
+    out_albedo_update_dlog_ssa = parent(output[:albedo_update_dlog_ssa])
+    out_albedo_update_dlog_impurity = parent(output[:albedo_update_dlog_impurity])
+    out_albedo_update_count = parent(output[:albedo_update_count])
     out_fac = parent(output[:firn_air_content])
     out_fac10 = parent(output[:firn_air_content_10m])
     out_fac20 = parent(output[:firn_air_content_20m])
@@ -474,6 +488,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_grain_dendricity = parent(output[:grain_dendricity])
     out_grain_sphericity = parent(output[:grain_sphericity])
     out_age = parent(output[:age])
+    out_black_carbon = parent(output[:black_carbon])
+    out_black_carbon_retained = parent(output[:black_carbon_retained])
     # Empty when the layer was not allocated, which is what gates the write below. Empty
     # rather than `nothing` for the same reason as `NO_VISCOSITY`: this is a local in the
     # time loop, so a `Union{Nothing,Matrix{Float64}}` would leave its element type
@@ -497,6 +513,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     cum_lhf = 0.0
     cum_bhf = 0.0
     cum_albedo_broadband = 0.0
+    cum_black_carbon_surface = 0.0
+    cum_albedo_update_dlog_ssa = 0.0
+    cum_albedo_update_dlog_impurity = 0.0
+    cum_albedo_update_count = 0.0
     cum_densification_compaction = 0.0
     cum_densification_melt = 0.0
     cum_strain_thinning = 0.0
@@ -554,7 +574,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             accumulation_mean,
             temperature_air_effective,
             f_snow_drift[i],
-            f_snowfall_fraction[i])
+            f_snowfall_fraction[i],
+            f_albedo_observed[i])
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
@@ -586,6 +607,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
         cum_lhf += flux.heat_flux_latent
         cum_bhf += flux.heat_flux_basal
         cum_albedo_broadband += flux.albedo_broadband
+        cum_black_carbon_surface += flux.black_carbon_surface
+        cum_albedo_update_dlog_ssa += flux.albedo_update_dlog_ssa
+        cum_albedo_update_dlog_impurity += flux.albedo_update_dlog_impurity
+        cum_albedo_update_count += flux.albedo_update_count
         cum_densification_compaction += flux.densification_from_compaction
         cum_densification_melt += flux.densification_from_melt
         # Metres of thinning, sign-flipped so a divergent column reports a positive number.
@@ -644,6 +669,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_lhf[oi] = cum_lhf / cum_count
                 out_bhf[oi] = cum_bhf / cum_count
                 out_albedo_broadband[oi] = cum_albedo_broadband / cum_count
+                out_black_carbon_surface[oi] = cum_black_carbon_surface / cum_count
+                out_albedo_update_dlog_ssa[oi] = cum_albedo_update_dlog_ssa
+                out_albedo_update_dlog_impurity[oi] = cum_albedo_update_dlog_impurity
+                out_albedo_update_count[oi] = cum_albedo_update_count
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_fac10[oi] = cum_firn_air_content_10m / cum_count
                 out_fac20[oi] = cum_firn_air_content_20m / cum_count
@@ -692,6 +721,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_grain_dendricity[k, oi] = state.grain_dendricity[k]
                 out_grain_sphericity[k, oi] = state.grain_sphericity[k]
                 out_age[k, oi] = state.age[k]
+                out_black_carbon[k, oi] = state.black_carbon[k]
+                out_black_carbon_retained[k, oi] = state.black_carbon_retained[k]
             end
 
             # From `flux`, not `state`: viscosity is a per-step diagnostic of the
@@ -720,6 +751,10 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             cum_lhf = 0.0
             cum_bhf = 0.0
             cum_albedo_broadband = 0.0
+            cum_black_carbon_surface = 0.0
+            cum_albedo_update_dlog_ssa = 0.0
+            cum_albedo_update_dlog_impurity = 0.0
+            cum_albedo_update_count = 0.0
             cum_densification_compaction = 0.0
             cum_densification_melt = 0.0
             cum_strain_thinning = 0.0

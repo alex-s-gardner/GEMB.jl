@@ -2,14 +2,10 @@
 Shared vertical-grid primitives.
 
 GEMB's column is Lagrangian: cells are created by accumulation and splitting, and
-destroyed by melt-out and merging. Historically each of those events edited the nine
-per-cell state vectors independently at six separate call sites, so the structural
-bookkeeping was duplicated nine ways at each site and adding a tenth state field meant
-finding and editing all six.
-
-Everything structural now goes through the primitives below, which take the vectors as a
-`ColumnState` NamedTuple and iterate over it generically, so the *structural* bookkeeping
-(shifting, merging, splitting) is written once instead of once per field per site.
+destroyed by melt-out and merging. Everything structural goes through the primitives below,
+which take the per-cell state vectors as a `ColumnState` NamedTuple and iterate over it
+generically, so the *structural* bookkeeping (shifting, merging, splitting) is written once
+instead of once per field per site.
 
 This removes the per-field duplication within each site, not the number of sites: adding a
 field still touches [`column_state`](@ref), the physics that fills it, the
@@ -47,11 +43,18 @@ whole-cell jumps a drop/create scheme would produce.
 
 """
     column_state(temperature, dz, density, water, grain_radius,
-                 grain_dendricity, grain_sphericity, age)
+                 grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained)
 
-Bundle the eight per-cell state vectors so the grid primitives can operate on all of them
-generically. `values(...)` of the result is a homogeneous `NTuple{8,Vector{Float64}}`, so
+Bundle the ten per-cell state vectors so the grid primitives can operate on all of them
+generically. `values(...)` of the result is a homogeneous `NTuple{10,Vector{Float64}}`, so
 the generic loops below stay type-stable and fully unrolled.
+
+`black_carbon` and `black_carbon_retained` [ppmw] are the two classes of equivalent
+light-absorbing-impurity loading of each cell, whose sum is the `c` of the Gardner and Sharp
+(2010) albedo ([`calculate_albedo`](@ref)): the mobile impurity snowfall brings, and the
+retained, poorly scavenged impurity an observed albedo sets (see [`calculate_melt`](@ref) and
+[`assimilate_albedo!`](@ref)). Both are intensive and carried by the ice matrix, so they mix on
+matrix mass ([`mix_black_carbon`](@ref)).
 
 Albedo is deliberately absent: every albedo method is diagnostic in the current column
 state (see [`calculate_albedo`](@ref)), so there is no per-cell albedo to carry through a
@@ -62,9 +65,9 @@ The structural primitives (`open_slot!`, `close_slot!`) need no change when a fi
 cannot be inferred. See the module preamble on why the bundle is rebuilt per call site.
 """
 @inline column_state(temperature, dz, density, water, grain_radius,
-    grain_dendricity, grain_sphericity, age) =
+    grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained) =
     (; temperature, dz, density, water, grain_radius,
-       grain_dendricity, grain_sphericity, age)
+       grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained)
 
 """
     mix_age(age1, M1, age2, M2) -> age
@@ -100,6 +103,38 @@ is age-neutral).
 """
 @inline dilute_age(age::Float64, mass_old::Float64, mass_added::Float64) =
     mass_added <= 0.0 ? age : mix_age(age, mass_old, 0.0, mass_added)
+
+"""
+    mix_black_carbon(c1, M1, c2, M2) -> c
+
+Equivalent impurity loading [ppmw] of matrix mass `M1` at loading `c1` combined with `M2` at
+`c2`: the matrix-mass-weighted mean `c1 + f·(c2 − c1)`, `f = M2/(M1 + M2)`. The impurity is
+carried by the ice matrix, not by pore water, so the weights are matrix masses `dz·density`.
+
+Returns `c1` bit for bit when `c1 == c2`, so a column at a uniform loading stays at exactly that
+loading through every merge, and `c1` when the total mass is not positive.
+"""
+@inline function mix_black_carbon(c1::Float64, M1::Float64, c2::Float64, M2::Float64)
+    c1 == c2 && return c1
+    M = M1 + M2
+    M <= 0.0 && return c1
+    return c1 + (M2 / M) * (c2 - c1)
+end
+
+"""
+    mix_impurities!(cols, i, i_target, M_i, M_target)
+
+Set both impurity loadings of cell `i_target` to the matrix-mass-weighted mean of cells `i` (matrix
+mass `M_i`) and `i_target` (`M_target`), as a merge of the two requires ([`mix_black_carbon`](@ref)).
+"""
+@inline function mix_impurities!(cols::NamedTuple, i::Int, i_target::Int, M_i::Float64,
+    M_target::Float64)
+    cols.black_carbon[i_target] = mix_black_carbon(cols.black_carbon[i], M_i,
+        cols.black_carbon[i_target], M_target)
+    cols.black_carbon_retained[i_target] = mix_black_carbon(cols.black_carbon_retained[i], M_i,
+        cols.black_carbon_retained[i_target], M_target)
+    return nothing
+end
 
 """
     open_slot!(cols, i)
@@ -161,6 +196,9 @@ is added in. Deliberately *not* the grain-property convention above: inheriting 
 cell's age would discard the older cell's residence time entirely and make deep age drift
 young with every merge.
 
+`black_carbon` and `black_carbon_retained` are mass-weighted on **matrix** mass `M_i`/`M_target`
+([`mix_black_carbon`](@ref)), so the impurity mass `Σ c·dz·density` of each class is conserved.
+
 This performs only the physics of the merge. The now-redundant cell `i` still occupies a
 slot; the caller removes it with [`close_slot!`](@ref), either immediately or in a batch.
 """
@@ -179,6 +217,7 @@ slot; the caller removes it with [`close_slot!`](@ref), either immediately or in
         # which needs each cell's pore water separately.
         cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
             cols.age[i_target], M_target + cols.water[i_target])
+        mix_impurities!(cols, i, i_target, M_i, M_target)
 
         cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
         cols.density[i_target] = M_new / cols.dz[i_target]
@@ -353,7 +392,7 @@ end
     merge_snow_pair!(cols, i, i_target, M_i, M_target, mp) -> M_new
 
 Fold snow cell `i` into snow cell `i_target` as [`merge_pair!`](@ref) does (mass, enthalpy, pore
-water and thickness summed, age mass-weighted), but with the grain state of the two mixed by
+water and thickness summed, age and impurity loadings mass-weighted), but with the grain state of the two mixed by
 [`mix_grains`](@ref) instead of taken from cell `i`.
 """
 @inline function merge_snow_pair!(cols::NamedTuple, i::Int, i_target::Int,
@@ -369,6 +408,7 @@ water and thickness summed, age mass-weighted), but with the grain state of the 
             independent_grain_radius(mp))
     cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
         cols.age[i_target], M_target + cols.water[i_target])
+    mix_impurities!(cols, i, i_target, M_i, M_target)
     cols.dz[i_target] = cols.dz[i] + cols.dz[i_target]
     cols.density[i_target] = M_new / cols.dz[i_target]
     cols.water[i_target] = cols.water[i] + cols.water[i_target]
@@ -381,7 +421,7 @@ end
 Fold snow cell `i` into firn or ice cell `i_target` at the firn or ice cell's density: its
 thickness grows by `M_i/density[i_target]`, so its density, grain state and the albedo
 [`calculate_albedo`](@ref) reads from that density are unchanged. Mass, enthalpy and pore water
-are conserved and age is mass-weighted, as in [`merge_pair!`](@ref); the column loses the snow's
+are conserved and age and impurity loadings are mass-weighted, as in [`merge_pair!`](@ref); the column loses the snow's
 pore space, which [`trim_bottom!`](@ref) makes up at the base.
 
 Snow is not aggregated with firn or ice (Lafaysse et al., 2026, p. 6279). A surface snow layer
@@ -396,6 +436,7 @@ the firn or ice albedo it had, rather than a diluted density that would read as 
         cols.temperature[i], M_i, cols.temperature[i_target], M_target)
     cols.age[i_target] = mix_age(cols.age[i], M_i + cols.water[i],
         cols.age[i_target], M_target + cols.water[i_target])
+    mix_impurities!(cols, i, i_target, M_i, M_target)
     cols.dz[i_target] += M_i / cols.density[i_target]
     cols.water[i_target] = cols.water[i] + cols.water[i_target]
     return M_new
@@ -407,7 +448,7 @@ end
 Split cell `i` into two cells of half its thickness, conserving mass and energy exactly.
 
 Thickness and pore water are halved (both extensive); density, temperature, grain
-properties and age are intensive and so are simply duplicated. The result occupies
+properties, age and both impurity loadings are intensive and so are simply duplicated. The result occupies
 indices `i` and `i+1`, and the column grows by one cell.
 """
 @inline function split_cell!(cols::NamedTuple, i::Int)
@@ -672,7 +713,7 @@ Accreted material inherits the bottom cell's properties (the column below is unr
 `density[n]`, and `temperature[n]`, which is the Dirichlet-pinned basal boundary. Pore water
 scales with the thickness change; grain properties are intensive and unchanged.
 
-`age[n]` is untouched, so both regimes are handled by doing nothing: removal is proportional
+`age[n]` and the impurity loadings of cell `n` are untouched, so both regimes are handled by doing nothing: removal is proportional
 (age-neutral), and accreted material inherits `age[n]` like `density` and `temperature`. The
 consequence is that under sustained ablation the deepest cell's age is a lower bound on its
 true residence time rather than a measurement of it.
@@ -810,7 +851,7 @@ law in closed form.
 Pore `water` [kg m-2] is a per-unit-area quantity, so it scales by the same factor as the
 lateral area.
 
-`age` is untouched in both directions. Under divergence every cell loses the same *fraction*
+`age` and the impurity loadings are untouched in both directions. Under divergence every cell loses the same *fraction*
 of its mass, which leaves its mean age unchanged; under convergence the material advected in
 laterally is neighbouring firn at the same depth, so taking the local `age[i]` is the
 consistent choice.

@@ -73,7 +73,7 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
     column_workspace::ColumnWorkspace, melt::Float64, runoff::Float64, refreeze::Float64)
 
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age) = cols
+       grain_sphericity, age, black_carbon, black_carbon_retained) = cols
     h_water = specific_enthalpy_water(mp)
     rain = 0.0
 
@@ -95,16 +95,17 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
             push!(temperature, snowfall_temperature(cfs)); push!(dz, snow / ρ_new)
             push!(density, ρ_new); push!(water, 0.0); push!(grain_radius, r_new)
             push!(grain_dendricity, d_new); push!(grain_sphericity, s_new); push!(age, 0.0)
+            push!(black_carbon, cfs.black_carbon_snow); push!(black_carbon_retained, 0.0)
             rain = cfs.precipitation - snow
             rain > 0 && add_rain_to_surface!(temperature, dz, density, water, age, rain, cfs, mp)
         end
     else
         temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, rain = calculate_accumulation(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, cfs, mp, verbose)
+            age, black_carbon, black_carbon_retained, rain = calculate_accumulation(temperature, dz, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, cfs, mp, verbose)
     end
     cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
+        grain_sphericity, age, black_carbon, black_carbon_retained)
 
     # 7. Blowing snow, melt and percolation
     mass_blowing_snow = 0.0; E_blowing_snow = 0.0
@@ -117,12 +118,12 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
     percolation_depth = 0.0
     if !isempty(dz)
         temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, melt_snow, melt_surface, runoff_snow, refreeze_snow, percolation_depth =
+            age, black_carbon, black_carbon_retained, melt_snow, melt_surface, runoff_snow, refreeze_snow, percolation_depth =
             calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity,
-                grain_sphericity, age, mp, verbose; workspace=column_workspace, basal_surplus)
+                grain_sphericity, age, black_carbon, black_carbon_retained, mp, verbose; workspace=column_workspace, basal_surplus)
         melt += melt_snow; runoff += runoff_snow; refreeze += refreeze_snow
         runoff += apply_lateral_drainage!(column_state(temperature, dz, density, water,
-            grain_radius, grain_dendricity, grain_sphericity, age), cfs.dt, mp)
+            grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained), cfs.dt, mp)
     end
     E_ground_added += basal_surplus[]
 
@@ -130,8 +131,8 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
     viscosity = NO_VISCOSITY
     if !isempty(dz)
         temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-            age, _ = manage_layer_thickness(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age, mp, verbose; dt=cfs.dt,
+            age, black_carbon, black_carbon_retained, _ = manage_layer_thickness(temperature, dz, density, water, grain_radius,
+                grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, mp, verbose; dt=cfs.dt,
                 n_target=length(dz), workspace=column_workspace,
                 n_max=ground_snow_slots(mp), dirichlet_bottom=false)
         viscosity = mp.output_viscosity ? Vector{Float64}(undef, length(dz)) : NO_VISCOSITY
@@ -139,7 +140,7 @@ function _snow_after_thermal!(cols::NamedTuple, EC::Float64, EC_liquid::Float64,
             grain_dendricity, grain_sphericity, viscosity)
     end
     snow_new = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
+        grain_sphericity, age, black_carbon, black_carbon_retained)
 
     return snow_new, melt, runoff, refreeze, rain, E_vapor, EC_ground, E_ground_added,
         mass_blowing_snow, E_blowing_snow, melt_surface, percolation_depth, viscosity
@@ -192,7 +193,7 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
     column_workspace::ColumnWorkspace=ColumnWorkspace())
 
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age) = snow
+       grain_sphericity, age, black_carbon, black_carbon_retained) = snow
     ng = length(g.dz)
     T_bottom = temperature_ground[ng]
     age .+= cfs.dt / 86400.0
@@ -215,10 +216,12 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
                 grain_dendricity, grain_sphericity, cfs, mp)
     end
     cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age)
+        grain_sphericity, age, black_carbon, black_carbon_retained)
 
-    # 2. Albedo
-    albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius, cfs, mp)
+    # 2. Albedo, after updating the near-surface snow from an observed albedo where there is one.
+    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp)
+    albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius,
+        black_carbon, black_carbon_retained, cfs, mp)
 
     # 4 (set-up). Snow lighter than the least layer mass is solved inside the top ground node.
     lumped = false
@@ -266,7 +269,7 @@ function gemb_core_ground(snow::NamedTuple, temperature_ground::Vector{Float64},
     β = ns > 0 ? 1.0 : mp.ground_evaporation_factor
 
     snow_solve = lumped ? column_state(Float64[], Float64[], Float64[], Float64[], Float64[],
-        Float64[], Float64[], Float64[]) : cols
+        Float64[], Float64[], Float64[], Float64[], Float64[]) : cols
     longwave_upward, heat_flux_sensible, heat_flux_latent, heat_flux_basal, EC, EC_liquid,
         heat_flux_ground, refreeze_thermal = _thermal_solve_ground!(snow_solve.temperature,
             snow_solve.dz, snow_solve.density, snow_solve.water, gn, shortwave_flux, sfc,

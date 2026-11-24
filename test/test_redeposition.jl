@@ -30,7 +30,7 @@ _rd_cols(; dz=[0.05, 0.05, 0.1, 0.2], density=[150.0, 180.0, 250.0, 500.0],
     water=zeros(4), grain_radius=[0.05, 0.05, 0.2, 0.4], dendricity=[1.0, 1.0, 0.0, 0.0],
     sphericity=fill(0.5, 4)) = GEMB.column_state(fill(253.0, length(dz)), copy(dz),
     copy(density), copy(water), copy(grain_radius), copy(dendricity), copy(sphericity),
-    zeros(length(dz)))
+    zeros(length(dz)), zero(dz), zero(dz))
 
 # The untapered scheme at Keenan et al.'s 10 m fetch, the setting every expected value below is
 # written for; the GEMB defaults (`CROCUS_FIRN_WIND_PACKING`) are tested at the end.

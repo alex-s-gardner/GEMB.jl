@@ -48,6 +48,9 @@ Create a `ClimateForcing` struct from time-series vectors.
   `[0, 1]`, for example from a humidity-dependent phase model. `nothing` (the default)
   partitions precipitation on `rain_temperature_threshold`. Also used to derive
   `accumulation_mean`.
+- `albedo_observed`: Optional per-timestep observed broadband surface albedo [-], in `(0, 1)`
+  where finite and `NaN` at steps without an observation. `nothing` (the default) leaves the
+  layer at `NaN`. Read by `assimilate_albedo!`.
 - `temperature_ground`: Optional per-timestep temperature [K] of the fixed-temperature
   reservoir at the base of the snow under `lower_boundary = :prescribed`, typically a measured
   near-surface soil temperature. `nothing` (the default) leaves the layer at `NaN`; it is read
@@ -79,6 +82,7 @@ function initialize_forcing(
     snow_drift::Union{Nothing,AbstractVector{<:Real}}=nothing,
     temperature_ground::Union{Nothing,AbstractVector{<:Real}}=nothing,
     snowfall_fraction::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    albedo_observed::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
@@ -123,6 +127,11 @@ function initialize_forcing(
     if snowfall_fraction !== nothing
         @assert length(snowfall_fraction) == n "All input variables must have the same size."
         @assert all(f -> 0 <= f <= 1, snowfall_fraction) "snowfall_fraction values must be in [0, 1]."
+    end
+    # NaN marks a step without an observation.
+    if albedo_observed !== nothing
+        @assert length(albedo_observed) == n "All input variables must have the same size."
+        @assert all(a -> isnan(a) || 0 < a < 1, albedo_observed) "albedo_observed values must be in (0, 1), or NaN where there is no observation."
     end
 
     # Set defaults for metadata with warnings
@@ -229,6 +238,8 @@ function initialize_forcing(
                            DimArray(Float64.(temperature_ground), (tdim,)),
         snowfall_fraction=snowfall_fraction === nothing ? nothing :
                           DimArray(Float64.(snowfall_fraction), (tdim,)),
+        albedo_observed=albedo_observed === nothing ? nothing :
+                        DimArray(Float64.(albedo_observed), (tdim,)),
         accumulation_mean=Float64(accumulation_mean),
         temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
@@ -388,6 +399,7 @@ function initialize_forcing(stack::DimStack)
     temperature_ground = haskey(stack, :temperature_ground) ?
                          parent(stack[:temperature_ground]) : nothing
     snowfall_fraction = haskey(stack, :snowfall_fraction) ? parent(stack[:snowfall_fraction]) : nothing
+    albedo_observed = haskey(stack, :albedo_observed) ? parent(stack[:albedo_observed]) : nothing
 
     # Extract required metadata
     meta = metadata(stack)
@@ -467,6 +479,7 @@ function initialize_forcing(stack::DimStack)
         snow_drift = snow_drift,
         temperature_ground = temperature_ground,
         snowfall_fraction = snowfall_fraction,
+        albedo_observed = albedo_observed,
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,

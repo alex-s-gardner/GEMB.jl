@@ -81,7 +81,7 @@ two flag paths clamp `cf.temperature_air_mean` (with a warning) before filling.
 
 Returns a DimStack with Z dimension containing:
 - dz, temperature, density, water, grain_radius,
-  grain_dendricity, grain_sphericity, age
+  grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained
 
 `age` [d] follows `mp.initialize_age`. Under `:steady_state` (the default) it is the
 residence time the march itself integrated — the accumulated burial time at each depth,
@@ -91,6 +91,9 @@ first timestep instead of only after a multi-century spinup has flushed the colu
 what the flag paths do regardless (`constant_density` discards the march's density, so
 its age describes a column that was replaced). Nothing in the physics reads `age`, so this
 choice is output-only.
+
+`black_carbon` [ppmw] is `mp.black_carbon_snow` in every cell, the loading new snow is deposited
+with, and `black_carbon_retained` is 0, on every path.
 """
 function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     constant_density::Bool=false, constant_temperature::Bool=false,
@@ -178,6 +181,9 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
     # because that path discards the march's density, and the marched age describes the
     # firn column the march built, not the block of ice this flag substitutes for it.
     age = (constant_density || mp.initialize_age === :zero) ? zeros(m) : ss.age
+    # Every layer starts at the background loading new snow is deposited with, none retained.
+    black_carbon = fill(mp.black_carbon_snow, m)
+    black_carbon_retained = zeros(m)
 
     # Create Z dimension
     zdim = Z(1:m; metadata=cf_layer_index_attributes())
@@ -194,6 +200,8 @@ function initialize_profile(mp::ModelParameters, cf::ClimateForcing;
         grain_dendricity=DimArray(grain_dendricity, (zdim,)),
         grain_sphericity=DimArray(grain_sphericity, (zdim,)),
         age=DimArray(age, (zdim,)),
+        black_carbon=DimArray(black_carbon, (zdim,)),
+        black_carbon_retained=DimArray(black_carbon_retained, (zdim,)),
     )
 
     # Same CF attributes a profile extracted from `gemb` output carries (`gemb_profile`),
@@ -240,6 +248,8 @@ function _uniform_ice_profile(mp::ModelParameters, T_mean::Real)
         grain_dendricity=DimArray(zeros(m), (zdim,)),
         grain_sphericity=DimArray(zeros(m), (zdim,)),
         age=DimArray(zeros(m), (zdim,)),
+        black_carbon=DimArray(fill(mp.black_carbon_snow, m), (zdim,)),
+        black_carbon_retained=DimArray(zeros(m), (zdim,)),
     )
     return DimStack(layers; layermetadata=cf_layermetadata(layers; time_axis=false))
 end

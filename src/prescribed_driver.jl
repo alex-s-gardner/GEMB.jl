@@ -25,7 +25,7 @@ slots. The profile carries the `RESTART_LAYERS` and `material`.
 function initialize_profile_prescribed(mp::ModelParameters)
     validate_parameters(mp)
     e = Float64[]
-    state = _ground_state_vectors(mp, _no_ground(mp), e, e, e, e, e, e, e, e, e, e)
+    state = _ground_state_vectors(mp, _no_ground(mp), e, e, e, e, e, e, e, e, e, e, e, e)
     zdim = Z(1:length(state.dz); metadata=cf_layer_index_attributes())
     layers = NamedTuple(l => DimArray(getfield(state, l), (zdim,))
                         for l in (RESTART_LAYERS..., :material))
@@ -90,7 +90,8 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
     f = (cf.temperature_air, cf.pressure_air, cf.precipitation, cf.wind_speed,
         cf.shortwave_downward, cf.longwave_downward, cf.vapor_pressure, cf.black_carbon_snow,
         cf.black_carbon_ice, cf.cloud_optical_thickness, cf.solar_zenith_angle,
-        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction)
+        cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction,
+        cf.albedo_observed)
     sum_keys = (:melt, :runoff, :refreeze, :evaporation_condensation, :shortwave_net,
         :longwave_net, :heat_flux_sensible, :heat_flux_latent, :heat_flux_basal,
         :albedo_broadband, :blowing_snow, :temperature_air, :precipitation, :rain,
@@ -110,7 +111,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
             f[7][i], cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
             cf.temperature_observation_height, cf.wind_observation_height, f[8][i], f[9][i],
             f[10][i], f[11][i], f[12][i], f[13][i], cf.accumulation_mean,
-            cf.temperature_air_effective, f[14][i], f[15][i])
+            cf.temperature_air_effective, f[14][i], f[15][i], f[16][i])
         snow, flux = gemb_core_prescribed(snow, T_base[i], cfs, model_parameters, verbose;
             thermal_workspace, column_workspace)
         # The base is an argument of the step, not a cell: within a step it is this step's
@@ -146,7 +147,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
             parent(output[:snow_water_equivalent])[oi] = column_mass(snow)
             col = _ground_state_vectors(mp, g, snow.temperature, snow.dz, snow.density,
                 snow.water, snow.grain_radius, snow.grain_dendricity, snow.grain_sphericity,
-                snow.age, e, e)
+                snow.age, snow.black_carbon, snow.black_carbon_retained, e, e)
             for l in GROUND_PROFILE_LAYERS
                 parent(output[l])[:, oi] .= getfield(col, l)
             end

@@ -107,6 +107,60 @@ affects the budget checks. `dz` itself is rebuilt as `M ./ density` at the end o
 end
 
 """
+    _scavenge_impurities!(black_carbon, impurity, M, water, flux_dn, runoff, k; basal_leaves)
+
+Move impurity with the water that left each cell this timestep and set `black_carbon` [ppmw]
+from the result, following the meltwater scavenging of CLM5 (Flanner et al., 2007):
+
+    Δmᵢ = k · (qᵢ₋₁ cᵢ₋₁ − qᵢ cᵢ),   cᵢ = mᵢ / (Mᵢ + wᵢ)
+
+`impurity[i]` [ppmw · kg m-2] is the impurity mass of cell `i` before this step's melt (melting
+ice leaves its impurity in the cell), `M` and `water` [kg m-2] the cell's matrix and pore water
+after percolation, and `qᵢ = flux_dn[i+1] + runoff[i]` the water that left it. Cells are swept
+from the top, so a cell's outflow is computed after the impurity arriving from above is added,
+and is capped at the cell's whole load. The part carried by `flux_dn[i+1]` enters cell `i+1`,
+and the part carried by `runoff[i]` leaves the column. What leaves the deepest cell leaves the
+column when `basal_leaves`, and otherwise stays in the deepest cell with matrix (the water is
+ponded by [`pond_blocked_water!`](@ref), which has already zeroed `runoff`). A cell left with no
+matrix (`M[i]` at most `WATER_TOLERANCE`) passes its whole remaining load to the cell below.
+`k = 0` moves impurity only out of cells that melted out. `impurity` is overwritten.
+
+# References
+- Flanner, M. G., Zender, C. S., Randerson, J. T., and Rasch, P. J. (2007). Present-day climate
+  forcing and response from black carbon in snow. *J. Geophys. Res.* 112, D11202. Sect. 2.4.
+- Lawrence, D. M., et al. (2018). CLM5 Technical Note, Sect. 8.6 (eq. 8.38).
+"""
+function _scavenge_impurities!(black_carbon::Vector{Float64}, impurity::Vector{Float64},
+    M::Vector{Float64}, water::Vector{Float64}, flux_dn::Vector{Float64},
+    runoff::Vector{Float64}, k::Float64; basal_leaves::Bool=true)
+    inflow = 0.0
+    i_last = 0
+    for i in eachindex(black_carbon, impurity, M, water, runoff)
+        load = impurity[i] + inflow
+        q_down = flux_dn[i+1]
+        q_out = q_down + runoff[i]
+        S = M[i] + water[i]
+        out = q_out > 0.0 ? (S > 0.0 ? min(load, k * q_out * load / S) : load) : 0.0
+        down = q_out > 0.0 ? out * (q_down / q_out) : 0.0
+        load -= out
+        if M[i] > WATER_TOLERANCE
+            impurity[i] = load
+            black_carbon[i] = load / M[i]
+            inflow = down
+            i_last = i
+        else
+            impurity[i] = 0.0
+            inflow = down + load
+        end
+    end
+    if !basal_leaves && i_last > 0 && inflow > 0.0
+        impurity[i_last] += inflow
+        black_carbon[i_last] = impurity[i_last] / M[i_last]
+    end
+    return nothing
+end
+
+"""
     _refreeze_cell(mp, melt_input, water, freeze_max, M, density, dz) ->
         (freeze1, freeze2, water_delta, flux_out, M_new, density_new)
 
@@ -157,7 +211,7 @@ function _check_melt_finite(dz::Vector{Float64}, water::Vector{Float64})
 end
 
 """
-    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, mp::ModelParameters, verbose::Bool)
+    calculate_melt(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, mp::ModelParameters, verbose::Bool)
 
 Compute meltwater generation, percolation, refreezing, and runoff using a tipping bucket approach.
 
@@ -224,7 +278,7 @@ above — the two best-performing models at the ice-slab site KAN_U were bucket 
 delay runoff rather than models that percolate deeper.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
+age, black_carbon, black_carbon_retained, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth)`.
 
 `melt_total` is the ice melted this timestep and `freeze_total` all liquid water refrozen,
 including rain, which arrives as pore water (see [`calculate_accumulation`](@ref)). Over any
@@ -244,6 +298,17 @@ water generated there and any water the cell expels (both at `age[i]`) mix with 
 from above (at `flux_age[i]`) into one pool; whatever refreezes enters the cell at the pool's
 age, and whatever continues down or runs off leaves at it. Refreezing therefore makes a cell
 *younger* only to the extent that genuinely younger water reached it, rather than resetting it.
+
+# Impurity loading
+
+`black_carbon` and `black_carbon_retained` [ppmw] track the impurity mass of each cell, `c · M`,
+of two classes. Melting ice leaves its impurity in the cell, so a melting cell grows dirtier, and
+a cell that melts out passes its load to the cell below. Water leaving a cell carries impurity at
+the class's scavenging efficiency times the cell's concentration in ice plus liquid, into the cell
+below with the percolating water or out of the column with runoff, as in CLM5
+([`_scavenge_impurities!`](@ref)): `mp.impurity_scavenging_efficiency` for the mobile impurity
+snowfall brings, `mp.impurity_scavenging_efficiency_retained` for the retained class an observed
+albedo sets. Refrozen ice adds matrix mass without impurity.
 
 `percolation_depth` [m] is a diagnostic that takes no part in the mass or energy budget: the
 base of the deepest cell water reached this timestep, 0 when no water moved. Note that the
@@ -278,6 +343,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
+    black_carbon::Vector{Float64}, black_carbon_retained::Vector{Float64},
     mp::ModelParameters, verbose::Bool; workspace::ColumnWorkspace=ColumnWorkspace(),
     basal_surplus::Union{Nothing,Base.RefValue{Float64}}=nothing)
 
@@ -290,6 +356,11 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     ice_layer_dzmin = mp.impermeable_thickness   # minimum ice layer thickness for runoff [m]
 
     m = length(temperature)
+    # Impurity mass of each cell on entry [ppmw · kg m-2], for the scavenging below.
+    impurity_initial = _fit_buffer!(workspace.impurity, m)
+    impurity_retained_initial = _fit_buffer!(workspace.impurity_retained, m)
+    @. impurity_initial = black_carbon * (dz * density)
+    @. impurity_retained_initial = black_carbon_retained * (dz * density)
     # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
     # further down run over the same elements in the same order and the broadcasts against the column
     # still match lengths.
@@ -628,13 +699,20 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         independent_grain_radius(mp) &&
             snicar_refreeze!(grain_radius, grain_dendricity, freeze, M, water, density)
 
+        # Impurity moves with the water that left each cell; `water` is post-percolation here.
+        basal_leaves = mp.runoff_method === :instantaneous
+        _scavenge_impurities!(black_carbon, impurity_initial, M, water, flux_dn, runoff,
+            mp.impurity_scavenging_efficiency; basal_leaves)
+        _scavenge_impurities!(black_carbon_retained, impurity_retained_initial, M, water,
+            flux_dn, runoff, mp.impurity_scavenging_efficiency_retained; basal_leaves)
+
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the
         # column state is assembled with `M` standing in for it.
         to_delete = findall(M .<= WATER_TOLERANCE)
         if !isempty(to_delete)
             close_slot!(column_state(temperature, M, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age), to_delete)
+                grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained), to_delete)
         end
 
         # calculate new grid lengths
@@ -672,7 +750,7 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    age, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
+    age, black_carbon, black_carbon_retained, melt_total, melt_surface, runoff_total, freeze_total, percolation_depth
 end
 
 """

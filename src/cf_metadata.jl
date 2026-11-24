@@ -125,6 +125,13 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "started from an un-equilibrated profile."),
     :albedo_broadband => CFAttrs("1", "broadband surface albedo", "time: mean";
         standard_name="surface_albedo"),
+    :black_carbon_surface => CFAttrs("1e-6", "equivalent light-absorbing impurity loading of the near-surface snow", "time: mean";
+        comment="ppmw; the Gardner and Sharp (2010) soot loading the albedo reads, over the top albedo_impurity_depth of snow"),
+    :albedo_update_dlog_ssa => CFAttrs("1", "change of ln(specific surface area) by albedo updates", "time: sum";
+        comment="summed over the observed-albedo updates of the interval"),
+    :albedo_update_dlog_impurity => CFAttrs("1", "change of ln(impurity loading + 0.01 ppmw) by albedo updates", "time: sum";
+        comment="summed over the observed-albedo updates of the interval"),
+    :albedo_update_count => CFAttrs("1", "number of observed-albedo updates", "time: sum"),
     :temperature_air => CFAttrs("K", "near-surface air temperature",
         "time: mean"; standard_name="air_temperature"),
     :firn_air_content => CFAttrs("m", "firn air content", "time: mean";
@@ -210,6 +217,23 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
                 "the epoch is the start of spinup rather than the start of the transient " *
                 "run. Under sustained ablation the deepest cell is a lower bound: basal " *
                 "accretion inherits that cell's own age."),
+    :black_carbon => CFAttrs("1e-6", "layer equivalent mobile light-absorbing impurity loading",
+        "time: point";
+        comment="Mass mixing ratio of black-carbon-equivalent impurity in the ice matrix " *
+                "[ppmw] that snowfall brings (black_carbon_snow). Merges mix it on matrix " *
+                "mass; melting ice leaves it in the cell; draining meltwater carries it at " *
+                "impurity_scavenging_efficiency. The albedo reads its sum with " *
+                "black_carbon_retained, the c of the Gardner and Sharp (2010) albedo. No CF " *
+                "standard name exists."),
+    :black_carbon_retained => CFAttrs("1e-6",
+        "layer equivalent retained light-absorbing impurity loading", "time: point";
+        comment="Mass mixing ratio of black-carbon-equivalent impurity in the ice matrix " *
+                "[ppmw] that meltwater scavenges only at impurity_scavenging_efficiency_retained, " *
+                "the insoluble residue of a melting surface. Where an albedo_observed forcing " *
+                "is supplied the near-surface snow's retained loading is set so that the model " *
+                "albedo matches it; the value is then an equivalent loading that also absorbs " *
+                "errors in wet-snow albedo and pixel mixing. Zero in new snow. No CF standard " *
+                "name exists."),
     # ---- lower_boundary = :ground only -------------------------------------
     :heat_flux_ground => CFAttrs("W m-2", "conductive heat flux from the ground into the snow",
         "time: mean";

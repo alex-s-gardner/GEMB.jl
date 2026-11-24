@@ -45,7 +45,7 @@ _age_cfs(; precipitation=0.0, temperature_air=260.0, wind_speed=5.0) =
 _age_cols(; n=3, temperature=fill(260.0, n), dz=fill(0.1, n), density=fill(400.0, n),
     water=zeros(n), age=zeros(n)) = GEMB.column_state(
     copy(temperature), copy(dz), copy(density), copy(water),
-    fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age))
+    fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age), zero(dz), zero(dz))
 
 @testset "epoch is zero at initialization" begin
     mp = initialize_parameters()
@@ -93,9 +93,9 @@ end
         n = 5
         age_in = fill(100.0, n)
         cfs = _age_cfs(precipitation=50.0, temperature_air=260.0)
-        (_, dz_out, _, _, _, _, _, age_out, _) = GEMB.calculate_accumulation(
+        (_, dz_out, _, _, _, _, _, age_out, _, _, _) = GEMB.calculate_accumulation(
             fill(260.0, n), fill(0.1, n), fill(400.0, n), zeros(n),
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), cfs, mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), zeros(n), zeros(n), cfs, mp, false)
 
         @test length(dz_out) == n + 1
         # `open_slot!` duplicates the old cell 1 into the new slot, so this is the assertion
@@ -113,9 +113,9 @@ end
         age_in = fill(100.0, n)
         water = zeros(n); water[1] = 3.0
         cfs = _age_cfs(precipitation=precip, temperature_air=260.0)
-        (_, dz_out, _, _, _, _, _, age_out, _) = GEMB.calculate_accumulation(
+        (_, dz_out, _, _, _, _, _, age_out, _, _, _) = GEMB.calculate_accumulation(
             fill(260.0, n), fill(0.1, n), fill(400.0, n), water,
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), cfs, mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), zeros(n), zeros(n), cfs, mp, false)
 
         @test length(dz_out) == n
         @test age_out[1] ≈ 100.0 * S_surface / (S_surface + precip) rtol = 1e-14
@@ -129,9 +129,9 @@ end
         precip = 10.0
         S_surface = 0.1 * 400.0
         cfs = _age_cfs(precipitation=precip, temperature_air=280.0, wind_speed=0.0)
-        (_, _, _, _, _, _, _, age_out, rain) = GEMB.calculate_accumulation(
+        (_, _, _, _, _, _, _, age_out, _, _, rain) = GEMB.calculate_accumulation(
             fill(260.0, n), fill(0.1, n), fill(400.0, n), zeros(n),
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), fill(50.0, n), cfs, mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), fill(50.0, n), zeros(n), zeros(n), cfs, mp, false)
 
         @test rain == precip
         @test age_out[1] ≈ 50.0 * S_surface / (S_surface + precip) rtol = 1e-14
@@ -196,9 +196,9 @@ end
     age_in = collect(range(0.0, 900.0, length=n))
     dz = fill(0.08, n); dz[1] = 0.01; dz[3] = 0.20
 
-    (_, dz_out, _, _, _, _, _, age_out, _) = GEMB.manage_layer_thickness(
+    (_, dz_out, _, _, _, _, _, age_out, _, _, _) = GEMB.manage_layer_thickness(
         fill(260.0, n), dz, fill(400.0, n), zeros(n),
-        fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), mp, true; dt=86400.0)
+        fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age_in), zero(dz), zero(dz), mp, true; dt=86400.0)
 
     @test length(age_out) == n
     # Every output age is a mass-weighted mean of inputs, so it lies within the input range.
@@ -222,9 +222,9 @@ end
     water[1] = 20.0                  # plus a wet surface cell to push the front down
     mp = GEMB.ModelParameters(density_ice=917.0, water_irreducible_saturation=0.07)
 
-    (_, _, _, _, _, _, _, age_out, _, _, _, freeze, depth) =
+    (_, _, _, _, _, _, _, age_out, _, _, _, _, _, freeze, depth) =
         GEMB.calculate_melt(temperature, fill(0.1, n), fill(400.0, n), water,
-            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age), mp, false)
+            fill(0.5, n), fill(0.5, n), fill(0.5, n), copy(age), zeros(n), zeros(n), mp, false)
 
     @test freeze > 0.0
     @test depth > 0.0

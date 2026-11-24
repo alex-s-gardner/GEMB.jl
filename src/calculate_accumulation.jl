@@ -296,7 +296,7 @@ function fresh_snow_properties(cfs::ClimateForcingStep, mp::ModelParameters, z0:
 end
 
 """
-    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
+    calculate_accumulation(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
 Add precipitation and deposition to the model column.
 
@@ -336,9 +336,13 @@ refreezes in [`calculate_melt`](@ref), where it is counted as refreeze; in a cel
 melting point its sensible heat melts ice there.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-age, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when the snow forms its own
+age, black_carbon, black_carbon_retained, rain)`. Arrays grow by one cell (via [`open_slot!`](@ref)) when the snow forms its own
 cell; the extra cell is reclaimed later in the timestep by [`manage_layer_thickness`](@ref)'s
 count controller.
+
+Snow enters at the impurity loading `cfs.black_carbon_snow` [ppmw]: a new cell takes it, and
+snow merged into cell 1 mixes it in on matrix mass ([`mix_black_carbon`](@ref)). Rain leaves
+`black_carbon` unchanged.
 
 This is the model's principal age source. Every path adds mass at age 0: a fresh cell is
 set to 0 outright, and the merge-into-cell-1 paths dilute `age[1]` (the mean age of the
@@ -352,6 +356,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
+    black_carbon::Vector{Float64}, black_carbon_retained::Vector{Float64},
     cfs::ClimateForcingStep, mp::ModelParameters, verbose::Bool)
 
     # Note: arrays are modified in place, and grow by one cell via `open_slot!` when new
@@ -391,7 +396,7 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
            ((snow >= snow_layer_min_mass(cfs.dt)) &&
             snow_layers_distinct(z_snow, D, mp))
             cols = column_state(temperature, dz, density, water, grain_radius,
-                grain_dendricity, grain_sphericity, age)
+                grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained)
             open_slot!(cols, 1)
             temperature[1] = snowfall_temperature(cfs)
             dz[1] = z_snow
@@ -401,14 +406,20 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             grain_dendricity[1] = dfall
             grain_sphericity[1] = sfall
             # `open_slot!` duplicated old cell 1 here; fresh snow must not inherit
-            # its age.
+            # its age or impurity loading.
             age[1] = 0.0
+            black_carbon[1] = cfs.black_carbon_snow
+            black_carbon_retained[1] = 0.0
         else
             # Merged into the top cell (adjust temperature: precipitation is at the air
             # temperature).
             temperature[1] = mix_temperature(mp, snowfall_temperature(cfs), snow,
                 temperature[1], M_surface)
             age[1] = dilute_age(age[1], S_surface, snow)
+            black_carbon[1] = mix_black_carbon(black_carbon[1], M_surface,
+                cfs.black_carbon_snow, snow)
+            black_carbon_retained[1] = mix_black_carbon(black_carbon_retained[1], M_surface,
+                0.0, snow)
             dz[1] = dz[1] + snow / density_new_snow
             density[1] = (M_surface + snow) / dz[1]
             grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(
@@ -445,5 +456,5 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    age, rain
+    age, black_carbon, black_carbon_retained, rain
 end
