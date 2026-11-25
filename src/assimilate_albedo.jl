@@ -33,62 +33,12 @@ const ALBEDO_LOADING_TOLERANCE = 1e-13
 @inline _ssa_of_radius(r) = 3.0 / (0.091 * r)
 @inline _radius_of_ssa(S) = 3.0 / (0.091 * S)
 
-# The diffuse, cloud-free albedo of a surface state, which does not depend on the step's sun and cloud.
-@inline _intrinsic_albedo(r, c, albedo_under, z_we) =
-    _albedo_gardner(r, c, ALBEDO_DIFFUSE_ZENITH_ANGLE, 0.0, albedo_under, z_we)
-
 """
-    AlbedoSky(solar_zenith_angle, cloud_optical_thickness, diffuse_fraction)
+    albedo_update(albedo_observed, r, c, α, mp) -> (r_new, c_new, converged)
 
-The sky an observed albedo was measured under: the step's solar zenith angle [degrees], cloud optical
-thickness and diffuse share of the downward shortwave. [`_observed_albedo`](@ref) evaluates a surface state
-under it. `AlbedoSky()` is the diffuse, cloud-free sky of [`_intrinsic_albedo`](@ref).
-"""
-struct AlbedoSky
-    solar_zenith_angle::Float64
-    cloud_optical_thickness::Float64
-    diffuse_fraction::Float64
-end
-AlbedoSky() = AlbedoSky(ALBEDO_DIFFUSE_ZENITH_ANGLE, 0.0, 1.0)
-
-"""
-    albedo_sky(cfs, mp) -> AlbedoSky
-
-The sky an observed albedo of step `cfs` is matched under: the step's own sun, cloud and diffuse share
-when `mp.albedo_update_sky === :step` (the default), or the diffuse, cloud-free `AlbedoSky()` when
-`:diffuse`. A step with no downward shortwave has no measurable albedo and is matched under the diffuse
-sky.
-"""
-function albedo_sky(cfs::ClimateForcingStep, mp::ModelParameters)
-    mp.albedo_update_sky === :diffuse && return AlbedoSky()
-    cfs.shortwave_downward > 0.0 || return AlbedoSky()
-    return AlbedoSky(cfs.solar_zenith_angle, cfs.cloud_optical_thickness,
-                     clamp(cfs.shortwave_downward_diffuse / cfs.shortwave_downward, 0.0, 1.0))
-end
-
-"""
-    _observed_albedo(r, c, albedo_under, z_we, sky) -> Float64
-
-The shortwave-weighted albedo `1 − SW_net / SW↓` of a surface state under `sky`, the quantity a radiometer's
-`Σ SW↑ / Σ SW↓` measures and the one GEMB applies: the diffuse-stream albedo on the diffuse share and the
-direct-beam albedo on the rest, both with the cloud term of `sky`, as [`calculate_albedo`](@ref) and
-[`shortwave_net_surface`](@ref) combine them. With the sun at or below the horizon there is no direct beam.
-"""
-@inline function _observed_albedo(r, c, albedo_under, z_we, sky::AlbedoSky)
-    t = sky.cloud_optical_thickness
-    a_dif = _albedo_gardner(r, c, ALBEDO_DIFFUSE_ZENITH_ANGLE, t, albedo_under, z_we)
-    (sky.solar_zenith_angle < 90.0 && sky.diffuse_fraction < 1.0) || return a_dif
-    a_dir = _albedo_gardner(r, c, sky.solar_zenith_angle, t, albedo_under, z_we)
-    f = sky.diffuse_fraction
-    return f * a_dif + (1 - f) * a_dir
-end
-
-"""
-    albedo_update(albedo_observed, r, c, albedo_under, z_we, mp, sky = AlbedoSky()) -> (r_new, c_new, converged)
-
-The near-surface grain radius `r_new` [mm] and effective loading `c_new` [ppmw] whose Gardner & Sharp
-albedo under `sky` ([`_observed_albedo`](@ref)) equals `albedo_observed`, by the smallest change from the
-model's `r` and `c` in `y = (ln SSA, ln(c + c₀))` weighted by
+The near-surface grain radius `r_new` [mm] and effective loading `c_new` [ppmw] whose albedo `α(r, c)`
+equals `albedo_observed`, by the smallest change from the model's `r` and `c` in
+`y = (ln SSA, ln(c + c₀))` weighted by
 `σ = (mp.albedo_update_sigma_log_ssa, mp.albedo_update_sigma_log_impurity)`:
 
     minimize ((y₁ − y₁⁰)/σ₁)² + ((y₂ − y₂⁰)/σ₂)²  subject to  α(y) = albedo_observed,
@@ -105,17 +55,15 @@ update is the reachable state nearest to it (clean snow at the smallest grain fo
 brighter than any, the largest loading at the largest grain for one darker than any), with
 `converged = false`.
 
-`albedo_under` and `z_we` are the albedo of firn or ice under the snow and the snow's water
-equivalent [m], as `_albedo_gardner` takes them (`z_we = Inf` for semi-infinite snow).
+`α` must fall with `c` at fixed `r`; [`assimilate_albedo!`](@ref) passes the albedo GEMB applies to the
+observation step.
 """
-function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Real, z_we::Real,
-    mp::ModelParameters, sky::AlbedoSky = AlbedoSky())
-    α(rr, cc) = _observed_albedo(rr, cc, Float64(albedo_under), Float64(z_we), sky)
+function albedo_update(albedo_observed::Real, r::Real, c::Real, α::F, mp::ModelParameters) where {F}
     σ1, σ2 = mp.albedo_update_sigma_log_ssa, mp.albedo_update_sigma_log_impurity
     (σ1 >= 0 && σ2 > 0) || throw(ArgumentError(
         "albedo_update_sigma_log_ssa must be ≥ 0 and albedo_update_sigma_log_impurity > 0, got " *
         "$(σ1) and $(σ2)"))
-    target = Float64(albedo_observed); au = Float64(albedo_under); zw = Float64(z_we)
+    target = Float64(albedo_observed)
     rlo, rhi = ALBEDO_UPDATE_RADIUS_RANGE
     r0 = clamp(Float64(r), rlo, rhi); c0 = clamp(Float64(c), 0.0, IMPURITY_EFFECTIVE_MAX)
     y10 = log(_ssa_of_radius(r0)); y20 = log(c0 + IMPURITY_UPDATE_OFFSET)
@@ -241,9 +189,9 @@ film is 0 and the surface stays darker than the update.
 No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d], 0 by
 default, so every observation of a snow surface is used.
 
-The state is matched under the sky of the step ([`albedo_sky`](@ref)), so that the albedo GEMB then applies
-to the step's shortwave is the observed one: an observed albedo is `Σ SW↑ / Σ SW↓`, the shortwave-weighted
-albedo of the surface under the sky it was measured in.
+The state matched is the one whose albedo GEMB applies to the step's shortwave, `1 − SW_net / SW↓`
+([`effective_albedo`](@ref)), equals the observation, which is `Σ SW↑ / Σ SW↓` under the sky it was measured
+in.
 
 Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, and whether an update was
 applied; `(0, 0, false)` when none was.
@@ -255,11 +203,12 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
         return (0.0, 0.0, false)
     density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return (0.0, 0.0, false)
     age[1] < mp.albedo_update_snow_age_min && return (0.0, 0.0, false)
-    albedo_under, _, mass_snow = _snow_over_firn_ice(dz, density, mp)
-    z_we = mass_snow / DENSITY_WATER
+    albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
     r0 = grain_radius[1]
     c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
-    r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp, albedo_sky(cfs, mp))
+    # The albedo GEMB applies to this step's shortwave from a surface state, 1 − SW_net / SW↓.
+    α(rr, cc) = effective_albedo(_albedo_snow_over(albedo_under, depth_snow, mass_snow, rr, cc, cfs, mp)..., cfs)
+    r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, α, mp)
     scale = r / r0
     film = impurity_effective_retained[1] / mp.albedo_impurity_depth
     impurity_effective_retained[1] = max(0.0, c - (c0 - film)) * mp.albedo_impurity_depth
