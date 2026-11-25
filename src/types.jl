@@ -663,9 +663,9 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # ln(c + IMPURITY_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
     albedo_update_sigma_log_ssa::Float64 = 0.2
     albedo_update_sigma_log_impurity::Float64 = 1.0
-    # Youngest surface layer [d] an observed albedo may update: an observation is a multi-day
-    # composite that still shows the surface fresh snow has buried (see `assimilate_albedo!`).
-    albedo_update_snow_age_min::Float64 = 3.0
+    # Youngest surface layer [d] an observed albedo may update (see `assimilate_albedo!`); 0 uses every
+    # observation of a snow surface.
+    albedo_update_snow_age_min::Float64 = 0.0
     # Meltwater scavenging efficiencies `k` of CLM5 (Flanner et al., 2007): water leaving a cell
     # carries impurity at `k` times the cell's concentration in ice plus liquid (see
     # `calculate_melt`). 0 leaves all impurity at the melting surface; values above 1 are allowed.
