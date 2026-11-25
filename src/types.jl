@@ -663,9 +663,11 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     # ln(c + IMPURITY_UPDATE_OFFSET). 0 for SSA makes the update change the loading only.
     albedo_update_sigma_log_ssa::Float64 = 0.2
     albedo_update_sigma_log_impurity::Float64 = 1.0
-    # Youngest surface layer [d] an observed albedo may update: an observation is a multi-day
-    # composite that still shows the surface fresh snow has buried (see `assimilate_albedo!`).
-    albedo_update_snow_age_min::Float64 = 3.0
+    # Youngest surface layer [d] an observed albedo may update (see `assimilate_albedo!`). 0 uses every
+    # observation: a daily radiometer albedo sees fresh snow itself, and MCD43A3, whose BRDF inversions
+    # mostly hold the albedo of their 16-day window through a snowfall, fits on-ice station albedo and
+    # surface lowering no better when fresh snow is skipped.
+    albedo_update_snow_age_min::Float64 = 0.0
     # Sky an observed albedo is matched under (see `albedo_sky`): `:step`, the observation step's sun,
     # cloud and diffuse share, so the albedo then applied to that step is the observed one; or
     # `:diffuse`, the diffuse cloud-free albedo, independent of the step.

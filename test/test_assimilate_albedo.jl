@@ -89,8 +89,9 @@ end
     pushfirst!(dz, 0.05); pushfirst!(density, 120.0); pushfirst!(r, 0.05); pushfirst!(age, 0.5)
     pushfirst!(bc, 0.0); pushfirst!(bcr, 0.0)
     @test total(dz, density, bc, bcr) == 0.0
-    # The fresh snow is younger than albedo_update_snow_age_min: an observation is not assimilated.
-    @test GEMB.assimilate_albedo!(dz, density, r, age, bc, bcr, cfs(0.55), mp)[3] == false
+    # With a minimum age set, fresh snow younger than it is not updated.
+    @test GEMB.assimilate_albedo!(dz, density, r, age, bc, bcr, cfs(0.55),
+        GEMB.ModelParameters(; albedo_impurity_depth = 0.02, albedo_update_snow_age_min = 3.0))[3] == false
     # Melting the fresh snow away re-exposes the film with no new observation.
     popfirst!(dz); popfirst!(density); popfirst!(r); popfirst!(age); popfirst!(bc); popfirst!(bcr)
     @test total(dz, density, bc, bcr) == dark

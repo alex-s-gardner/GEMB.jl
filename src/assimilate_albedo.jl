@@ -238,8 +238,8 @@ scales `grain_radius` of every snow layer within the top `mp.albedo_impurity_dep
 `r_new / r_surface`, leaving the profile's shape. Where the mobile loading alone exceeds `c_new` the
 film is 0 and the surface stays darker than the update.
 
-No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d]: the
-observation is a multi-day composite that still shows the surface the fresh snow buried.
+No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d], 0 by
+default, so every observation of a snow surface is used.
 
 The state is matched under the sky of the step ([`albedo_sky`](@ref)), so that the albedo GEMB then applies
 to the step's shortwave is the observed one: an observed albedo is `Σ SW↑ / Σ SW↓`, the shortwave-weighted
