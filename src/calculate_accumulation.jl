@@ -421,8 +421,6 @@ function calculate_accumulation(temperature::Vector{Float64}, dz::Vector{Float64
             age[1] = dilute_age(age[1], S_surface, snow)
             impurity_effective[1] = mix_impurity(impurity_effective[1], M_surface,
                 cfs.black_carbon_snow, snow)
-            impurity_effective_retained[1] = mix_impurity(impurity_effective_retained[1], M_surface,
-                0.0, snow)
             dz[1] = dz[1] + snow / density_new_snow
             density[1] = (M_surface + snow) / dz[1]
             grain_dendricity[1], grain_sphericity[1], grain_radius[1] = mix_grains(

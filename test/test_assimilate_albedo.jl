@@ -56,8 +56,8 @@ end
     @test bcr[1] > 0 && all(==(0.0), bcr[2:end])
     @test abs(GEMB._intrinsic_albedo(r[1], total(dz, density, bc, bcr), 0.0, Inf) - 0.55) < 1e-6
     dark = total(dz, density, bc, bcr)
-    # The film is the surface layer's retained mass spread over albedo_impurity_depth.
-    @test dark ≈ 0.02 + bcr[1] * dz[1] / mp.albedo_impurity_depth
+    # The film is an areal amount, read as that amount over albedo_impurity_depth.
+    @test dark ≈ 0.02 + bcr[1] / mp.albedo_impurity_depth
     # Fresh clean snow on top: the surface reads the new snow; the film is kept below.
     pushfirst!(dz, 0.05); pushfirst!(density, 120.0); pushfirst!(r, 0.05); pushfirst!(age, 0.5)
     pushfirst!(bc, 0.0); pushfirst!(bcr, 0.0)
@@ -79,11 +79,14 @@ end
 @testset "the retained film keeps its strength through thinning, merging and splitting" begin
     mp = GEMB.ModelParameters(; albedo_impurity_depth = 0.02)
     film(dz, bcr) = GEMB.surface_impurity_effective(dz, fill(350.0, length(dz)), zero(dz), bcr, mp)
-    # The film reads the surface layer's retained mass over albedo_impurity_depth, whatever its thickness.
-    @test film([0.04, 0.05], [1.0, 0.0]) ≈ 2.0
-    @test film([0.01, 0.05], [4.0, 0.0]) ≈ 2.0
-    # The retained loading of buried layers is not read.
+    # The film reads the surface layer's film over albedo_impurity_depth, whatever its thickness.
+    @test film([0.04, 0.05], [0.04, 0.0]) ≈ 2.0
+    @test film([0.01, 0.05], [0.04, 0.0]) ≈ 2.0
+    # The film of buried layers is not read.
     @test film([0.04, 0.05], [0.0, 3.0]) == 0.0
+    # Compaction, sublimation and erosion change the surface layer's thickness and density but move
+    # no impurity, so the film reads the same: the reading takes neither.
+    @test GEMB.surface_impurity_effective([0.004, 0.05], [600.0, 350.0], zeros(2), [0.04, 0.0], mp) ≈ 2.0
     # A thin surface layer merged into the cell below carries its film mass with it: read the same.
     cols = GEMB.column_state(fill(270.0, 3), [0.01, 0.05, 0.05], fill(350.0, 3), zeros(3), fill(0.5, 3),
         zeros(3), fill(0.5, 3), fill(10.0, 3), zeros(3), [4.0, 0.0, 0.0])
@@ -92,15 +95,20 @@ end
     GEMB.merge_snow_pair!(cols, 1, 2, M1, M2, mp)
     GEMB.close_slot!(cols, [1])
     @test film(cols.dz, cols.impurity_effective_retained) ≈ before rtol = 1e-12
-    # Splitting the surface layer keeps the film in the upper half; total retained mass is conserved.
+    # Splitting the surface layer keeps the film in the upper half; the total film is conserved.
     cols = GEMB.column_state(fill(270.0, 2), [0.10, 0.05], fill(350.0, 2), zeros(2), fill(0.5, 2),
         zeros(2), fill(0.5, 2), fill(10.0, 2), zeros(2), [1.0, 0.0])
-    mass(c) = sum(c.impurity_effective_retained .* c.dz .* c.density)
+    mass(c) = sum(c.impurity_effective_retained)
     m0 = mass(cols); f0 = film(cols.dz, cols.impurity_effective_retained)
     GEMB.split_cell!(cols, 1)
     @test mass(cols) ≈ m0 rtol = 1e-14
     @test cols.impurity_effective_retained[2] == 0.0
     @test film(cols.dz, cols.impurity_effective_retained) ≈ f0 rtol = 1e-14
+    # A split below the surface keeps that cell's film in its upper half too.
+    cols = GEMB.column_state(fill(270.0, 3), [0.05, 0.10, 0.05], fill(350.0, 3), zeros(3), fill(0.5, 3),
+        zeros(3), fill(0.5, 3), fill(10.0, 3), zeros(3), [0.0, 1.0, 0.0])
+    GEMB.split_cell!(cols, 2)
+    @test cols.impurity_effective_retained == [0.0, 1.0, 0.0, 0.0]
 end
 
 @testset "albedo with uniform background loading equals the scalar form" begin
@@ -119,10 +127,10 @@ end
     cfs = GEMB.ClimateForcingStep(; dt = 3600.0, cloud_optical_thickness = 1.0,
         solar_zenith_angle = 60.0)
     mp = GEMB.ModelParameters()
-    # A film of retained loading f in the surface layer reads as f·dz[1]/albedo_impurity_depth of
-    # mobile loading spread through the near-surface snow.
-    f = 0.02
-    equivalent = 0.03 + f * dz[1] / mp.albedo_impurity_depth
+    # A surface film f reads as f/albedo_impurity_depth of mobile loading spread through the
+    # near-surface snow.
+    f = 0.001
+    equivalent = 0.03 + f / mp.albedo_impurity_depth
     @test GEMB.calculate_albedo(dz, density, grain_radius, fill(0.03, n), [f; zeros(n - 1)], cfs, mp) ==
           GEMB.calculate_albedo(dz, density, grain_radius, fill(equivalent, n), zeros(n), cfs, mp)
     @test GEMB.calculate_albedo_ground(dz, density, grain_radius, fill(0.03, n), [f; zeros(n - 1)],

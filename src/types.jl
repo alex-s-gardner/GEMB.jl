@@ -13,9 +13,9 @@ This is the restart contract. Every layer is required: `gemb` indexes them by na
 initial state, so a profile missing one fails on the first timestep rather than silently
 defaulting. `age` is part of the state even though no physics reads it — it is the column's only
 clock, and dropping it would restart every continuation's age at whatever the saved column held.
-`impurity_effective` and `impurity_effective_retained` are the per-layer effective impurity loadings whose sum
-the albedo reads, so a continuation without them would lose every loading an observed albedo has
-set.
+`impurity_effective` and `impurity_effective_retained` are the per-layer effective impurity loading and
+surface film the albedo reads, so a continuation without them would lose every film an observed
+albedo has set.
 
 Exported so a caller that persists a column between runs (writing it to disk and reading it back
 later) can validate a restored profile against the set `gemb` actually requires, instead of
@@ -323,7 +323,7 @@ struct ColumnWorkspace
     flux_dn::Vector{Float64}      # water flux across cell boundaries [kg m-2], m+1 entries
     flux_age::Vector{Float64}     # mass-weighted age of `flux_dn` [d], m+1 entries
     impurity::Vector{Float64}     # mobile impurity mass per cell [ppmw · kg m-2]
-    impurity_retained::Vector{Float64} # retained impurity mass per cell [ppmw · kg m-2]
+    impurity_retained::Vector{Float64} # retained impurity film per cell [ppmw · m]
     # Index lists, emptied and refilled rather than sized, so they are outside the length contract
     # above and carry nothing between timesteps.
     to_delete::Vector{Int}

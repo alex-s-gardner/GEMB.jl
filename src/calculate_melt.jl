@@ -125,6 +125,10 @@ ponded by [`pond_blocked_water!`](@ref), which has already zeroed `runoff`). A c
 matrix (`M[i]` at most `WATER_TOLERANCE`) passes its whole remaining load to the cell below.
 `k = 0` moves impurity only out of cells that melted out. `impurity` is overwritten.
 
+With `per_matrix_mass = false`, `impurity` is an areal amount in any unit and `impurity_effective`
+is set to the amount itself rather than to the amount per matrix mass; the scavenged fraction
+`k q / (M + w)` does not depend on the unit.
+
 # References
 - Flanner, M. G., Zender, C. S., Randerson, J. T., and Rasch, P. J. (2007). Present-day climate
   forcing and response from black carbon in snow. *J. Geophys. Res.* 112, D11202. Sect. 2.4.
@@ -132,7 +136,7 @@ matrix (`M[i]` at most `WATER_TOLERANCE`) passes its whole remaining load to the
 """
 function _scavenge_impurities!(impurity_effective::Vector{Float64}, impurity::Vector{Float64},
     M::Vector{Float64}, water::Vector{Float64}, flux_dn::Vector{Float64},
-    runoff::Vector{Float64}, k::Float64; basal_leaves::Bool=true)
+    runoff::Vector{Float64}, k::Float64; basal_leaves::Bool=true, per_matrix_mass::Bool=true)
     inflow = 0.0
     i_last = 0
     for i in eachindex(impurity_effective, impurity, M, water, runoff)
@@ -145,7 +149,7 @@ function _scavenge_impurities!(impurity_effective::Vector{Float64}, impurity::Ve
         load -= out
         if M[i] > WATER_TOLERANCE
             impurity[i] = load
-            impurity_effective[i] = load / M[i]
+            impurity_effective[i] = per_matrix_mass ? load / M[i] : load
             inflow = down
             i_last = i
         else
@@ -155,7 +159,7 @@ function _scavenge_impurities!(impurity_effective::Vector{Float64}, impurity::Ve
     end
     if !basal_leaves && i_last > 0 && inflow > 0.0
         impurity[i_last] += inflow
-        impurity_effective[i_last] = impurity[i_last] / M[i_last]
+        impurity_effective[i_last] = per_matrix_mass ? impurity[i_last] / M[i_last] : impurity[i_last]
     end
     return nothing
 end
@@ -301,8 +305,9 @@ age, and whatever continues down or runs off leaves at it. Refreezing therefore 
 
 # Impurity loading
 
-`impurity_effective` and `impurity_effective_retained` [ppmw] track the impurity mass of each cell, `c · M`,
-of two classes. Melting ice leaves its impurity in the cell, so a melting cell grows dirtier, and
+`impurity_effective` [ppmw] and `impurity_effective_retained` [ppmw · m] track two classes of
+impurity: the mobile loading, whose mass in a cell is `c · M`, and the retained surface film, an
+areal amount. Melting ice leaves its impurity in the cell, so a melting cell grows dirtier, and
 a cell that melts out passes its load to the cell below. Water leaving a cell carries impurity at
 the class's scavenging efficiency times the cell's concentration in ice plus liquid, into the cell
 below with the percolating water or out of the column with runoff, as in CLM5
@@ -360,7 +365,9 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
     impurity_initial = _fit_buffer!(workspace.impurity, m)
     impurity_retained_initial = _fit_buffer!(workspace.impurity_retained, m)
     @. impurity_initial = impurity_effective * (dz * density)
-    @. impurity_retained_initial = impurity_effective_retained * (dz * density)
+    # The retained film is already an amount [ppmw · m]; the scavenged fraction does not depend on
+    # the unit, so it moves by the same rule as the mobile load.
+    impurity_retained_initial .= impurity_effective_retained
     # Each buffer below is sized to exactly the length the array it replaces had, so the `sum`s
     # further down run over the same elements in the same order and the broadcasts against the column
     # still match lengths.
@@ -704,7 +711,8 @@ function calculate_melt(temperature::Vector{Float64}, dz::Vector{Float64},
         _scavenge_impurities!(impurity_effective, impurity_initial, M, water, flux_dn, runoff,
             mp.impurity_scavenging_efficiency; basal_leaves)
         _scavenge_impurities!(impurity_effective_retained, impurity_retained_initial, M, water,
-            flux_dn, runoff, mp.impurity_scavenging_efficiency_retained; basal_leaves)
+            flux_dn, runoff, mp.impurity_scavenging_efficiency_retained; basal_leaves,
+            per_matrix_mass = false)
 
         # Delete all cells that melted out entirely. `dz` is rebuilt from the conserved
         # cell mass immediately below, so it is excluded from the shift here and the

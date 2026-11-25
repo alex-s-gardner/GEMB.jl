@@ -224,19 +224,20 @@ const GEMB_CF_ATTRIBUTES = Dict{Symbol,CFAttrs}(
         "time: point";
         comment="Effective soot-equivalent impurity loading of the ice matrix [ppmw] that snowfall " *
                 "brings (black_carbon_snow). An effective albedo parameter, not a measured impurity " *
-                "concentration. Merges mix it on matrix " *
-                "mass; melting ice leaves it in the cell; draining meltwater carries it at " *
-                "impurity_scavenging_efficiency. The albedo reads its sum with " *
-                "impurity_effective_retained, the c of the Gardner and Sharp (2010) albedo. No CF " *
-                "standard name exists."),
-    :impurity_effective_retained => CFAttrs("1e-6",
-        "layer effective retained impurity loading", "time: point";
-        comment="Effective soot-equivalent impurity loading of the ice matrix [ppmw] that meltwater scavenges only at impurity_scavenging_efficiency_retained, " *
-                "the insoluble residue of a melting surface. Where an albedo_observed forcing " *
-                "is supplied the near-surface snow's retained loading is set so that the model " *
-                "albedo matches it; the value is then an effective loading that also absorbs " *
-                "errors in wet-snow albedo and pixel mixing, and is not a measured or inferred " *
-                "impurity concentration. Zero in new snow. No CF standard name exists."),
+                "concentration. Merges mix it on matrix mass; melting ice leaves it in the cell; " *
+                "draining meltwater carries it at impurity_scavenging_efficiency. With the surface " *
+                "film impurity_effective_retained it sets the c of the Gardner and Sharp (2010) " *
+                "albedo. No CF standard name exists."),
+    :impurity_effective_retained => CFAttrs("1e-6 m",
+        "layer effective retained impurity film", "time: point";
+        comment="Effective soot-equivalent impurity film [ppmw m] at the top of each cell, the " *
+                "insoluble residue of a melting surface, which meltwater scavenges only at " *
+                "impurity_scavenging_efficiency_retained. An areal amount: merges sum it, and the " *
+                "surface cell's film adds film / albedo_impurity_depth to the loading the albedo " *
+                "reads. Where an albedo_observed forcing is supplied the surface film is set so " *
+                "that the model albedo matches it; the value is then an effective film that also " *
+                "absorbs errors in wet-snow albedo and pixel mixing, and is not a measured or " *
+                "inferred impurity amount. Zero in new snow. No CF standard name exists."),
     # ---- lower_boundary = :ground only -------------------------------------
     :heat_flux_ground => CFAttrs("W m-2", "conductive heat flux from the ground into the snow",
         "time: mean";

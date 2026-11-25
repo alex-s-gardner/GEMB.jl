@@ -12,8 +12,8 @@ direct-beam and for the diffuse stream.
 
 Every method here is **diagnostic**: the albedo is a function of the current column
 state alone. Under `:GardnerSharp` that state includes each layer's effective impurity loading
-[ppmw], the sum of `impurity_effective` and `impurity_effective_retained`, read as
-[`surface_impurity_effective`](@ref); without them every layer takes `cfs.black_carbon_snow`. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
+[ppmw] and its retained surface film, read as [`surface_impurity_effective`](@ref); without them
+every layer takes `cfs.black_carbon_snow`. `albedo_diffuse` differs from `albedo` only under `:GardnerSharp` (recomputed at a
 fixed 50° effective zenith angle); the other methods return it equal to `albedo`.
 [`calculate_shortwave_radiation`](@ref) applies `albedo` to the direct beam
 `SW↓ − SW↓_diffuse` and `albedo_diffuse` to `SW↓_diffuse`.
@@ -102,14 +102,13 @@ calculate_albedo(dz::Vector{Float64}, density::Vector{Float64}, grain_radius::Ve
 Effective impurity loading [ppmw] of the near-surface snow, the loading the Gardner & Sharp (2010)
 albedo reads. 0 when the surface is firn or ice (at or above pore close-off density).
 
-The two classes are read differently. The mobile `impurity_effective` is mixed through the snow, so
-it enters as the thickness-weighted mean over the top `mp.albedo_impurity_depth` of snow layers. The
-retained `impurity_effective_retained` is a film on the melting surface: the residue meltwater left
-behind, which a satellite sees concentrated at the skin. Only the surface layer's retained mass
-counts, read as that mass spread over `mp.albedo_impurity_depth` at the surface layer's density,
-`impurity_effective_retained[1] · dz[1] / mp.albedo_impurity_depth`. The film therefore keeps its
-strength when the surface layer thins by melt and merges into the one below, and disappears from
-view when fresh snow forms a new surface layer over it.
+The two classes are read differently. The mobile `impurity_effective` [ppmw] is mixed through the
+snow, so it enters as the thickness-weighted mean over the top `mp.albedo_impurity_depth` of snow
+layers. The retained `impurity_effective_retained` [ppmw · m] is a film on the melting surface, the
+residue meltwater left behind, held as an areal amount: the loading it adds is
+`impurity_effective_retained[1] / mp.albedo_impurity_depth`. Only the surface layer's film is read,
+so the film disappears from view when fresh snow forms a new surface layer over it, and no change of
+the surface layer's thickness or density alters it.
 """
 function surface_impurity_effective(dz::AbstractVector, density::AbstractVector,
     impurity_effective::AbstractVector, impurity_effective_retained::AbstractVector, mp::ModelParameters)
@@ -123,13 +122,8 @@ function surface_impurity_effective(dz::AbstractVector, density::AbstractVector,
         remaining -= h
         remaining <= 0.0 && break
     end
-    return s / w + _retained_film(dz, impurity_effective_retained, mp)
+    return s / w + impurity_effective_retained[1] / mp.albedo_impurity_depth
 end
-
-# The retained film's loading [ppmw] as the albedo reads it: the surface layer's retained mass spread
-# over `mp.albedo_impurity_depth` at that layer's density.
-@inline _retained_film(dz::AbstractVector, retained::AbstractVector, mp::ModelParameters) =
-    retained[1] * dz[1] / mp.albedo_impurity_depth
 
 # `:GardnerSharp` and `:BrunLefebre` albedos of snow `depth_snow` [m] thick, of matrix mass
 # `mass_snow` [kg m-2], over a surface of albedo `albedo_under`; see `calculate_albedo`.

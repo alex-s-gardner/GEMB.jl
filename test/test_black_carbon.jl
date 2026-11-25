@@ -22,16 +22,15 @@ _impurity_mass(cols) = sum(cols.impurity_effective .* cols.dz .* cols.density)
         @test cols.impurity_effective[j] * (Mi + Mj) ≈ impurity rtol = 1e-15
     end
 
-    # The retained class mixes on matrix mass in every merge too.
+    # The retained film is an areal amount, so every merge sums it.
     for merge! in (GEMB.merge_pair!, GEMB.merge_snow_pair!, GEMB.absorb_snow!)
         cols = _bc_cols()
         cols.impurity_effective_retained .= [1.0, 0.0, 4.0, 0.5]
         i, j = merge! === GEMB.absorb_snow! ? (1, 2) : (2, 3)
         Mi, Mj = cols.dz[i] * cols.density[i], cols.dz[j] * cols.density[j]
-        expected = (cols.impurity_effective_retained[i] * Mi + cols.impurity_effective_retained[j] * Mj) /
-                   (Mi + Mj)
+        expected = cols.impurity_effective_retained[i] + cols.impurity_effective_retained[j]
         merge!(cols, i, j, Mi, Mj, mp)
-        @test cols.impurity_effective_retained[j] ≈ expected rtol = 1e-15
+        @test cols.impurity_effective_retained[j] == expected
     end
 
     # A column at a uniform loading stays at exactly that loading through any merge.
@@ -58,11 +57,11 @@ end
     bc = collect(range(0.0, 3.0; length=n))
     impurity = sum(bc .* dz .* ρ)
     bcr = reverse(bc)
-    impurity_retained = sum(bcr .* dz .* ρ)
+    impurity_retained = sum(bcr)
     out = GEMB.manage_layer_thickness(T, copy(dz), copy(ρ), zeros(n), fill(0.3, n), zeros(n),
         fill(0.5, n), zeros(n), copy(bc), copy(bcr), mp, true; dt=10800.0, n_target=n)
     @test sum(out[9] .* out[2] .* out[3]) ≈ impurity rtol = 1e-13
-    @test sum(out[10] .* out[2] .* out[3]) ≈ impurity_retained rtol = 1e-13
+    @test sum(out[10]) ≈ impurity_retained rtol = 1e-13
 end
 
 @testset "accumulation deposits black_carbon_snow; rain leaves it" begin
@@ -87,13 +86,13 @@ end
     @test length(out[2]) == n
     M = 0.1 * 400.0
     @test out[9][1] ≈ (3.0 * M + 0.1 * 0.5) / (M + 0.5) rtol = 1e-14
-    # Snow too light for a layer of its own still mixes into a surface carrying a retained film,
-    # diluting it (it carries none)...
+    # Snow too light for a layer of its own still merges into a surface carrying a retained film,
+    # which keeps the whole film: it is an areal amount...
     col = column(); col[10] .= 2.0
     light = 0.5 * GEMB.snow_layer_min_mass(10800.0)
     out = GEMB.calculate_accumulation(deepcopy(col)..., step(light, 260.0), mp, true)
     @test length(out[2]) == n
-    @test out[10][1] ≈ 2.0 * M / (M + light) rtol = 1e-14
+    @test out[10][1] == 2.0
     # ...but snow of at least `snow_layer_min_mass` always buries the film in a new cell.
     out = GEMB.calculate_accumulation(deepcopy(col)..., step(2.0 * GEMB.snow_layer_min_mass(10800.0), 260.0), mp, true)
     @test length(out[2]) == n + 1
@@ -205,21 +204,25 @@ end
     T = fill(273.15, n); T[1] = 290.0
     dz = fill(0.05, n); ρ = fill(400.0, n); ρ[end-2:end] .= 917.0
     W = fill(1.5, n); c = collect(range(0.5, 0.05; length=n))
+    # The retained class is an areal film [ppmw · m]; this one holds the same impurity as the
+    # mobile loading, so the two can be compared directly.
+    film = c .* dz .* ρ
     run(k, kr) = GEMB.calculate_melt(copy(T), copy(dz), copy(ρ), copy(W), fill(0.5, n), zeros(n),
-        fill(0.5, n), zeros(n), copy(c), copy(c), GEMB.ModelParameters(
+        fill(0.5, n), zeros(n), copy(c), copy(film), GEMB.ModelParameters(
             impurity_scavenging_efficiency=k, impurity_scavenging_efficiency_retained=kr), true)
-    load(out, j) = sum(out[j] .* out[2] .* out[3])
-    before = sum(c .* dz .* ρ)
+    load(out) = sum(out[9] .* out[2] .* out[3])
+    load_retained(out) = sum(out[10])
+    before = sum(film)
     out = run(0.2, 0.02)
     @test out[13] > 0                                   # water ran off
-    @test load(out, 9) < load(out, 10) < before         # the mobile class lost more
-    # Equal efficiencies: the two classes, started equal, stay equal.
+    @test load(out) < load_retained(out) < before       # the mobile class lost more
+    # Equal efficiencies: the two classes, started equal, lose the same fraction of each cell.
     out = run(0.2, 0.2)
-    @test out[9] == out[10]
+    @test out[10] ≈ out[9] .* out[2] .* out[3] rtol = 1e-12
     # Zero for both: nothing leaves the column.
     out = run(0.0, 0.0)
-    @test load(out, 9) ≈ before rtol = 1e-13
-    @test load(out, 10) ≈ before rtol = 1e-13
+    @test load(out) ≈ before rtol = 1e-13
+    @test load_retained(out) ≈ before rtol = 1e-13
     @test_throws "impurity_scavenging_efficiency_retained must be ≥ 0" GEMB.initialize_parameters(;
         impurity_scavenging_efficiency_retained = -0.1)
 end

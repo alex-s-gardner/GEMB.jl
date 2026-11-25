@@ -211,8 +211,8 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
     c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
     r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp)
     scale = r / r0
-    c_mobile = surface_impurity_effective(dz, density, impurity_effective, Zeros(length(dz)), mp)
-    impurity_effective_retained[1] = max(0.0, c - c_mobile) * mp.albedo_impurity_depth / dz[1]
+    film = impurity_effective_retained[1] / mp.albedo_impurity_depth
+    impurity_effective_retained[1] = max(0.0, c - (c0 - film)) * mp.albedo_impurity_depth
     remaining = mp.albedo_impurity_depth
     for i in eachindex(dz, density, grain_radius)
         density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && break

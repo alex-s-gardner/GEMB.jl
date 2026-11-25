@@ -49,12 +49,12 @@ Bundle the ten per-cell state vectors so the grid primitives can operate on all 
 generically. `values(...)` of the result is a homogeneous `NTuple{10,Vector{Float64}}`, so
 the generic loops below stay type-stable and fully unrolled.
 
-`impurity_effective` and `impurity_effective_retained` [ppmw] are the two classes of effective
-light-absorbing-impurity loading of each cell, whose sum is the `c` of the Gardner and Sharp
-(2010) albedo ([`calculate_albedo`](@ref)): the mobile impurity snowfall brings, and the
-retained, poorly scavenged impurity an observed albedo sets (see [`calculate_melt`](@ref) and
-[`assimilate_albedo!`](@ref)). Both are intensive and carried by the ice matrix, so they mix on
-matrix mass ([`mix_impurity`](@ref)).
+`impurity_effective` [ppmw] and `impurity_effective_retained` [ppmw · m] are the two classes of
+effective light-absorbing impurity of each cell, which together set the `c` of the Gardner and
+Sharp (2010) albedo ([`surface_impurity_effective`](@ref)): the mobile loading snowfall brings,
+carried by the ice matrix and mixed on matrix mass ([`mix_impurity`](@ref)), and the retained,
+poorly scavenged surface film an observed albedo sets, an areal amount that merges by summation
+(see [`calculate_melt`](@ref) and [`assimilate_albedo!`](@ref)).
 
 Albedo is deliberately absent: every albedo method is diagnostic in the current column
 state (see [`calculate_albedo`](@ref)), so there is no per-cell albedo to carry through a
@@ -124,15 +124,15 @@ end
 """
     mix_impurities!(cols, i, i_target, M_i, M_target)
 
-Set both impurity loadings of cell `i_target` to the matrix-mass-weighted mean of cells `i` (matrix
-mass `M_i`) and `i_target` (`M_target`), as a merge of the two requires ([`mix_impurity`](@ref)).
+Combine the impurity of cell `i` (matrix mass `M_i`) into cell `i_target` (`M_target`), as a merge
+of the two requires: the mobile loading [ppmw] is the matrix-mass-weighted mean
+([`mix_impurity`](@ref)), and the retained film [ppmw · m], an areal amount, is the sum.
 """
 @inline function mix_impurities!(cols::NamedTuple, i::Int, i_target::Int, M_i::Float64,
     M_target::Float64)
     cols.impurity_effective[i_target] = mix_impurity(cols.impurity_effective[i], M_i,
         cols.impurity_effective[i_target], M_target)
-    cols.impurity_effective_retained[i_target] = mix_impurity(cols.impurity_effective_retained[i], M_i,
-        cols.impurity_effective_retained[i_target], M_target)
+    cols.impurity_effective_retained[i_target] += cols.impurity_effective_retained[i]
     return nothing
 end
 
@@ -196,8 +196,9 @@ is added in. Deliberately *not* the grain-property convention above: inheriting 
 cell's age would discard the older cell's residence time entirely and make deep age drift
 young with every merge.
 
-`impurity_effective` and `impurity_effective_retained` are mass-weighted on **matrix** mass `M_i`/`M_target`
-([`mix_impurity`](@ref)), so the impurity mass `Σ c·dz·density` of each class is conserved.
+`impurity_effective` is mass-weighted on **matrix** mass `M_i`/`M_target` ([`mix_impurity`](@ref)) and
+the areal `impurity_effective_retained` is summed ([`mix_impurities!`](@ref)), so the impurity of each
+class is conserved.
 
 This performs only the physics of the merge. The now-redundant cell `i` still occupies a
 slot; the caller removes it with [`close_slot!`](@ref), either immediately or in a batch.
@@ -448,10 +449,10 @@ end
 Split cell `i` into two cells of half its thickness, conserving mass and energy exactly.
 
 Thickness and pore water are halved (both extensive); density, temperature, grain
-properties, age and the impurity loadings are intensive and so are duplicated, except that the
-surface layer's `impurity_effective_retained`, a film on the surface ([`surface_impurity_effective`](@ref)),
-stays wholly in the upper half. The result occupies indices `i` and `i+1`, and the column grows by
-one cell.
+properties, age and the mobile impurity loading are intensive and so are duplicated. The retained
+film is an areal amount at the top of the cell ([`surface_impurity_effective`](@ref)), so it stays
+wholly in the upper half. The result occupies indices `i` and `i+1`, and the column grows by one
+cell.
 """
 @inline function split_cell!(cols::NamedTuple, i::Int)
     @inbounds begin
@@ -459,10 +460,7 @@ one cell.
         cols.water[i] /= 2
     end
     open_slot!(cols, i)
-    if i == 1
-        @inbounds cols.impurity_effective_retained[1] *= 2
-        @inbounds cols.impurity_effective_retained[2] = 0.0
-    end
+    @inbounds cols.impurity_effective_retained[i+1] = 0.0
     return nothing
 end
 
