@@ -33,17 +33,62 @@ const ALBEDO_LOADING_TOLERANCE = 1e-13
 @inline _ssa_of_radius(r) = 3.0 / (0.091 * r)
 @inline _radius_of_ssa(S) = 3.0 / (0.091 * S)
 
-# The albedo an update matches: diffuse stream, no cloud term, so the state found does not depend
-# on the observation step's sun and cloud.
+# The diffuse, cloud-free albedo of a surface state, which does not depend on the step's sun and cloud.
 @inline _intrinsic_albedo(r, c, albedo_under, z_we) =
     _albedo_gardner(r, c, ALBEDO_DIFFUSE_ZENITH_ANGLE, 0.0, albedo_under, z_we)
 
 """
-    albedo_update(albedo_observed, r, c, albedo_under, z_we, mp) -> (r_new, c_new, converged)
+    AlbedoSky(solar_zenith_angle, cloud_optical_thickness, diffuse_fraction)
 
-The near-surface grain radius `r_new` [mm] and effective loading `c_new` [ppmw] whose intrinsic
-Gardner & Sharp albedo (diffuse stream, no cloud term) equals `albedo_observed`, by the smallest
-change from the model's `r` and `c` in `y = (ln SSA, ln(c + c₀))` weighted by
+The sky an observed albedo was measured under: the step's solar zenith angle [degrees], cloud optical
+thickness and diffuse share of the downward shortwave. [`_observed_albedo`](@ref) evaluates a surface state
+under it. `AlbedoSky()` is the diffuse, cloud-free sky of [`_intrinsic_albedo`](@ref).
+"""
+struct AlbedoSky
+    solar_zenith_angle::Float64
+    cloud_optical_thickness::Float64
+    diffuse_fraction::Float64
+end
+AlbedoSky() = AlbedoSky(ALBEDO_DIFFUSE_ZENITH_ANGLE, 0.0, 1.0)
+
+"""
+    albedo_sky(cfs, mp) -> AlbedoSky
+
+The sky an observed albedo of step `cfs` is matched under: the step's own sun, cloud and diffuse share
+when `mp.albedo_update_sky === :step` (the default), or the diffuse, cloud-free `AlbedoSky()` when
+`:diffuse`. A step with no downward shortwave has no measurable albedo and is matched under the diffuse
+sky.
+"""
+function albedo_sky(cfs::ClimateForcingStep, mp::ModelParameters)
+    mp.albedo_update_sky === :diffuse && return AlbedoSky()
+    cfs.shortwave_downward > 0.0 || return AlbedoSky()
+    return AlbedoSky(cfs.solar_zenith_angle, cfs.cloud_optical_thickness,
+                     clamp(cfs.shortwave_downward_diffuse / cfs.shortwave_downward, 0.0, 1.0))
+end
+
+"""
+    _observed_albedo(r, c, albedo_under, z_we, sky) -> Float64
+
+The shortwave-weighted albedo `1 − SW_net / SW↓` of a surface state under `sky`, the quantity a radiometer's
+`Σ SW↑ / Σ SW↓` measures and the one GEMB applies: the diffuse-stream albedo on the diffuse share and the
+direct-beam albedo on the rest, both with the cloud term of `sky`, as [`calculate_albedo`](@ref) and
+[`shortwave_net_surface`](@ref) combine them. With the sun at or below the horizon there is no direct beam.
+"""
+@inline function _observed_albedo(r, c, albedo_under, z_we, sky::AlbedoSky)
+    t = sky.cloud_optical_thickness
+    a_dif = _albedo_gardner(r, c, ALBEDO_DIFFUSE_ZENITH_ANGLE, t, albedo_under, z_we)
+    (sky.solar_zenith_angle < 90.0 && sky.diffuse_fraction < 1.0) || return a_dif
+    a_dir = _albedo_gardner(r, c, sky.solar_zenith_angle, t, albedo_under, z_we)
+    f = sky.diffuse_fraction
+    return f * a_dif + (1 - f) * a_dir
+end
+
+"""
+    albedo_update(albedo_observed, r, c, albedo_under, z_we, mp, sky = AlbedoSky()) -> (r_new, c_new, converged)
+
+The near-surface grain radius `r_new` [mm] and effective loading `c_new` [ppmw] whose Gardner & Sharp
+albedo under `sky` ([`_observed_albedo`](@ref)) equals `albedo_observed`, by the smallest change from the
+model's `r` and `c` in `y = (ln SSA, ln(c + c₀))` weighted by
 `σ = (mp.albedo_update_sigma_log_ssa, mp.albedo_update_sigma_log_impurity)`:
 
     minimize ((y₁ − y₁⁰)/σ₁)² + ((y₂ − y₂⁰)/σ₂)²  subject to  α(y) = albedo_observed,
@@ -64,7 +109,8 @@ brighter than any, the largest loading at the largest grain for one darker than 
 equivalent [m], as `_albedo_gardner` takes them (`z_we = Inf` for semi-infinite snow).
 """
 function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Real, z_we::Real,
-    mp::ModelParameters)
+    mp::ModelParameters, sky::AlbedoSky = AlbedoSky())
+    α(rr, cc) = _observed_albedo(rr, cc, Float64(albedo_under), Float64(z_we), sky)
     σ1, σ2 = mp.albedo_update_sigma_log_ssa, mp.albedo_update_sigma_log_impurity
     (σ1 >= 0 && σ2 > 0) || throw(ArgumentError(
         "albedo_update_sigma_log_ssa must be ≥ 0 and albedo_update_sigma_log_impurity > 0, got " *
@@ -78,12 +124,12 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
 
     # Grain size held: a one-dimensional solve in the loading.
     if σ1 == 0
-        cc, ok = _loading_for_albedo(target, r0, au, zw)
+        cc, ok = _loading_for_albedo(target, r0, α)
         return r0, cc, ok
     end
     # Out of reach at every grain size within the bounds.
-    brightest = _intrinsic_albedo(rlo, 0.0, au, zw)
-    darkest = _intrinsic_albedo(rhi, IMPURITY_EFFECTIVE_MAX, au, zw)
+    brightest = α(rlo, 0.0)
+    darkest = α(rhi, IMPURITY_EFFECTIVE_MAX)
     target > brightest && return rlo, 0.0, false
     target < darkest && return rhi, IMPURITY_EFFECTIVE_MAX, false
     # The contour exists where clean snow of that grain is at least as bright as the target and the
@@ -94,10 +140,10 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     # the largest loading brighter.
     function f(y1)
         r1 = radius(y1)
-        a_clean = _intrinsic_albedo(r1, 0.0, au, zw)
-        a_dark = _intrinsic_albedo(r1, IMPURITY_EFFECTIVE_MAX, au, zw)
+        a_clean = α(r1, 0.0)
+        a_dark = α(r1, IMPURITY_EFFECTIVE_MAX)
         (a_clean >= target && a_dark <= target) || return Inf
-        return cost(y1, _loading_in_bracket(target, r1, au, zw, a_clean, a_dark))
+        return cost(y1, _loading_in_bracket(target, r1, α, a_clean, a_dark))
     end
     n = ALBEDO_UPDATE_SCAN_POINTS
     grid = range(y1lo, y1hi; length = n)
@@ -116,31 +162,31 @@ function albedo_update(albedo_observed::Real, r::Real, c::Real, albedo_under::Re
     end
     y1 = (lo + hi) / 2
     rr = radius(y1)
-    cc, ok = _loading_for_albedo(target, rr, au, zw)
+    cc, ok = _loading_for_albedo(target, rr, α)
     return rr, cc, ok
 end
 
 """
-    _loading_for_albedo(target, r, albedo_under, z_we) -> (c, converged)
+    _loading_for_albedo(target, r, α) -> (c, converged)
 
-The effective loading `c` [ppmw] in `[0, IMPURITY_EFFECTIVE_MAX]` at which the intrinsic
-albedo of grain radius `r` equals `target` ([`_loading_in_bracket`](@ref)). Clamped to a bound when
+The effective loading `c` [ppmw] in `[0, IMPURITY_EFFECTIVE_MAX]` at which the albedo `α(r, c)` of grain
+radius `r` equals `target` ([`_loading_in_bracket`](@ref)). Clamped to a bound when
 the target lies outside that range, with `converged` true only if the bound's albedo is within
 `ALBEDO_UPDATE_TOLERANCE` of it.
 """
-function _loading_for_albedo(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64)
-    a_clean = _intrinsic_albedo(r, 0.0, albedo_under, z_we)
+function _loading_for_albedo(target::Float64, r::Float64, α::F) where {F}
+    a_clean = α(r, 0.0)
     a_clean <= target && return 0.0, abs(a_clean - target) < ALBEDO_UPDATE_TOLERANCE
-    a_dark = _intrinsic_albedo(r, IMPURITY_EFFECTIVE_MAX, albedo_under, z_we)
+    a_dark = α(r, IMPURITY_EFFECTIVE_MAX)
     a_dark >= target && return IMPURITY_EFFECTIVE_MAX, abs(a_dark - target) < ALBEDO_UPDATE_TOLERANCE
-    c = _loading_in_bracket(target, r, albedo_under, z_we, a_clean, a_dark)
-    return c, abs(_intrinsic_albedo(r, c, albedo_under, z_we) - target) < ALBEDO_UPDATE_TOLERANCE
+    c = _loading_in_bracket(target, r, α, a_clean, a_dark)
+    return c, abs(α(r, c) - target) < ALBEDO_UPDATE_TOLERANCE
 end
 
 """
-    _loading_in_bracket(target, r, albedo_under, z_we, a_clean, a_dark) -> c
+    _loading_in_bracket(target, r, α, a_clean, a_dark) -> c
 
-The loading `c` [ppmw] at which the intrinsic albedo of grain radius `r` equals `target`, given
+The loading `c` [ppmw] at which the albedo `α(r, c)` of grain radius `r` equals `target`, given
 that clean snow (`a_clean`) is at least as bright as `target` and the largest loading (`a_dark`) at
 most as bright. The albedo falls monotonically with `c`; the root is found in `ln(c + c₀)`, where
 the albedo is close to linear, by regula falsi with the Illinois modification (Dowell and Jarratt,
@@ -151,8 +197,8 @@ the albedo is close to linear, by regula falsi with the Illinois modification (D
 - Dowell, M. and Jarratt, P. (1971). A modified regula falsi method for computing the root of an
   equation. *BIT* 11, 168-174.
 """
-function _loading_in_bracket(target::Float64, r::Float64, albedo_under::Float64, z_we::Float64,
-    a_clean::Float64, a_dark::Float64)
+function _loading_in_bracket(target::Float64, r::Float64, α::F, a_clean::Float64,
+    a_dark::Float64) where {F}
     c0 = IMPURITY_UPDATE_OFFSET
     loading(y) = clamp(exp(y) - c0, 0.0, IMPURITY_EFFECTIVE_MAX)
     ylo, yhi = log(c0), log(IMPURITY_EFFECTIVE_MAX + c0)
@@ -163,7 +209,7 @@ function _loading_in_bracket(target::Float64, r::Float64, albedo_under::Float64,
     y = ylo
     for _ in 1:100
         y = (ylo * ghi - yhi * glo) / (ghi - glo)
-        g = _intrinsic_albedo(r, loading(y), albedo_under, z_we) - target
+        g = α(r, loading(y)) - target
         (abs(g) < ALBEDO_LOADING_TOLERANCE || yhi - ylo < 1e-14) && break
         if g > 0
             ylo, glo = y, g
@@ -195,6 +241,10 @@ film is 0 and the surface stays darker than the update.
 No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d]: the
 observation is a multi-day composite that still shows the surface the fresh snow buried.
 
+The state is matched under the sky of the step ([`albedo_sky`](@ref)), so that the albedo GEMB then applies
+to the step's shortwave is the observed one: an observed albedo is `Σ SW↑ / Σ SW↓`, the shortwave-weighted
+albedo of the surface under the sky it was measured in.
+
 Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, and whether an update was
 applied; `(0, 0, false)` when none was.
 """
@@ -209,7 +259,7 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
     z_we = mass_snow / DENSITY_WATER
     r0 = grain_radius[1]
     c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
-    r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp)
+    r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, albedo_under, z_we, mp, albedo_sky(cfs, mp))
     scale = r / r0
     film = impurity_effective_retained[1] / mp.albedo_impurity_depth
     impurity_effective_retained[1] = max(0.0, c - (c0 - film)) * mp.albedo_impurity_depth

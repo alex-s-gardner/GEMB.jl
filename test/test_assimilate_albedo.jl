@@ -38,6 +38,32 @@ using GEMB
         GEMB.ModelParameters(; albedo_update_sigma_log_impurity = 0.0))
 end
 
+@testset "albedo_update matches the albedo applied under the observation's sky" begin
+    mp = GEMB.ModelParameters()
+    # A sunny step (SZA 60°, 20 % diffuse) and an overcast one (SZA 60°, cloud τ = 5, all diffuse).
+    for (sza, τ, f) in ((60.0, 0.0, 0.2), (60.0, 5.0, 1.0), (75.0, 1.0, 0.5))
+        sky = GEMB.AlbedoSky(sza, τ, f)
+        r, c, ok = GEMB.albedo_update(0.6, 0.3, 0.02, 0.0, Inf, mp, sky)
+        @test ok
+        @test abs(GEMB._observed_albedo(r, c, 0.0, Inf, sky) - 0.6) < 1e-6
+        # GEMB's own albedo of that state, combined as `shortwave_net_surface` combines it, is the observation.
+        cfs = GEMB.ClimateForcingStep(; dt = 3600.0, solar_zenith_angle = sza, cloud_optical_thickness = τ,
+            shortwave_downward = 500.0, shortwave_downward_diffuse = 500.0 * f)
+        n = 4; dz = fill(0.05, n); ρ = fill(300.0, n)
+        a, ad = GEMB.calculate_albedo(dz, ρ, fill(r, n), fill(c, n), zeros(n), cfs, mp)
+        @test abs(GEMB.effective_albedo(a, ad, cfs) - 0.6) < 1e-6
+    end
+    # The diffuse cloud-free sky is the intrinsic albedo.
+    @test GEMB._observed_albedo(0.3, 0.02, 0.0, Inf, GEMB.AlbedoSky()) == GEMB._intrinsic_albedo(0.3, 0.02, 0.0, Inf)
+    # The sky of a step, and the option that turns it off.
+    cfs = GEMB.ClimateForcingStep(; dt = 3600.0, solar_zenith_angle = 40.0, cloud_optical_thickness = 2.0,
+        shortwave_downward = 400.0, shortwave_downward_diffuse = 100.0)
+    @test GEMB.albedo_sky(cfs, mp) == GEMB.AlbedoSky(40.0, 2.0, 0.25)
+    @test GEMB.albedo_sky(cfs, GEMB.ModelParameters(; albedo_update_sky = :diffuse)) == GEMB.AlbedoSky()
+    @test GEMB.albedo_sky(GEMB.ClimateForcingStep(; dt = 3600.0), mp) == GEMB.AlbedoSky()
+    @test_throws "albedo_update_sky must be :step or :diffuse" GEMB.initialize_parameters(; albedo_update_sky = :noon)
+end
+
 @testset "assimilate_albedo!: sets the retained surface film, persists under burial" begin
     mp = GEMB.ModelParameters(; albedo_impurity_depth = 0.02)
     n = 6
@@ -54,7 +80,8 @@ end
     @test ok && d2 > 0
     @test all(==(0.02), bc)
     @test bcr[1] > 0 && all(==(0.0), bcr[2:end])
-    @test abs(GEMB._intrinsic_albedo(r[1], total(dz, density, bc, bcr), 0.0, Inf) - 0.55) < 1e-6
+    @test abs(GEMB._observed_albedo(r[1], total(dz, density, bc, bcr), 0.0, Inf,
+        GEMB.albedo_sky(cfs(0.55), mp)) - 0.55) < 1e-6
     dark = total(dz, density, bc, bcr)
     # The film is an areal amount, read as that amount over albedo_impurity_depth.
     @test dark ≈ 0.02 + bcr[1] / mp.albedo_impurity_depth
