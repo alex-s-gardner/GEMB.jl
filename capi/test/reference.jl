@@ -35,7 +35,7 @@ state, flux_total = run_reference()
 # `%.17g` round-trips a Float64 exactly, so the comparison is on the values rather than on how
 # they were printed.
 for name in (:temperature, :dz, :density, :water, :grain_radius, :grain_dendricity,
-             :grain_sphericity, :age, :black_carbon, :black_carbon_retained)
+             :grain_sphericity, :age, :impurity_effective, :impurity_effective_retained)
     column = getfield(state, name)
     for i in eachindex(column)
         println(rpad(string(name), 20), " ", i, " ", Printf.@sprintf("%.17g", column[i]))

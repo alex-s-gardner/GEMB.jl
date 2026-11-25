@@ -1,5 +1,5 @@
 """
-    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained, mp::ModelParameters, verbose::Bool; dt, n_target=length(dz))
+    manage_layer_thickness(temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age, impurity_effective, impurity_effective_retained, mp::ModelParameters, verbose::Bool; dt, n_target=length(dz))
 
 Return every cell to its per-cell thickness band, then restore the column to exactly
 `n_target` cells.
@@ -34,7 +34,7 @@ The Dirichlet temperature boundary condition is re-imposed at the bottom; the en
 requires is the only term returned in `E_added`.
 
 Returns `(temperature, dz, density, water, grain_radius, grain_dendricity,
-grain_sphericity, age, black_carbon, black_carbon_retained, E_added)`. Arrays are mutated in place and their
+grain_sphericity, age, impurity_effective, impurity_effective_retained, E_added)`. Arrays are mutated in place and their
 length on return is `n_target`.
 
 Two keywords serve the snow over the ground of `lower_boundary = :ground`, whose cell count
@@ -54,13 +54,13 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     density::Vector{Float64}, water::Vector{Float64},
     grain_radius::Vector{Float64}, grain_dendricity::Vector{Float64},
     grain_sphericity::Vector{Float64}, age::Vector{Float64},
-    black_carbon::Vector{Float64}, black_carbon_retained::Vector{Float64},
+    impurity_effective::Vector{Float64}, impurity_effective_retained::Vector{Float64},
     mp::ModelParameters, verbose::Bool; dt::Float64, n_target::Int=length(dz),
     workspace::ColumnWorkspace=ColumnWorkspace(), n_max::Int=0,
     dirichlet_bottom::Bool=true)
 
     cols = column_state(temperature, dz, density, water, grain_radius,
-        grain_dendricity, grain_sphericity, age, black_carbon, black_carbon_retained)
+        grain_dendricity, grain_sphericity, age, impurity_effective, impurity_effective_retained)
 
     if verbose
         M_total_initial, E_total_initial = column_mass_energy(cols, mp)
@@ -166,16 +166,18 @@ function manage_layer_thickness(temperature::Vector{Float64}, dz::Vector{Float64
     end
 
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity,
-    age, black_carbon, black_carbon_retained, E_added
+    age, impurity_effective, impurity_effective_retained, E_added
 end
 
 # Whether a surface cell thinner than its band is kept as a layer of its own: it is snow, holds
 # at least `snow_layer_min_mass(dt)`, and is distinct from cell 2 (`snow_layers_distinct`, always
-# so over firn or ice).
+# so over firn or ice, and always so over a cell carrying a retained film, which merging would
+# bring back to the surface under the snow).
 @inline function _surface_layer_kept(cols::NamedTuple, mp::ModelParameters, dt::Float64)
     density = cols.density
     density[1] < DENSITY_PORE_CLOSEOFF - D_TOLERANCE || return false
     cols.dz[1] * density[1] >= snow_layer_min_mass(dt) || return false
+    cols.impurity_effective_retained[2] > 0.0 && return true
     D = snow_layer_distance(cols.grain_dendricity[1], cols.grain_sphericity[1],
         cols.grain_radius[1], cols.water[1] > WATER_TOLERANCE, cols.age[1], density[1],
         cols.grain_dendricity[2], cols.grain_sphericity[2], cols.grain_radius[2],

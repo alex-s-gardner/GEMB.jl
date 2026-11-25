@@ -70,8 +70,8 @@ function _make_core_state(; n=10)
         grain_dendricity = 0.5 * ones(n),
         grain_sphericity = 0.5 * ones(n),
         age = zeros(n),
-        black_carbon = zeros(n),
-        black_carbon_retained = zeros(n),
+        impurity_effective = zeros(n),
+        impurity_effective_retained = zeros(n),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -138,8 +138,8 @@ end
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
         age = zeros(10),
-        black_carbon = zeros(10),
-        black_carbon_retained = zeros(10),
+        impurity_effective = zeros(10),
+        impurity_effective_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )
@@ -161,8 +161,8 @@ end
         grain_dendricity = 0.5 * ones(10),
         grain_sphericity = 0.5 * ones(10),
         age = zeros(10),
-        black_carbon = zeros(10),
-        black_carbon_retained = zeros(10),
+        impurity_effective = zeros(10),
+        impurity_effective_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
     )

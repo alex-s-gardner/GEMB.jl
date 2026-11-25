@@ -149,6 +149,7 @@ function validate_parameters(mp::ModelParameters)
     @assert mp.albedo_impurity_depth > 0 "albedo_impurity_depth must be positive"
     @assert mp.albedo_update_sigma_log_ssa >= 0 "albedo_update_sigma_log_ssa must be ≥ 0"
     @assert mp.albedo_update_sigma_log_impurity > 0 "albedo_update_sigma_log_impurity must be positive"
+    @assert mp.albedo_update_snow_age_min >= 0 "albedo_update_snow_age_min must be ≥ 0"
 
     # Output
     @assert mp.output_frequency in (:all, :monthly, :weekly, :daily, :last) "Invalid output_frequency"

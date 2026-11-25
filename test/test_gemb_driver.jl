@@ -608,7 +608,7 @@ end
     out_bc = gemb(profile, cf_bc, mp_bc)
     @test parent(out_bc[:albedo_broadband]) == parent(out[:albedo_broadband])
     profile_bc = deepcopy(profile)
-    parent(profile_bc[:black_carbon]) .= 0.05
+    parent(profile_bc[:impurity_effective]) .= 0.05
     out_bc = gemb(profile_bc, cf_bc, mp_bc)
     @test parent(out_bc[:albedo_broadband]) != parent(out[:albedo_broadband])
     @test parent(gemb(profile_bc, cf_bc, mp_bc)[:melt]) == parent(out_bc[:melt])

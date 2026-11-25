@@ -256,7 +256,7 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
     isfinite(T_base) || error("gemb_core_prescribed: the prescribed base temperature " *
         "(forcing layer temperature_ground) is $(T_base) K")
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age, black_carbon, black_carbon_retained) = snow
+       grain_sphericity, age, impurity_effective, impurity_effective_retained) = snow
     age .+= cfs.dt / 86400.0
     h_water = specific_enthalpy_water(mp)
 
@@ -274,13 +274,14 @@ function gemb_core_prescribed(snow::NamedTuple, T_base::Float64, cfs::ClimateFor
                 grain_dendricity, grain_sphericity, cfs, mp)
     end
     cols = column_state(temperature, dz, density, water, grain_radius, grain_dendricity,
-        grain_sphericity, age, black_carbon, black_carbon_retained)
+        grain_sphericity, age, impurity_effective, impurity_effective_retained)
 
     # 2. Albedo, after updating the near-surface snow from an observed albedo where there is one,
     # and 3. shortwave
-    assimilate_albedo!(dz, density, grain_radius, black_carbon, black_carbon_retained, cfs, mp)
+    assimilate_albedo!(dz, density, grain_radius, age, impurity_effective,
+        impurity_effective_retained, cfs, mp)
     albedo_broadband, albedo_diffuse = calculate_albedo_ground(dz, density, grain_radius,
-        black_carbon, black_carbon_retained, cfs, mp)
+        impurity_effective, impurity_effective_retained, cfs, mp)
     sw_net = shortwave_net_surface(albedo_broadband, albedo_diffuse, cfs)
     z0 = isempty(dz) ? mp.ground_roughness : surface_roughness(mp, density[1], water[1])
     table = _stability_table!(thermal_workspace, mp, cfs, z0,

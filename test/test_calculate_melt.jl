@@ -10,9 +10,9 @@ function _make_melt_inputs(; n=5)
     grain_dendricity = 0.5 * ones(n)
     grain_sphericity = 0.5 * ones(n)
     age = zeros(n)
-    black_carbon = zeros(n)
+    impurity_effective = zeros(n)
     return temperature, dz, density, water, grain_radius, grain_dendricity, grain_sphericity, age,
-        black_carbon
+        impurity_effective
 end
 
 # `:constant` retention, which is what most of the assertions below are written against:
