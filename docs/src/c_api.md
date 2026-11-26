@@ -98,6 +98,9 @@ int params, workspace;
 gemb_params_create(10800.0, options, numeric, flags, &params);
 gemb_workspace_create(&workspace);
 
+/* evaporation_condensation, melt_surface, and the column's ice albedo */
+double scalars[3] = {0.0, 0.0, numeric[GEMB_NUM_ALBEDO_ICE]};
+
 for (int step = 0; step < n_steps; step++) {
     /* fill forcing[] for this step from your own data, in GEMB_FRC_* order */
     int status = gemb_step(n, temperature, dz, density, water, grain_radius,

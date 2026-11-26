@@ -139,6 +139,10 @@ timestep to change `dz`.
 Returns `(state, flux)` where `state` is the updated column state and
 `flux` contains energy/mass budget terms for output accumulation.
 
+Besides the layer arrays, `state` carries the scalars `evaporation_condensation`, `melt_surface`
+and `albedo_ice`, the column's ice albedo (see [`assimilate_albedo!`](@ref)); a new column starts
+it at `mp.albedo_ice`.
+
 `thermal_workspace` is the reusable scratch for the thermal solve (see
 [`ThermalWorkspace`](@ref)). The default allocates a fresh one per call; [`gemb`](@ref)
 passes one down so the buffers are grown once for the whole run. One workspace belongs to
@@ -160,7 +164,8 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
     # rebinds state to new_state after each call. `evaporation_condensation` is deliberately
     # absent: step 5 assigns it unconditionally before any read, so binding it here would be dead.
     (; temperature, dz, density, water, grain_radius, grain_dendricity,
-       grain_sphericity, age, impurity_effective, impurity_effective_retained, melt_surface) = state
+       grain_sphericity, age, impurity_effective, impurity_effective_retained, melt_surface,
+       albedo_ice) = state
 
     # 0. Advance the age clock, before any mass moves, so mass added later in this timestep
     #    reads as age 0 in this timestep's output. The column carries no absolute time, so
@@ -180,16 +185,16 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
             grain_dendricity, grain_sphericity, cfs, mp)
 
     # 1b. Update the near-surface snow from an observed albedo, where the step has one.
-    dlog_ssa, dlog_impurity, albedo_updated =
+    dlog_ssa, dlog_impurity, albedo_updated, albedo_ice =
         assimilate_albedo!(dz, density, grain_radius, age, impurity_effective,
-        impurity_effective_retained, cfs, mp)
+        impurity_effective_retained, cfs, mp; albedo_ice)
 
     # 2. Calculate snow, firn, and ice albedo. Both are scalars diagnosed from the current
     #    column, not carried state. The direct and diffuse albedos combine into the
     #    shortwave-weighted `effective_albedo` returned in `flux` for output.
     albedo_broadband, albedo_diffuse =
         calculate_albedo(dz, density, grain_radius, impurity_effective, impurity_effective_retained,
-            cfs, mp)
+            cfs, mp; albedo_ice)
 
     # 3. Determine distribution of absorbed SW radiation with depth
     _resize_workspace!(column_workspace, length(dz))
@@ -409,6 +414,7 @@ function gemb_core(state, cfs::ClimateForcingStep, mp::ModelParameters, verbose:
         impurity_effective_retained=impurity_effective_retained,
         evaporation_condensation=evaporation_condensation,
         melt_surface=melt_surface,
+        albedo_ice=albedo_ice,
     )
 
     flux = (

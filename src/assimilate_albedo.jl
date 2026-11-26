@@ -25,6 +25,12 @@ const IMPURITY_EFFECTIVE_MAX = 20.0
 # Grain-radius range [mm] an update may set: new snow to the non-spherical grain cap.
 const ALBEDO_UPDATE_RADIUS_RANGE = (RE_NEW_SNOW, GRAIN_RADIUS_ICE)
 const ALBEDO_UPDATE_TOLERANCE = 1e-6
+# Range an observation of exposed ice may set the column's ice albedo to: dark, impurity-rich ice
+# to the albedo of firn at pore close-off.
+const ALBEDO_ICE_OBSERVED_RANGE = (0.1, ALBEDO_FIRN_MAX)
+# Largest fraction of the way from ice to pore close-off density at which an observation of
+# exposed firn sets the ice albedo (see `_ice_albedo_update`).
+const ALBEDO_ICE_UPDATE_FIRN_MAX = 0.5
 # Points of the grain-size scan in `albedo_update`, and the albedo residual the loading solve stops at.
 const ALBEDO_UPDATE_SCAN_POINTS = 40
 const ALBEDO_LOADING_TOLERANCE = 1e-13
@@ -173,7 +179,8 @@ function _loading_in_bracket(target::Float64, r::Float64, α::F, a_clean::Float6
 end
 
 """
-    assimilate_albedo!(dz, density, grain_radius, age, impurity_effective, impurity_effective_retained, cfs, mp) -> (dlog_ssa, dlog_impurity, applied)
+    assimilate_albedo!(dz, density, grain_radius, age, impurity_effective, impurity_effective_retained, cfs, mp;
+                       albedo_ice = mp.albedo_ice) -> (dlog_ssa, dlog_impurity, applied, albedo_ice)
 
 Update the near-surface snow from `cfs.albedo_observed` when it is finite, the albedo method is
 `:GardnerSharp` and the surface is snow (its top layer below pore close-off density). The update
@@ -193,17 +200,29 @@ The state matched is the one whose albedo GEMB applies to the step's shortwave, 
 ([`effective_albedo`](@ref)), equals the observation, which is `Σ SW↑ / Σ SW↓` under the sky it was measured
 in.
 
-Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, and whether an update was
-applied; `(0, 0, false)` when none was.
+An observation of exposed firn or ice sets the column's ice albedo instead
+([`_ice_albedo_update`](@ref)). `albedo_ice` is the column's current ice albedo, read for the snow
+over firn or ice; the caller carries it as column state (`albedo_ice` of the [`gemb_core`](@ref)
+state), so an observed ice albedo holds until the next observation of exposed firn or ice and is
+also the ice albedo under snow. The `:ground` and `:prescribed` columns, whose firn or ice is a
+refrozen lens in the snow, do not carry it and keep `mp.albedo_ice`.
+
+Returns the change of the surface state, `Δ ln SSA` and `Δ ln(c + c₀)`, whether an update was
+applied, and the column's ice albedo after the step's update; `(0, 0, false, albedo_ice)` when
+none was.
 """
 function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
     grain_radius::Vector{Float64}, age::Vector{Float64}, impurity_effective::Vector{Float64},
-    impurity_effective_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters)
+    impurity_effective_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters;
+    albedo_ice::Float64=mp.albedo_ice)
     (isfinite(cfs.albedo_observed) && mp.albedo_method === :GardnerSharp && !isempty(dz)) ||
-        return (0.0, 0.0, false)
-    density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE && return (0.0, 0.0, false)
-    age[1] < mp.albedo_update_snow_age_min && return (0.0, 0.0, false)
-    albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
+        return (0.0, 0.0, false, albedo_ice)
+    if density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE
+        applied, albedo_ice = _ice_albedo_update(cfs.albedo_observed, density[1], albedo_ice, mp)
+        return (0.0, 0.0, applied, albedo_ice)
+    end
+    age[1] < mp.albedo_update_snow_age_min && return (0.0, 0.0, false, albedo_ice)
+    albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp, albedo_ice)
     r0 = grain_radius[1]
     c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
     # The albedo GEMB applies to this step's shortwave from a surface state, 1 − SW_net / SW↓.
@@ -220,5 +239,23 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
         remaining <= 0.0 && break
     end
     return (log(_ssa_of_radius(r)) - log(_ssa_of_radius(r0)),
-            log(c + IMPURITY_UPDATE_OFFSET) - log(c0 + IMPURITY_UPDATE_OFFSET), true)
+            log(c + IMPURITY_UPDATE_OFFSET) - log(c0 + IMPURITY_UPDATE_OFFSET), true, albedo_ice)
+end
+
+"""
+    _ice_albedo_update(albedo_observed, density_surface, albedo_ice, mp) -> (applied, albedo_ice_new)
+
+The ice albedo whose [`firn_ice_albedo`](@ref) at the exposed surface density `density_surface`
+[kg m-3] equals `albedo_observed`, clamped to `ALBEDO_ICE_OBSERVED_RANGE`. Exposed firn and ice
+reflect that albedo in both streams, so it is also the albedo GEMB applies. Firn whose
+`_firn_fraction` exceeds `ALBEDO_ICE_UPDATE_FIRN_MAX`, whose albedo hardly depends on the ice
+albedo, is not updated.
+"""
+function _ice_albedo_update(albedo_observed::Float64, density_surface::Float64,
+    albedo_ice::Float64, mp::ModelParameters)
+    f = _firn_fraction(density_surface, mp)
+    f > ALBEDO_ICE_UPDATE_FIRN_MAX && return (false, albedo_ice)
+    # Inverse of `firn_ice_albedo`: α = (1 − f)·albedo_ice + f·ALBEDO_FIRN_MAX.
+    albedo_ice_new = (albedo_observed - f * ALBEDO_FIRN_MAX) / (1.0 - f)
+    return (true, clamp(albedo_ice_new, ALBEDO_ICE_OBSERVED_RANGE...))
 end

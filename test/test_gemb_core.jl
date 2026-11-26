@@ -74,6 +74,7 @@ function _make_core_state(; n=10)
         impurity_effective_retained = zeros(n),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
+        albedo_ice = 0.48,
     )
 end
 
@@ -142,6 +143,7 @@ end
         impurity_effective_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
+        albedo_ice = 0.48,
     )
     cfs = _make_core_cfs(dt=dt, temperature_air=280.0, shortwave_downward=800.0)
     mp = _make_core_mp(dt=dt)
@@ -165,6 +167,7 @@ end
         impurity_effective_retained = zeros(10),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
+        albedo_ice = 0.48,
     )
     cfs = _make_core_cfs()
     mp = _make_core_mp()

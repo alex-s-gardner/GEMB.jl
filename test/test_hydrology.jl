@@ -54,6 +54,7 @@ _hydro_state(; n=10) = (
     impurity_effective_retained=zeros(n),
     evaporation_condensation=0.0,
     melt_surface=0.0,
+    albedo_ice=0.48,
 )
 
 @testset "runoff_timescale (Zuo and Oerlemans 1996 eq. 22)" begin
@@ -396,6 +397,7 @@ end
             impurity_effective_retained=zeros(n),
             evaporation_condensation=0.0,
             melt_surface=0.0,
+            albedo_ice=0.48,
         )
         # The slab must survive the run for the barrier to keep blocking, so hold the grid
         # fixed: no accumulation, and cells wide enough that nothing is merged or split.

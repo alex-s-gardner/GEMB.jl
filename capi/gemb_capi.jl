@@ -411,7 +411,8 @@ The ten profile arrays and `scalars` are read and then overwritten with the new 
 The column keeps its cell count and its total depth, so `n` and `sum(dz)` are the same on
 return as on entry.
 
-`scalars` is `[evaporation_condensation, melt_surface]`. `forcing` is `GEMB_N_FORCING` doubles
+`scalars` is `[evaporation_condensation, melt_surface, albedo_ice]`, `albedo_ice` being the column's
+ice albedo; a host starts it at the parameter set's `albedo_ice`. `forcing` is `GEMB_N_FORCING` doubles
 in `ClimateForcingStep` field order, `flux_out` receives `GEMB_N_FLUX` doubles. `viscosity_out`
 takes `n` doubles when the parameter set requested viscosity, and may be `NULL` otherwise.
 """
@@ -466,6 +467,7 @@ Base.@ccallable function gemb_step(
             impurity_effective_retained=[unsafe_load(impurity_effective_retained, i) for i in 1:m],
             evaporation_condensation=unsafe_load(scalars, 1),
             melt_surface=unsafe_load(scalars, 2),
+            albedo_ice=unsafe_load(scalars, 3),
         )
 
         cfs = GEMB.ClimateForcingStep(
@@ -495,6 +497,7 @@ Base.@ccallable function gemb_step(
         end
         unsafe_store!(scalars, new_state.evaporation_condensation, 1)
         unsafe_store!(scalars, new_state.melt_surface, 2)
+        unsafe_store!(scalars, new_state.albedo_ice, 3)
 
         unsafe_store!(flux_out, flux.albedo_broadband, 1)
         unsafe_store!(flux_out, flux.shortwave_net, 2)

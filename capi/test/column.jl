@@ -45,6 +45,7 @@ function reference_setup()
         impurity_effective_retained=zeros(N_CELLS),
         evaporation_condensation=0.0,
         melt_surface=0.0,
+        albedo_ice=0.48,
     )
 
     forcing = GEMB.ClimateForcingStep(

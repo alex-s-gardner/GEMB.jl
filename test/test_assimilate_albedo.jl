@@ -1,5 +1,6 @@
 using Test
 using GEMB
+using Dates
 
 # A diffuse, cloud-free albedo of semi-infinite snow, as a stand-in for the albedo of a step.
 const _ALB = (r, c) -> GEMB._albedo_gardner(r, c, GEMB.ALBEDO_DIFFUSE_ZENITH_ANGLE, 0.0, 0.0, Inf)
@@ -63,7 +64,7 @@ end
     total(dz, density, bc, bcr) = GEMB.surface_impurity_effective(dz, density, bc, bcr, mp)
     cfs(obs) = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = obs)
     # No observation: nothing changes.
-    @test GEMB.assimilate_albedo!(dz, density, r, age, bc, bcr, cfs(NaN), mp) == (0.0, 0.0, false)
+    @test GEMB.assimilate_albedo!(dz, density, r, age, bc, bcr, cfs(NaN), mp) == (0.0, 0.0, false, mp.albedo_ice)
     @test all(==(0.02), bc) && all(==(0.0), bcr)
     # An observation sets the film in the surface layer only, so that the albedo's loading matches;
     # the mobile loading from snowfall is unchanged.
@@ -164,5 +165,58 @@ end
     n = 4
     cfs = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = 0.55)
     @test (@inferred GEMB.assimilate_albedo!(fill(0.01, n), fill(350.0, n), fill(0.3, n),
-        fill(10.0, n), zeros(n), zeros(n), cfs, mp)) isa Tuple{Float64,Float64,Bool}
+        fill(10.0, n), zeros(n), zeros(n), cfs, mp)) isa Tuple{Float64,Float64,Bool,Float64}
+    @test (@inferred GEMB.assimilate_albedo!(fill(0.01, n), fill(mp.density_ice, n), fill(0.3, n),
+        fill(10.0, n), zeros(n), zeros(n), cfs, mp)) isa Tuple{Float64,Float64,Bool,Float64}
+end
+
+@testset "an observation of exposed ice or firn sets the column's ice albedo" begin
+    mp = GEMB.ModelParameters()
+    n = 4; dz = fill(0.05, n)
+    cfs(obs) = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = obs, solar_zenith_angle = 60.0,
+        shortwave_downward = 500.0, shortwave_downward_diffuse = 100.0)
+    col(ρ) = (dz, fill(ρ, n), fill(GEMB.GRAIN_RADIUS_ICE, n), fill(10.0, n), zeros(n), zeros(n))
+    ρ_mid = mp.density_ice - 0.25 * (mp.density_ice - GEMB.DENSITY_PORE_CLOSEOFF)
+    for ρ in (mp.density_ice, ρ_mid), obs in (0.25, 0.4, 0.55)
+        c = col(ρ)
+        _, _, ok, albedo_ice = GEMB.assimilate_albedo!(c..., cfs(obs), mp)
+        @test ok
+        # The albedo GEMB then applies is the observation, and the snow state is untouched.
+        a, ad = GEMB.calculate_albedo(c[1:3]..., c[5:6]..., cfs(obs), mp; albedo_ice)
+        @test GEMB.effective_albedo(a, ad, cfs(obs)) ≈ obs rtol = 1e-12
+        @test c[3] == fill(GEMB.GRAIN_RADIUS_ICE, n) && c[6] == zeros(n)
+    end
+    # Out of range: clamped.
+    @test GEMB.assimilate_albedo!(col(mp.density_ice)..., cfs(0.05), mp)[4] == GEMB.ALBEDO_ICE_OBSERVED_RANGE[1]
+    @test GEMB.assimilate_albedo!(col(mp.density_ice)..., cfs(0.9), mp)[4] == GEMB.ALBEDO_ICE_OBSERVED_RANGE[2]
+    # Firn near pore close-off, whose albedo hardly depends on the ice albedo, is not used.
+    ρ_light = GEMB.DENSITY_PORE_CLOSEOFF + 10.0
+    @test GEMB.assimilate_albedo!(col(ρ_light)..., cfs(0.4), mp; albedo_ice = 0.33) == (0.0, 0.0, false, 0.33)
+    # No observation: the ice albedo passed in is returned.
+    @test GEMB.assimilate_albedo!(col(mp.density_ice)..., cfs(NaN), mp; albedo_ice = 0.33)[3:4] == (false, 0.33)
+    # A snow surface keeps the column's ice albedo and reads it under the snow.
+    ρ = [300.0; fill(mp.density_ice, n - 1)]
+    c = (dz, ρ, fill(0.3, n), fill(10.0, n), zeros(n), zeros(n))
+    _, _, ok, albedo_ice = GEMB.assimilate_albedo!(c..., cfs(0.6), mp; albedo_ice = 0.3)
+    @test ok && albedo_ice == 0.3
+    a, ad = GEMB.calculate_albedo(c[1:3]..., c[5:6]..., cfs(0.6), mp; albedo_ice)
+    @test GEMB.effective_albedo(a, ad, cfs(0.6)) ≈ 0.6 atol = 1e-6
+end
+
+@testset "gemb: an observed ice albedo holds until the next observation of exposed ice" begin
+    n = 20
+    time = DateTime(2000, 7, 1) .+ Day.(0:n-1)
+    obs = fill(NaN, n); obs[3] = 0.30; obs[12] = 0.40
+    cf = initialize_forcing(time, fill(274.0, n), fill(85000.0, n), zeros(n), fill(4.0, n),
+        fill(300.0, n), fill(300.0, n), fill(500.0, n);
+        temperature_air_mean=268.0, wind_speed_mean=4.0, precipitation_mean=0.0,
+        temperature_observation_height=2.0, wind_observation_height=10.0, albedo_observed=obs)
+    mp = ModelParameters(output_frequency=:daily)
+    profile = initialize_profile(mp, cf; constant_density=true, constant_temperature=true)
+    out = gemb(profile, cf, mp)
+    a = parent(out[:albedo_broadband]); ai = parent(out[:albedo_ice])
+    @test all(≈(mp.albedo_ice; rtol=1e-12), a[1:2])
+    @test all(≈(0.30; rtol=1e-12), a[3:11]) && all(≈(0.30; rtol=1e-12), ai[3:11])
+    @test all(≈(0.40; rtol=1e-12), a[12:end])
+    @test parent(out[:albedo_update_count]) == ifelse.(isnan.(obs), 0.0, 1.0)
 end
