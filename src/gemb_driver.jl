@@ -169,6 +169,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         impurity_effective_retained = Vector{Float64}(profile[:impurity_effective_retained]),
         evaporation_condensation = 0.0,
         melt_surface = 0.0,
+        albedo_ice = model_parameters.albedo_ice,
     )
 
     # Compute output times. `_compute_output_times` already returns a sorted, unique
@@ -222,6 +223,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         albedo_update_dlog_ssa=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_update_dlog_impurity=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         albedo_update_count=DimArray(fill(NaN, n_outputs), (ti_dim,)),
+        albedo_ice=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_compaction=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         densification_from_melt=DimArray(fill(NaN, n_outputs), (ti_dim,)),
         strain_thinning=DimArray(fill(NaN, n_outputs), (ti_dim,)),
@@ -467,6 +469,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     out_albedo_update_dlog_ssa = parent(output[:albedo_update_dlog_ssa])
     out_albedo_update_dlog_impurity = parent(output[:albedo_update_dlog_impurity])
     out_albedo_update_count = parent(output[:albedo_update_count])
+    out_albedo_ice = parent(output[:albedo_ice])
     out_fac = parent(output[:firn_air_content])
     out_fac10 = parent(output[:firn_air_content_10m])
     out_fac20 = parent(output[:firn_air_content_20m])
@@ -673,6 +676,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
                 out_albedo_update_dlog_ssa[oi] = cum_albedo_update_dlog_ssa
                 out_albedo_update_dlog_impurity[oi] = cum_albedo_update_dlog_impurity
                 out_albedo_update_count[oi] = cum_albedo_update_count
+                out_albedo_ice[oi] = state.albedo_ice
                 out_fac[oi] = cum_firn_air_content / cum_count
                 out_fac10[oi] = cum_firn_air_content_10m / cum_count
                 out_fac20[oi] = cum_firn_air_content_20m / cum_count

@@ -303,7 +303,8 @@ int gemb_workspace_destroy(int handle);
  * state. The column holds its cell count and its total depth, so n and the sum of dz are
  * unchanged on return.
  *
- *   scalars       2 doubles: {evaporation_condensation, melt_surface}
+ *   scalars       3 doubles: {evaporation_condensation, melt_surface, albedo_ice}; start
+ *                 albedo_ice, the column's ice albedo, at the parameter set's albedo_ice.
  *   forcing       GEMB_N_FORCING doubles, in GEMB_FRC_* order
  *   flux_out      GEMB_N_FLUX doubles, in GEMB_FLUX_* order
  *   viscosity_out n doubles, or NULL. Written only when the parameter set set

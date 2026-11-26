@@ -30,9 +30,9 @@ Under `:GardnerSharp` and `:BrunLefebre` the grain-size albedo describes semi-in
 Where the column has a surface of firn or ice, or snow over one, the albedos are
 ([`firn_ice_albedo`](@ref)):
 
-- **Exposed ice** (`density[1] ≥ mp.density_ice`): `mp.albedo_ice` exactly, for both streams.
+- **Exposed ice** (`density[1] ≥ mp.density_ice`): `albedo_ice` exactly, for both streams.
 - **Exposed firn** (`DENSITY_PORE_CLOSEOFF ≤ density[1] < mp.density_ice`): linear in density
-  from `mp.albedo_ice` at `mp.density_ice` to `ALBEDO_FIRN_MAX` (0.65) at pore close-off, for
+  from `albedo_ice` at `mp.density_ice` to `ALBEDO_FIRN_MAX` (0.65) at pore close-off, for
   both streams.
 - **Snow over firn or ice, `:GardnerSharp`**: Gardner & Sharp (2010) eq. 13 (p. 11) for a snow
   layer of depth `z` [m w.e.] over a semi-infinite layer whose albedo is `firn_ice_albedo` of
@@ -62,7 +62,8 @@ Where the column has a surface of firn or ice, or snow over one, the albedos are
 """
 function calculate_albedo(dz::Vector{Float64},
     density::Vector{Float64}, grain_radius::Vector{Float64}, impurity_effective::AbstractVector,
-    impurity_effective_retained::AbstractVector, cfs::ClimateForcingStep, mp::ModelParameters)
+    impurity_effective_retained::AbstractVector, cfs::ClimateForcingStep, mp::ModelParameters;
+    albedo_ice::Float64=mp.albedo_ice)
 
     density_fresh_snow = 300.0         # density of fresh snow [kg m-3]
 
@@ -73,14 +74,14 @@ function calculate_albedo(dz::Vector{Float64},
         albedo = mp.albedo_fixed
         albedo_diffuse = albedo
     elseif mp.albedo_method == :GreuellKonzelmann
-        albedo = mp.albedo_ice + (density[1] - mp.density_ice) *
-            (mp.albedo_snow - mp.albedo_ice) /
+        albedo = albedo_ice + (density[1] - mp.density_ice) *
+            (mp.albedo_snow - albedo_ice) /
             (density_fresh_snow - mp.density_ice) +
             (0.05 * (cfs.cloud_fraction - 0.5))
         albedo_diffuse = albedo
 
     elseif (mp.albedo_method == :GardnerSharp) || (mp.albedo_method == :BrunLefebre)
-        albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp)
+        albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp, albedo_ice)
         albedo, albedo_diffuse = _albedo_snow_over(albedo_under, depth_snow, mass_snow,
             grain_radius[1], surface_impurity_effective(dz, density, impurity_effective,
                 impurity_effective_retained, mp), cfs, mp)
@@ -211,37 +212,42 @@ end
 end
 
 """
-    firn_ice_albedo(density, mp) -> α
+    firn_ice_albedo(density, mp, albedo_ice = mp.albedo_ice) -> α
 
-Albedo of an exposed firn or ice surface of the given `density` [kg m-3]: `mp.albedo_ice` at
+Albedo of an exposed firn or ice surface of the given `density` [kg m-3]: `albedo_ice` at
 or above `mp.density_ice`, and linear in density from there up to `ALBEDO_FIRN_MAX` at
 `DENSITY_PORE_CLOSEOFF`. Densities below pore close-off are snow and throw.
 """
-@inline function firn_ice_albedo(density::Float64, mp::ModelParameters)
+@inline function firn_ice_albedo(density::Float64, mp::ModelParameters,
+    albedo_ice::Float64=mp.albedo_ice)
     density >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE ||
         error("firn_ice_albedo: density $(density) kg m-3 is below pore close-off " *
               "($(DENSITY_PORE_CLOSEOFF) kg m-3), so the surface is snow, not firn or ice")
-    density >= mp.density_ice - D_TOLERANCE && return mp.albedo_ice
-    return mp.albedo_ice + (ALBEDO_FIRN_MAX - mp.albedo_ice) *
-        (mp.density_ice - density) / (mp.density_ice - DENSITY_PORE_CLOSEOFF)
+    density >= mp.density_ice - D_TOLERANCE && return albedo_ice
+    return albedo_ice + (ALBEDO_FIRN_MAX - albedo_ice) * _firn_fraction(density, mp)
 end
 
+# Fraction of the way from `mp.density_ice` (0) to `DENSITY_PORE_CLOSEOFF` (1) of a firn or ice
+# density, the weight of `ALBEDO_FIRN_MAX` in `firn_ice_albedo`.
+@inline _firn_fraction(density::Float64, mp::ModelParameters) =
+    clamp((mp.density_ice - density) / (mp.density_ice - DENSITY_PORE_CLOSEOFF), 0.0, 1.0)
+
 """
-    _snow_over_firn_ice(dz, density, mp) -> (albedo_under, depth_snow, mass_snow)
+    _snow_over_firn_ice(dz, density, mp, albedo_ice = mp.albedo_ice) -> (albedo_under, depth_snow, mass_snow)
 
 The snow above the first cell at or above `DENSITY_PORE_CLOSEOFF`: its thickness `depth_snow`
 [m] and matrix mass `mass_snow = Σ dz·density` [kg m-2], and `albedo_under`, the
-[`firn_ice_albedo`](@ref) of that firn or ice cell. Both amounts are 0 for exposed firn or ice.
+[`firn_ice_albedo`](@ref) of that firn or ice cell for ice of albedo `albedo_ice`. Both amounts are 0 for exposed firn or ice.
 For a column with no firn or ice both are `Inf` and `albedo_under` is 0 (unused).
 """
 @inline function _snow_over_firn_ice(dz::Vector{Float64}, density::Vector{Float64},
-    mp::ModelParameters)
+    mp::ModelParameters, albedo_ice::Float64=mp.albedo_ice)
 
     depth_snow = 0.0
     mass_snow = 0.0
     for i in eachindex(dz, density)
         if density[i] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE
-            return firn_ice_albedo(density[i], mp), depth_snow, mass_snow
+            return firn_ice_albedo(density[i], mp, albedo_ice), depth_snow, mass_snow
         end
         depth_snow += dz[i]
         mass_snow += dz[i] * density[i]

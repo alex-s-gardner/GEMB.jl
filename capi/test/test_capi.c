@@ -69,7 +69,7 @@ int main(void) {
     double temperature[N_CELLS], dz[N_CELLS], density[N_CELLS], water[N_CELLS];
     double grain_radius[N_CELLS], grain_dendricity[N_CELLS], grain_sphericity[N_CELLS];
     double age[N_CELLS], impurity_effective[N_CELLS], impurity_effective_retained[N_CELLS];
-    double scalars[2] = {0.0, 0.0};
+    double scalars[3] = {0.0, 0.0, 0.48};
 
     for (int i = 0; i < N_CELLS; i++) {
         temperature[i] = 263.0;
