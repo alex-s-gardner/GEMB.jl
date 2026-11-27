@@ -241,6 +241,9 @@ every setting but `:FlannerZender2006`. Because `:ArthernB` densification goes a
 | `:vanKampenhout2017` | `ρ_T(T_air) + 266.861·(½(1 + tanh(U₁₀/5)))^8.8`, van Kampenhout et al. (2017) eqs. 2–4 |
 | `:vanKampenhout2017SNOTEL` (default) | `56 + 0.85·(clamp(ΔT, −8, 2) + 15)^1.5 + ρ_W(U₁₀)`: the vK17 form refitted to SNOTEL snowfall days |
 
+In both `:vanKampenhout2017` forms, `new_snow_wind_factor` (default 1, the published amplitude)
+multiplies the wind term `ρ_W(U₁₀)`; 0 removes it.
+
 `:Pahaut` is Pahaut (1975) as implemented in Crocus, via Lafaysse et al. (2026) eq. 35. It is
 the only option fitted to alpine seasonal snow rather than to a polar ice sheet, and it is
 much lighter than the polar fits over their common range — 107 kg m⁻³ at −10 °C and 5 m s⁻¹

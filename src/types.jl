@@ -519,6 +519,9 @@ Base.@kwdef struct ModelParameters{S<:AbstractThermalSolver}
     new_snow_method::Symbol = :vanKampenhout2017SNOTEL
     # Fresh-snow density [kg m-3] of `new_snow_method = :Constant`; no other method reads it.
     new_snow_density::Float64 = 350.0
+    # Factor on the wind term of `:vanKampenhout2017` and `:vanKampenhout2017SNOTEL`
+    # (`vankampenhout_density_wind`); 1 is the published amplitude, 0 removes the term.
+    new_snow_wind_factor::Float64 = 1.0
     # Density of pure ice [kg m-3]. 917 is the value used by both the Community Firn Model
     # (`constants.py`) and IMAU-FDM (`constants.toml`), and is the pure-ice density the
     # Calonne (2019) conductivity and Barnola (1991) densification fits were built against.

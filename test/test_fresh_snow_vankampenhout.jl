@@ -165,3 +165,19 @@ end
     @test out[6][1] == GEMB.GDN_NEW_SNOW
     @test out[7][1] == GEMB.GSP_NEW_SNOW
 end
+
+@testset "vanKampenhout2017: new_snow_wind_factor scales the wind term only" begin
+    T, U, zw = 263.15, 8.0, 10.0   # air temperature [K], wind [m s-1] and its height [m]
+    ρ(f, method = :vanKampenhout2017) = GEMB.fresh_snow_density(
+        GEMB.initialize_parameters(; new_snow_method = method, new_snow_wind_factor = f), T, 1.0, U;
+        wind_observation_height = zw)
+    for (method, ρ_T) in ((:vanKampenhout2017, GEMB.vankampenhout_density_temperature(T)),
+                          (:vanKampenhout2017SNOTEL, GEMB.snotel_density_temperature(T)))
+        ρ_W = GEMB.vankampenhout_density_wind(U)
+        # 0 leaves the temperature term alone; otherwise the factor multiplies the wind term.
+        @test ρ(0.0, method) ≈ ρ_T rtol = 1e-14
+        @test ρ(1.0, method) ≈ ρ_T + ρ_W rtol = 1e-14
+        @test ρ(1.75, method) ≈ ρ_T + 1.75 * ρ_W rtol = 1e-14
+    end
+    @test_throws "new_snow_wind_factor must be in [0, 5]" GEMB.initialize_parameters(; new_snow_wind_factor = -0.1)
+end
