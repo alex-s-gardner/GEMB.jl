@@ -50,7 +50,7 @@ Methods:
   means. Temperature is capped at the melting point, as published.
 - `:KuipersMunneke` → `481.0 + 4.834·(T - CtoK)`: the Antarctic fit used by Kuipers Munneke
   et al. (2015). Both take *climatological* means rather than instantaneous forcing.
-- `:vanKampenhout2017` → `ρ_T(T_air) + ρ_W(U₁₀)`: van Kampenhout et al. (2017) eqs. 2-4,
+- `:vanKampenhout2017` → `ρ_T(T_air) + f_w·ρ_W(U₁₀)`, `f_w = mp.new_snow_wind_factor` (1 as published): van Kampenhout et al. (2017) eqs. 2-4,
   p. 2587, the CLM5 deposition density; see [`vankampenhout_density_temperature`](@ref) and
   [`vankampenhout_density_wind`](@ref). It reads the instantaneous `T_air` and the 10 m wind
   speed, which is `wind_speed` carried from `wind_observation_height` to 10 m by
@@ -59,7 +59,7 @@ Methods:
   depends on the settling scheme: pair it with `densification_method = :Crocus`
   (destructive metamorphism is on by default there). Under an accumulation-driven
   densification scheme the snow stays near its deposition density for years.
-- `:vanKampenhout2017SNOTEL` → `ρ_T,SNOTEL(T_air) + ρ_W(U₁₀)`: `:vanKampenhout2017` with the
+- `:vanKampenhout2017SNOTEL` → `ρ_T,SNOTEL(T_air) + f_w·ρ_W(U₁₀)`: `:vanKampenhout2017` with the
   SNOTEL-calibrated temperature term [`snotel_density_temperature`](@ref); the wind term and
   fresh-grain properties are unchanged.
 
@@ -116,7 +116,7 @@ function fresh_snow_density(mp::ModelParameters, T_air_mean::Real,
     elseif mp.new_snow_method in (:vanKampenhout2017, :vanKampenhout2017SNOTEL)
         ρ_T = mp.new_snow_method === :vanKampenhout2017SNOTEL ?
               snotel_density_temperature(T_air) : vankampenhout_density_temperature(T_air)
-        return ρ_T + vankampenhout_density_wind(
+        return ρ_T + mp.new_snow_wind_factor * vankampenhout_density_wind(
             wind_speed_10m(wind_speed, wind_observation_height, z0))
     end
     error("unrecognized new_snow_method: $(mp.new_snow_method)")
