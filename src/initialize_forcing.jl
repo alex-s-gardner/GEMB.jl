@@ -134,16 +134,13 @@ function initialize_forcing(
         @assert all(f -> 0 <= f <= 1, snowfall_fraction) "snowfall_fraction values must be in [0, 1]."
     end
     # NaN marks a step without an observation.
-    if albedo_observed !== nothing
-        @assert length(albedo_observed) == n "All input variables must have the same size."
-        @assert all(a -> isnan(a) || 0 < a < 1, albedo_observed) "albedo_observed values must be in (0, 1), or NaN where there is no observation."
+    for (name, obs) in (("albedo_observed", albedo_observed), ("albedo_observed_white_sky", albedo_observed_white_sky))
+        obs === nothing && continue
+        @assert length(obs) == n "All input variables must have the same size."
+        @assert all(a -> isnan(a) || 0 < a < 1, obs) "$name values must be in (0, 1), or NaN where there is no observation."
     end
-    if albedo_observed_white_sky !== nothing
-        @assert length(albedo_observed_white_sky) == n "All input variables must have the same size."
-        @assert all(a -> isnan(a) || 0 < a < 1, albedo_observed_white_sky) "albedo_observed_white_sky values must be in (0, 1), or NaN where there is no observation."
-        albedo_observed === nothing ||
-            @assert !any(isfinite(a) && isfinite(w) for (a, w) in zip(albedo_observed, albedo_observed_white_sky)) "a step may carry albedo_observed or albedo_observed_white_sky, not both."
-    end
+    albedo_observed === nothing || albedo_observed_white_sky === nothing ||
+        @assert !any(isfinite(a) && isfinite(w) for (a, w) in zip(albedo_observed, albedo_observed_white_sky)) "a step may carry albedo_observed or albedo_observed_white_sky, not both."
 
     # Set defaults for metadata with warnings
     if isnan(temperature_air_mean)

@@ -202,7 +202,8 @@ the one whose albedo GEMB applies to the step's shortwave, `1 − SW_net / SW↓
 equals the observation. For `albedo_observed_white_sky`, a satellite white-sky albedo, which has no cloud
 effect whatever the step's sky, it is the one whose albedo under isotropic diffuse light and no cloud
 ([`white_sky_albedo`](@ref)) equals it; GEMB then applies its own cloud and sun-angle terms to the
-step. A step carrying both is an error.
+step. The two are separate layers so that one run can assimilate a radiometer on some days and a
+satellite on others; a step carrying both is an error.
 
 An observation of exposed firn or ice sets the column's ice albedo instead
 ([`_ice_albedo_update`](@ref)). `albedo_ice` is the column's current ice albedo, read for the snow
@@ -238,7 +239,7 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
     # albedo under isotropic diffuse light and no cloud, otherwise the albedo GEMB applies to this
     # step's shortwave, 1 − SW_net / SW↓.
     α(rr, cc) = white_sky ?
-        white_sky_albedo(albedo_under, depth_snow, mass_snow, rr, cc, mp) :
+        last(_albedo_snow_over(albedo_under, depth_snow, mass_snow, rr, cc, WHITE_SKY_STEP, mp)) :
         effective_albedo(_albedo_snow_over(albedo_under, depth_snow, mass_snow, rr, cc, cfs, mp)..., cfs)
     r, c, _ = albedo_update(observed, r0, c0, α, mp)
     scale = r / r0
@@ -282,10 +283,11 @@ satellite BRDF product such as MODIS MCD43 reports. It is the diffuse-stream alb
 `calculate_albedo` with the cloud optical thickness set to zero. Exposed firn or ice (`depth_snow = 0`)
 returns `albedo_under`.
 """
-function white_sky_albedo(albedo_under::Float64, depth_snow::Float64, mass_snow::Float64,
-    grain_radius_surface::Float64, impurity_effective_surface::Float64, mp::ModelParameters)
-    clear = ClimateForcingStep(; cloud_optical_thickness = 0.0, solar_zenith_angle = 90.0)
-    _, albedo_diffuse = _albedo_snow_over(albedo_under, depth_snow, mass_snow, grain_radius_surface,
-        impurity_effective_surface, clear, mp)
-    return albedo_diffuse
-end
+white_sky_albedo(albedo_under::Float64, depth_snow::Float64, mass_snow::Float64,
+    grain_radius_surface::Float64, impurity_effective_surface::Float64, mp::ModelParameters) =
+    last(_albedo_snow_over(albedo_under, depth_snow, mass_snow, grain_radius_surface,
+        impurity_effective_surface, WHITE_SKY_STEP, mp))
+
+# The sky of a white-sky albedo: no cloud, and the sun below the horizon so that only the diffuse stream
+# is evaluated (`_albedo_snow_over`).
+const WHITE_SKY_STEP = ClimateForcingStep(; cloud_optical_thickness = 0.0, solar_zenith_angle = 90.0)
