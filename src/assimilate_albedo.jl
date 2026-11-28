@@ -182,7 +182,8 @@ end
     assimilate_albedo!(dz, density, grain_radius, age, impurity_effective, impurity_effective_retained, cfs, mp;
                        albedo_ice = mp.albedo_ice) -> (dlog_ssa, dlog_impurity, applied, albedo_ice)
 
-Update the near-surface snow from `cfs.albedo_observed` when it is finite, the albedo method is
+Update the near-surface snow from the step's observed albedo, `cfs.albedo_observed` or
+`cfs.albedo_observed_white_sky`, when one is finite, the albedo method is
 `:GardnerSharp` and the surface is snow (its top layer below pore close-off density). The update
 is [`albedo_update`](@ref) from the surface grain radius and the total [`surface_impurity_effective`](@ref).
 It sets the surface layer's retained film so that the loading the albedo reads is the new one: the
@@ -196,9 +197,12 @@ film is 0 and the surface stays darker than the update.
 No update is made while the surface layer is younger than `mp.albedo_update_snow_age_min` [d], 0 by
 default, so every observation of a snow surface is used.
 
-The state matched is the one whose albedo GEMB applies to the step's shortwave, `1 − SW_net / SW↓`
-([`effective_albedo`](@ref)), equals the observation, which is `Σ SW↑ / Σ SW↓` under the sky it was measured
-in.
+For `albedo_observed`, which is `Σ SW↑ / Σ SW↓` under the sky it was measured in, the state matched is
+the one whose albedo GEMB applies to the step's shortwave, `1 − SW_net / SW↓` ([`effective_albedo`](@ref)),
+equals the observation. For `albedo_observed_white_sky`, a satellite white-sky albedo, which has no cloud
+effect whatever the step's sky, it is the one whose albedo under isotropic diffuse light and no cloud
+([`white_sky_albedo`](@ref)) equals it; GEMB then applies its own cloud and sun-angle terms to the
+step. A step carrying both is an error.
 
 An observation of exposed firn or ice sets the column's ice albedo instead
 ([`_ice_albedo_update`](@ref)). `albedo_ice` is the column's current ice albedo, read for the snow
@@ -215,19 +219,28 @@ function assimilate_albedo!(dz::Vector{Float64}, density::Vector{Float64},
     grain_radius::Vector{Float64}, age::Vector{Float64}, impurity_effective::Vector{Float64},
     impurity_effective_retained::Vector{Float64}, cfs::ClimateForcingStep, mp::ModelParameters;
     albedo_ice::Float64=mp.albedo_ice)
-    (isfinite(cfs.albedo_observed) && mp.albedo_method === :GardnerSharp && !isempty(dz)) ||
+    white_sky = isfinite(cfs.albedo_observed_white_sky)
+    white_sky && isfinite(cfs.albedo_observed) && throw(ArgumentError(
+        "a step carries both albedo_observed and albedo_observed_white_sky; supply one"))
+    observed = white_sky ? cfs.albedo_observed_white_sky : cfs.albedo_observed
+    (isfinite(observed) && mp.albedo_method === :GardnerSharp && !isempty(dz)) ||
         return (0.0, 0.0, false, albedo_ice)
     if density[1] >= DENSITY_PORE_CLOSEOFF - D_TOLERANCE
-        applied, albedo_ice = _ice_albedo_update(cfs.albedo_observed, density[1], albedo_ice, mp)
+        # Exposed firn and ice reflect the same albedo in every sky.
+        applied, albedo_ice = _ice_albedo_update(observed, density[1], albedo_ice, mp)
         return (0.0, 0.0, applied, albedo_ice)
     end
     age[1] < mp.albedo_update_snow_age_min && return (0.0, 0.0, false, albedo_ice)
     albedo_under, depth_snow, mass_snow = _snow_over_firn_ice(dz, density, mp, albedo_ice)
     r0 = grain_radius[1]
     c0 = surface_impurity_effective(dz, density, impurity_effective, impurity_effective_retained, mp)
-    # The albedo GEMB applies to this step's shortwave from a surface state, 1 − SW_net / SW↓.
-    α(rr, cc) = effective_albedo(_albedo_snow_over(albedo_under, depth_snow, mass_snow, rr, cc, cfs, mp)..., cfs)
-    r, c, _ = albedo_update(cfs.albedo_observed, r0, c0, α, mp)
+    # The albedo the observation measures, from a surface state: for a white-sky observation the
+    # albedo under isotropic diffuse light and no cloud, otherwise the albedo GEMB applies to this
+    # step's shortwave, 1 − SW_net / SW↓.
+    α(rr, cc) = white_sky ?
+        white_sky_albedo(albedo_under, depth_snow, mass_snow, rr, cc, mp) :
+        effective_albedo(_albedo_snow_over(albedo_under, depth_snow, mass_snow, rr, cc, cfs, mp)..., cfs)
+    r, c, _ = albedo_update(observed, r0, c0, α, mp)
     scale = r / r0
     film = impurity_effective_retained[1] / mp.albedo_impurity_depth
     impurity_effective_retained[1] = max(0.0, c - (c0 - film)) * mp.albedo_impurity_depth
@@ -258,4 +271,21 @@ function _ice_albedo_update(albedo_observed::Float64, density_surface::Float64,
     # Inverse of `firn_ice_albedo`: α = (1 − f)·albedo_ice + f·ALBEDO_FIRN_MAX.
     albedo_ice_new = (albedo_observed - f * ALBEDO_FIRN_MAX) / (1.0 - f)
     return (true, clamp(albedo_ice_new, ALBEDO_ICE_OBSERVED_RANGE...))
+end
+
+"""
+    white_sky_albedo(albedo_under, depth_snow, mass_snow, grain_radius_surface, impurity_effective_surface, mp) -> Float64
+
+The white-sky albedo of snow `depth_snow` [m] thick, of matrix mass `mass_snow` [kg m-2], over a
+surface of albedo `albedo_under`: the albedo under isotropic diffuse light and no cloud, which a
+satellite BRDF product such as MODIS MCD43 reports. It is the diffuse-stream albedo of
+`calculate_albedo` with the cloud optical thickness set to zero. Exposed firn or ice (`depth_snow = 0`)
+returns `albedo_under`.
+"""
+function white_sky_albedo(albedo_under::Float64, depth_snow::Float64, mass_snow::Float64,
+    grain_radius_surface::Float64, impurity_effective_surface::Float64, mp::ModelParameters)
+    clear = ClimateForcingStep(; cloud_optical_thickness = 0.0, solar_zenith_angle = 90.0)
+    _, albedo_diffuse = _albedo_snow_over(albedo_under, depth_snow, mass_snow, grain_radius_surface,
+        impurity_effective_surface, clear, mp)
+    return albedo_diffuse
 end

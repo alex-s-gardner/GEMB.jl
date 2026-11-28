@@ -56,6 +56,41 @@ end
     end
 end
 
+@testset "a white-sky observation matches the clear-sky diffuse albedo, whatever the step's sky" begin
+    mp = GEMB.ModelParameters()
+    n = 6; dz = fill(0.01, n); ρ = fill(300.0, n)
+    states = map(((60.0, 0.0, 0.2), (60.0, 5.0, 1.0), (75.0, 1.0, 0.5))) do (sza, τ, f)
+        cfs = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed_white_sky = 0.6, solar_zenith_angle = sza,
+            cloud_optical_thickness = τ, shortwave_downward = 500.0, shortwave_downward_diffuse = 500.0 * f)
+        r = fill(0.3, n); bc = fill(0.02, n); bcr = zeros(n)
+        @test GEMB.assimilate_albedo!(dz, ρ, r, fill(10.0, n), bc, bcr, cfs, mp)[3]
+        c = GEMB.surface_impurity_effective(dz, ρ, bc, bcr, mp)
+        @test abs(GEMB.white_sky_albedo(0.0, Inf, Inf, r[1], c, mp) - 0.6) < 1e-6
+        # The albedo then applied to an overcast step is brighter than the clear-sky observation.
+        a, ad = GEMB.calculate_albedo(dz, ρ, r, bc, bcr, cfs, mp)
+        τ > 0 && @test GEMB.effective_albedo(a, ad, cfs) > 0.6
+        (r[1], c)
+    end
+    # The same snow state is found under every sky.
+    @test all(s -> isapprox(s[1], states[1][1]; rtol = 1e-6) && isapprox(s[2], states[1][2]; rtol = 1e-6), states)
+    # Under all-sky matching, an overcast step finds darker snow than the white-sky one does.
+    cfs = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = 0.6, solar_zenith_angle = 60.0,
+        cloud_optical_thickness = 5.0, shortwave_downward = 500.0, shortwave_downward_diffuse = 500.0)
+    r = fill(0.3, n); bc = fill(0.02, n); bcr = zeros(n)
+    GEMB.assimilate_albedo!(dz, ρ, r, fill(10.0, n), bc, bcr, cfs, mp)
+    @test GEMB.white_sky_albedo(0.0, Inf, Inf, r[1], GEMB.surface_impurity_effective(dz, ρ, bc, bcr, mp), mp) < 0.6
+    # A step may carry only one kind of observation.
+    both = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = 0.6, albedo_observed_white_sky = 0.6)
+    @test_throws "a step carries both albedo_observed and albedo_observed_white_sky" GEMB.assimilate_albedo!(
+        dz, ρ, fill(0.3, n), fill(10.0, n), fill(0.02, n), zeros(n), both, mp)
+    # Over exposed ice the observation sets the ice albedo exactly as an all-sky one does.
+    ice = fill(900.0, n)
+    w = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed_white_sky = 0.35)
+    a = GEMB.ClimateForcingStep(; dt = 3600.0, albedo_observed = 0.35)
+    @test GEMB.assimilate_albedo!(dz, ice, fill(1.0, n), fill(10.0, n), zeros(n), zeros(n), w, mp) ==
+          GEMB.assimilate_albedo!(dz, ice, fill(1.0, n), fill(10.0, n), zeros(n), zeros(n), a, mp)
+end
+
 @testset "assimilate_albedo!: sets the retained surface film, persists under burial" begin
     mp = GEMB.ModelParameters(; albedo_impurity_depth = 0.02)
     n = 6

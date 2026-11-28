@@ -48,9 +48,13 @@ Create a `ClimateForcing` struct from time-series vectors.
   `[0, 1]`, for example from a humidity-dependent phase model. `nothing` (the default)
   partitions precipitation on `rain_temperature_threshold`. Also used to derive
   `accumulation_mean`.
-- `albedo_observed`: Optional per-timestep observed broadband surface albedo [-], in `(0, 1)`
-  where finite and `NaN` at steps without an observation. `nothing` (the default) leaves the
-  layer at `NaN`. Read by `assimilate_albedo!`.
+- `albedo_observed`: Optional per-timestep observed broadband surface albedo [-] under the step's
+  own sky (`Σ SW↑ / Σ SW↓`, as a radiometer measures it), in `(0, 1)` where finite and `NaN` at
+  steps without an observation. `nothing` (the default) leaves the layer at `NaN`. Read by
+  `assimilate_albedo!`.
+- `albedo_observed_white_sky`: Optional per-timestep observed white-sky albedo [-], the albedo
+  under isotropic diffuse light and no cloud that a satellite BRDF product such as MODIS MCD43
+  reports; same conventions as `albedo_observed`. A step may carry only one of the two.
 - `temperature_ground`: Optional per-timestep temperature [K] of the fixed-temperature
   reservoir at the base of the snow under `lower_boundary = :prescribed`, typically a measured
   near-surface soil temperature. `nothing` (the default) leaves the layer at `NaN`; it is read
@@ -83,6 +87,7 @@ function initialize_forcing(
     temperature_ground::Union{Nothing,AbstractVector{<:Real}}=nothing,
     snowfall_fraction::Union{Nothing,AbstractVector{<:Real}}=nothing,
     albedo_observed::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    albedo_observed_white_sky::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dataset::AbstractString="",
     latitude::Real=NaN,
     longitude::Real=NaN,
@@ -132,6 +137,12 @@ function initialize_forcing(
     if albedo_observed !== nothing
         @assert length(albedo_observed) == n "All input variables must have the same size."
         @assert all(a -> isnan(a) || 0 < a < 1, albedo_observed) "albedo_observed values must be in (0, 1), or NaN where there is no observation."
+    end
+    if albedo_observed_white_sky !== nothing
+        @assert length(albedo_observed_white_sky) == n "All input variables must have the same size."
+        @assert all(a -> isnan(a) || 0 < a < 1, albedo_observed_white_sky) "albedo_observed_white_sky values must be in (0, 1), or NaN where there is no observation."
+        albedo_observed === nothing ||
+            @assert !any(isfinite(a) && isfinite(w) for (a, w) in zip(albedo_observed, albedo_observed_white_sky)) "a step may carry albedo_observed or albedo_observed_white_sky, not both."
     end
 
     # Set defaults for metadata with warnings
@@ -240,6 +251,8 @@ function initialize_forcing(
                           DimArray(Float64.(snowfall_fraction), (tdim,)),
         albedo_observed=albedo_observed === nothing ? nothing :
                         DimArray(Float64.(albedo_observed), (tdim,)),
+        albedo_observed_white_sky=albedo_observed_white_sky === nothing ? nothing :
+                                  DimArray(Float64.(albedo_observed_white_sky), (tdim,)),
         accumulation_mean=Float64(accumulation_mean),
         temperature_air_effective=Float64(temperature_air_effective),
         dataset=dataset,
@@ -400,6 +413,8 @@ function initialize_forcing(stack::DimStack)
                          parent(stack[:temperature_ground]) : nothing
     snowfall_fraction = haskey(stack, :snowfall_fraction) ? parent(stack[:snowfall_fraction]) : nothing
     albedo_observed = haskey(stack, :albedo_observed) ? parent(stack[:albedo_observed]) : nothing
+    albedo_observed_white_sky = haskey(stack, :albedo_observed_white_sky) ?
+                                parent(stack[:albedo_observed_white_sky]) : nothing
 
     # Extract required metadata
     meta = metadata(stack)
@@ -480,6 +495,7 @@ function initialize_forcing(stack::DimStack)
         temperature_ground = temperature_ground,
         snowfall_fraction = snowfall_fraction,
         albedo_observed = albedo_observed,
+        albedo_observed_white_sky = albedo_observed_white_sky,
         dataset = dataset,
         latitude = latitude,
         longitude = longitude,

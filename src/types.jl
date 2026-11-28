@@ -849,8 +849,12 @@ when not supplied, and read under no other lower boundary.
 `[0, 1]`; `Fill`-backed `NaN` when not supplied, which partitions precipitation on
 `mp.rain_temperature_threshold` instead (see [`snowfall_mass`](@ref)).
 `albedo_observed` [-], an observed broadband surface albedo in `(0, 1)` for the steps that have
-one; `Fill`-backed `NaN` when not supplied, and `NaN` at every step without an observation. Where
-finite it sets the near-surface snow state (see `assimilate_albedo!`).
+one, measured under the step's own sky (`Σ SW↑ / Σ SW↓`, as a radiometer measures it); `Fill`-backed
+`NaN` when not supplied, and `NaN` at every step without an observation. Where finite it sets the
+near-surface snow state (see `assimilate_albedo!`).
+`albedo_observed_white_sky` [-], an observed white-sky albedo in `(0, 1)`: the albedo under
+isotropic diffuse light and no cloud, as a satellite BRDF product such as MODIS MCD43 reports it.
+`Fill`-backed `NaN` when not supplied. A step carries at most one of the two observations.
 
 # Metadata (scalars, carried in the stack `metadata` as a `NamedTuple`)
 `time_step::Int` [s], plus `temperature_air_mean`, `wind_speed_mean`,
@@ -891,17 +895,18 @@ struct ClimateForcing{K,T,N,L,D<:Tuple,R<:Tuple,LD,M,LM} <: AbstractDimStack{K,T
     end
 end
 
-# The 17 forcing layers. The first 13 are in positional-constructor order; `snow_drift`,
-# `temperature_ground`, `snowfall_fraction` and `albedo_observed` are keyword-only and trailing,
-# so every existing 19-argument positional call site stays valid; forcing built without them
-# carries a `Fill`-backed zero drift layer and `Fill`-backed `NaN` ground-temperature,
-# snowfall-fraction and observed-albedo layers.
+# The 18 forcing layers. The first 13 are in positional-constructor order; `snow_drift`,
+# `temperature_ground`, `snowfall_fraction`, `albedo_observed` and `albedo_observed_white_sky` are
+# keyword-only and trailing, so every existing 19-argument positional call site stays valid; forcing
+# built without them carries a `Fill`-backed zero drift layer and `Fill`-backed `NaN`
+# ground-temperature, snowfall-fraction and observed-albedo layers.
 const CLIMATE_FORCING_LAYER_KEYS = (
     :temperature_air, :pressure_air, :precipitation, :wind_speed,
     :shortwave_downward, :longwave_downward, :vapor_pressure,
     :black_carbon_snow, :black_carbon_ice, :cloud_optical_thickness,
     :solar_zenith_angle, :shortwave_downward_diffuse, :cloud_fraction,
     :snow_drift, :temperature_ground, :snowfall_fraction, :albedo_observed,
+    :albedo_observed_white_sky,
 )
 # The scalar metadata carried alongside the layers. The first six are the physics
 # scalars (positional in the constructor); the trailing four are provenance
@@ -941,8 +946,8 @@ boundary.
 The 16th layer, `snowfall_fraction` [-], is keyword-only and defaults to `Fill`-backed `NaN`,
 the partition on `mp.rain_temperature_threshold`.
 
-The 17th layer, `albedo_observed` [-], is keyword-only and defaults to `Fill`-backed `NaN`, no
-observation at any step.
+The 17th and 18th layers, `albedo_observed` and `albedo_observed_white_sky` [-], are keyword-only
+and default to `Fill`-backed `NaN`, no observation at any step.
 
 Optional provenance keywords — `dataset` (source name, e.g. `"ERA5-Land"`),
 `latitude`, `longitude`, `elevation` (absolute target elevation, m; the surface the
@@ -981,7 +986,8 @@ function ClimateForcing(
     time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
     temperature_observation_height, wind_observation_height;
     snow_drift=nothing, temperature_ground=nothing, snowfall_fraction=nothing,
-    albedo_observed=nothing, accumulation_mean::Real=NaN, temperature_air_effective::Real=NaN,
+    albedo_observed=nothing, albedo_observed_white_sky=nothing, accumulation_mean::Real=NaN,
+    temperature_air_effective::Real=NaN,
     dataset::AbstractString="", latitude::Real=NaN, longitude::Real=NaN,
     elevation::Real=NaN, elevation_native::Real=NaN, elevation_offset::Real=0.0,
     climatology_window_start=nothing, climatology_window_stop=nothing,
@@ -1005,12 +1011,17 @@ function ClimateForcing(
         tdim = dims(temperature_air, Ti)
         albedo_observed = DimArray(Fill(NaN, length(tdim)), (tdim,))
     end
+    if albedo_observed_white_sky === nothing
+        tdim = dims(temperature_air, Ti)
+        albedo_observed_white_sky = DimArray(Fill(NaN, length(tdim)), (tdim,))
+    end
     das = NamedTuple{CLIMATE_FORCING_LAYER_KEYS}((
         temperature_air, pressure_air, precipitation, wind_speed,
         shortwave_downward, longwave_downward, vapor_pressure,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
         snow_drift, temperature_ground, snowfall_fraction, albedo_observed,
+        albedo_observed_white_sky,
     ))
     meta = NamedTuple{CLIMATE_FORCING_META_KEYS}((
         time_step, temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -1091,12 +1102,33 @@ struct ClimateForcingStep
     # Fraction of the step's precipitation that falls as snow, or NaN to partition on
     # `mp.rain_temperature_threshold` (see `snowfall_mass`). NaN in every shorter form.
     snowfall_fraction::Float64
-    # Observed broadband surface albedo of the step, or NaN for none (see
+    # Observed broadband surface albedo of the step under its own sky, or NaN for none (see
     # `assimilate_albedo!`). NaN in every shorter form.
     albedo_observed::Float64
+    # Observed white-sky albedo of the step (isotropic diffuse light, no cloud), or NaN for none.
+    # NaN in every shorter form.
+    albedo_observed_white_sky::Float64
 end
 
-# 23-argument positional form: everything but the observed albedo, which is absent.
+# 24-argument positional form: everything but the white-sky observation, which is absent.
+ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+    shortwave_downward, longwave_downward, vapor_pressure,
+    temperature_air_mean, wind_speed_mean, precipitation_mean,
+    temperature_observation_height, wind_observation_height,
+    black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+    solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+    accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction,
+    albedo_observed) =
+    ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
+        shortwave_downward, longwave_downward, vapor_pressure,
+        temperature_air_mean, wind_speed_mean, precipitation_mean,
+        temperature_observation_height, wind_observation_height,
+        black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
+        solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
+        accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction,
+        albedo_observed, NaN)
+
+# 23-argument positional form: no observed albedo.
 ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
     shortwave_downward, longwave_downward, vapor_pressure,
     temperature_air_mean, wind_speed_mean, precipitation_mean,
@@ -1110,7 +1142,7 @@ ClimateForcingStep(dt, temperature_air, pressure_air, precipitation, wind_speed,
         temperature_observation_height, wind_observation_height,
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
-        accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction, NaN)
+        accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction, NaN, NaN)
 
 # 22-argument positional form: everything but the snowfall fraction, which partitions on the
 # threshold.
@@ -1187,7 +1219,8 @@ function ClimateForcingStep(;
     shortwave_downward_diffuse::Real=0.0, cloud_fraction::Real=0.0,
     accumulation_mean::Real=precipitation_mean,
     temperature_air_effective::Real=temperature_air_mean,
-    snow_drift::Real=0.0, snowfall_fraction::Real=NaN, albedo_observed::Real=NaN)
+    snow_drift::Real=0.0, snowfall_fraction::Real=NaN, albedo_observed::Real=NaN,
+    albedo_observed_white_sky::Real=NaN)
 
     return ClimateForcingStep(
         dt, temperature_air, pressure_air, precipitation, wind_speed,
@@ -1197,6 +1230,6 @@ function ClimateForcingStep(;
         black_carbon_snow, black_carbon_ice, cloud_optical_thickness,
         solar_zenith_angle, shortwave_downward_diffuse, cloud_fraction,
         accumulation_mean, temperature_air_effective, snow_drift, snowfall_fraction,
-        albedo_observed,
+        albedo_observed, albedo_observed_white_sky,
     )
 end

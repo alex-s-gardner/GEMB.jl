@@ -124,6 +124,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         temperature_ground=climate_forcing.temperature_ground,
         snowfall_fraction=climate_forcing.snowfall_fraction,
         albedo_observed=climate_forcing.albedo_observed,
+        albedo_observed_white_sky=climate_forcing.albedo_observed_white_sky,
         accumulation_mean=climate_forcing.accumulation_mean,
         temperature_air_effective=climate_forcing.temperature_air_effective,
         dataset=climate_forcing.dataset,
@@ -316,6 +317,7 @@ function gemb(profile::DimStack, climate_forcing::ClimateForcing, mp::ModelParam
         climate_forcing.snow_drift,
         climate_forcing.snowfall_fraction,
         climate_forcing.albedo_observed,
+        climate_forcing.albedo_observed_white_sky,
         climate_forcing.temperature_air_mean,
         climate_forcing.wind_speed_mean,
         climate_forcing.precipitation_mean,
@@ -443,7 +445,7 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
     f_solar_zenith_angle::AbstractVector, f_shortwave_downward_diffuse::AbstractVector,
     f_cloud_fraction::AbstractVector, f_snow_drift::AbstractVector,
     f_snowfall_fraction::AbstractVector, f_albedo_observed::AbstractVector,
-    temperature_air_mean::Float64, wind_speed_mean::Float64,
+    f_albedo_observed_white_sky::AbstractVector, temperature_air_mean::Float64, wind_speed_mean::Float64,
     precipitation_mean::Float64, temperature_observation_height::Float64,
     wind_observation_height::Float64,
     accumulation_mean::Float64, temperature_air_effective::Float64)
@@ -578,7 +580,8 @@ function _gemb_time_loop!(output, state, model_parameters, mp, verbose::Bool,
             temperature_air_effective,
             f_snow_drift[i],
             f_snowfall_fraction[i],
-            f_albedo_observed[i])
+            f_albedo_observed[i],
+            f_albedo_observed_white_sky[i])
 
         # Run physics for single timestep, holding the column at its fixed cell count
         # and fixed total depth.
