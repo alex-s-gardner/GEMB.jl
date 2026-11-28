@@ -91,7 +91,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
         cf.shortwave_downward, cf.longwave_downward, cf.vapor_pressure, cf.black_carbon_snow,
         cf.black_carbon_ice, cf.cloud_optical_thickness, cf.solar_zenith_angle,
         cf.shortwave_downward_diffuse, cf.cloud_fraction, cf.snow_drift, cf.snowfall_fraction,
-        cf.albedo_observed)
+        cf.albedo_observed, cf.albedo_observed_white_sky)
     sum_keys = (:melt, :runoff, :refreeze, :evaporation_condensation, :shortwave_net,
         :longwave_net, :heat_flux_sensible, :heat_flux_latent, :heat_flux_basal,
         :albedo_broadband, :blowing_snow, :temperature_air, :precipitation, :rain,
@@ -111,7 +111,7 @@ function _gemb_prescribed(profile::DimStack, climate_forcing::ClimateForcing,
             f[7][i], cf.temperature_air_mean, cf.wind_speed_mean, cf.precipitation_mean,
             cf.temperature_observation_height, cf.wind_observation_height, f[8][i], f[9][i],
             f[10][i], f[11][i], f[12][i], f[13][i], cf.accumulation_mean,
-            cf.temperature_air_effective, f[14][i], f[15][i], f[16][i])
+            cf.temperature_air_effective, f[14][i], f[15][i], f[16][i], f[17][i])
         snow, flux = gemb_core_prescribed(snow, T_base[i], cfs, model_parameters, verbose;
             thermal_workspace, column_workspace)
         # The base is an argument of the step, not a cell: within a step it is this step's

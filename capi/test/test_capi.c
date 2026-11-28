@@ -106,6 +106,7 @@ int main(void) {
     forcing[GEMB_FRC_SNOWFALL_FRACTION] = NAN;
     /* NaN: no albedo observation, as the Julia reference has. */
     forcing[GEMB_FRC_ALBEDO_OBSERVED] = NAN;
+    forcing[GEMB_FRC_ALBEDO_OBSERVED_WHITE_SKY] = NAN;
 
     double flux[GEMB_N_FLUX];
     double flux_total[GEMB_N_FLUX] = {0.0};

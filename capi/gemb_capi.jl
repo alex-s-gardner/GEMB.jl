@@ -479,6 +479,7 @@ Base.@ccallable function gemb_step(
             unsafe_load(forcing, 16), unsafe_load(forcing, 17), unsafe_load(forcing, 18),
             unsafe_load(forcing, 19), unsafe_load(forcing, 20), unsafe_load(forcing, 21),
             unsafe_load(forcing, 22), unsafe_load(forcing, 23), unsafe_load(forcing, 24),
+            unsafe_load(forcing, 25),
         )
 
         new_state, flux = GEMB.gemb_core(state, cfs, mp, false; thermal_workspace=ws)

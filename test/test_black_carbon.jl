@@ -141,6 +141,20 @@ end
     meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(kw))
     stack = DimStack(merge(layers, (; albedo_observed=DimArray(obs, (tdim,)))); metadata=meta)
     @test isequal(parent(initialize_forcing(stack).albedo_observed), obs)
+
+    # The white-sky layer: absent by default, carried through, and exclusive with albedo_observed.
+    @test all(isnan, parent(initialize_forcing(base...; kw...).albedo_observed_white_sky))
+    @test isnan(GEMB.ClimateForcingStep(ntuple(_ -> 0.0, 24)...).albedo_observed_white_sky)
+    ws = fill(NaN, n); ws[20] = 0.7
+    cfw = initialize_forcing(base...; kw..., albedo_observed_white_sky=ws)
+    @test parent(cfw.albedo_observed_white_sky)[20] == 0.7
+    @test isequal(parent(initialize_forcing(DimStack(merge(layers,
+        (; albedo_observed_white_sky=DimArray(ws, (tdim,)))); metadata=meta)).albedo_observed_white_sky), ws)
+    @test_throws "albedo_observed_white_sky values must be in (0, 1)" initialize_forcing(base...; kw...,
+        albedo_observed_white_sky=fill(1.2, n))
+    clash = fill(NaN, n); clash[20] = 0.6
+    @test_throws "a step may carry albedo_observed or albedo_observed_white_sky, not both" initialize_forcing(
+        base...; kw..., albedo_observed=clash, albedo_observed_white_sky=ws)
 end
 
 @testset "meltwater scavenging follows CLM5" begin
